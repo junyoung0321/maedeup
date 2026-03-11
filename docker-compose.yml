@@ -20,6 +20,19 @@ services:
       - ./backend:/app
     restart: unless-stopped
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: maedeup-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      BACKEND_URL: http://fastapi-app:8000
+    depends_on:
+      - fastapi-app
+    restart: unless-stopped
+
   postgres-db:
     image: postgres:16-alpine
     container_name: maedeup-postgres

@@ -17,6 +17,7 @@ class ChatMessage(SQLModel, table=True):
     pane_type: PaneType = Field(index=True)
     role: str = Field(max_length=32)           # "user" | "assistant" | "system"
     content: str
+    sender: Optional[str] = Field(default=None, max_length=64)
     session_id: Optional[str] = Field(default=None, index=True, max_length=64)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -25,6 +26,7 @@ class ChatMessageCreate(SQLModel):
     pane_type: PaneType
     role: str
     content: str
+    sender: Optional[str] = None
     session_id: Optional[str] = None
 
 
@@ -33,5 +35,6 @@ class ChatMessageRead(SQLModel):
     pane_type: PaneType
     role: str
     content: str
+    sender: Optional[str]
     session_id: Optional[str]
     created_at: datetime

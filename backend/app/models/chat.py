@@ -1,0 +1,37 @@
+from datetime import datetime
+from enum import Enum
+from typing import Optional
+
+from sqlmodel import Field, SQLModel
+
+
+class PaneType(str, Enum):
+    social = "social"
+    agent = "agent"
+
+
+class ChatMessage(SQLModel, table=True):
+    __tablename__ = "chat_messages"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pane_type: PaneType = Field(index=True)
+    role: str = Field(max_length=32)           # "user" | "assistant" | "system"
+    content: str
+    session_id: Optional[str] = Field(default=None, index=True, max_length=64)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ChatMessageCreate(SQLModel):
+    pane_type: PaneType
+    role: str
+    content: str
+    session_id: Optional[str] = None
+
+
+class ChatMessageRead(SQLModel):
+    id: int
+    pane_type: PaneType
+    role: str
+    content: str
+    session_id: Optional[str]
+    created_at: datetime

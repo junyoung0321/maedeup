@@ -1,0 +1,57 @@
+version: "3.9"
+
+services:
+  fastapi-app:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: maedeup-api
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://maedeup:maedeup@postgres-db:5432/maedeup
+      REDIS_URL: redis://redis-broker:6379/0
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+      redis-broker:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    restart: unless-stopped
+
+  postgres-db:
+    image: postgres:16-alpine
+    container_name: maedeup-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: maedeup
+      POSTGRES_PASSWORD: maedeup
+      POSTGRES_DB: maedeup
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maedeup"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis-broker:
+    image: redis:7-alpine
+    container_name: maedeup-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

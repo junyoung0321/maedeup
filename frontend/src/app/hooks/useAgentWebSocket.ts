@@ -13,7 +13,7 @@ export interface ChatMessagePayload {
 
 type WsStatus = "connecting" | "open" | "closed" | "error";
 
-export function useAgentWebSocket(roomId: string) {
+export function useAgentWebSocket(roomId: string, sender: string) {
   const [messages, setMessages] = useState<ChatMessagePayload[]>([]);
   const [status, setStatus] = useState<WsStatus>("connecting");
   const wsRef = useRef<WebSocket | null>(null);
@@ -43,12 +43,10 @@ export function useAgentWebSocket(roomId: string) {
     (content: string) => {
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(
-          JSON.stringify({ role: "user", content, sender: "테스트유저" })
-        );
+        ws.send(JSON.stringify({ role: "user", content, sender }));
       }
     },
-    []
+    [sender]
   );
 
   return { messages, sendMessage, status };

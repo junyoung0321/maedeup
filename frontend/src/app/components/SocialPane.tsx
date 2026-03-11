@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useSocialWebSocket } from "../hooks/useSocialWebSocket";
 
-export default function SocialPane() {
-  const { messages, sendMessage, status } = useSocialWebSocket("room-1");
+export default function SocialPane({ sender }: { sender: string }) {
+  const { messages, sendMessage, status } = useSocialWebSocket("room-1", sender);
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 

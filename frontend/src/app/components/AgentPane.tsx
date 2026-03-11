@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useAgentWebSocket } from "../hooks/useAgentWebSocket";
 
-export default function AgentPane() {
-  const { messages, sendMessage, status } = useAgentWebSocket("room-1");
+export default function AgentPane({ sender }: { sender: string }) {
+  const { messages, sendMessage, status } = useAgentWebSocket("room-1", sender);
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 

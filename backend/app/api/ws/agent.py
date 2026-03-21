@@ -1,11 +1,13 @@
 import asyncio
 import json
+from typing import Optional
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from app.api.ws.manager import manager
 from app.core.config import settings
+from app.core.security import verify_token
 from app.db.session import AsyncSessionLocal
 from app.models.chat import ChatMessage, PaneType
 
@@ -36,8 +38,23 @@ async def _redis_subscriber(
 
 
 @router.websocket("/ws/agent/{room_id}")
-async def agent_ws(websocket: WebSocket, room_id: str) -> None:
+async def agent_ws(
+    websocket: WebSocket,
+    room_id: str,
+    token: Optional[str] = Query(default=None),
+) -> None:
     await websocket.accept()
+
+    # 토큰 검증
+    if not token:
+        await websocket.close(code=1008, reason="Missing token")
+        return
+    try:
+        verify_token(token)
+    except Exception:
+        await websocket.close(code=1008, reason="Invalid or expired token")
+        return
+
     manager.add(room_id, websocket)
 
     stop_event = asyncio.Event()

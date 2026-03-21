@@ -43,6 +43,7 @@ export function useAuth() {
   const logout = () => {
     localStorage.removeItem("auth_token");
     setUser(null);
+    window.location.href = "/";
   };
 
   return { user, loading, logout };

@@ -19,7 +19,15 @@ export function useAgentWebSocket(roomId: string, sender: string) {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    const ws = new WebSocket(`ws://localhost:8000/ws/agent/${roomId}`);
+    const token = localStorage.getItem("auth_token");
+    if (!token) {
+      window.location.href = "/";
+      return;
+    }
+
+    const ws = new WebSocket(
+      `ws://localhost:8000/ws/agent/${roomId}?token=${encodeURIComponent(token)}`
+    );
     wsRef.current = ws;
     setStatus("connecting");
 
@@ -32,7 +40,14 @@ export function useAgentWebSocket(roomId: string, sender: string) {
 
     ws.onerror = () => setStatus("error");
 
-    ws.onclose = () => setStatus("closed");
+    ws.onclose = (event) => {
+      setStatus("closed");
+      // 1008: Policy Violation - 토큰 없음 또는 만료
+      if (event.code === 1008) {
+        localStorage.removeItem("auth_token");
+        window.location.href = "/";
+      }
+    };
 
     return () => {
       ws.close();

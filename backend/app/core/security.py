@@ -16,6 +16,7 @@ class AuthUser:
     email: str
     name: str
     picture: Optional[str]
+    calendar_consent: bool = False
 
 
 def verify_token(token: str) -> dict:
@@ -40,4 +41,5 @@ async def get_current_user(
         email=payload["email"],
         name=payload["name"],
         picture=payload.get("picture"),
+        calendar_consent=payload.get("calendar_consent", False),
     )

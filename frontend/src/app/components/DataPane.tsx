@@ -1,8 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import Calendar from "react-calendar";
 import "react-calendar/dist/Calendar.css";
+
+// ── 카카오맵 전역 타입 ─────────────────────────────────────
+declare global {
+  interface Window {
+    kakao: any;
+  }
+}
 
 // ── 타입 ──────────────────────────────────────────────────
 
@@ -17,6 +24,16 @@ interface CalendarData {
 }
 
 type CalendarValue = Date | null;
+
+interface KakaoPlace {
+  id: string;
+  place_name: string;
+  address_name: string;
+  road_address_name: string;
+  place_url: string;
+  x: string; // longitude
+  y: string; // latitude
+}
 
 // ── 날짜 포맷 헬퍼 ────────────────────────────────────────
 
@@ -125,10 +142,26 @@ function DateDetail({
 // ── 메인 컴포넌트 ─────────────────────────────────────────
 
 export default function DataPane() {
+  // ── 캘린더 상태 ──
   const [calendarData, setCalendarData] = useState<CalendarData | null>(null);
   const [selectedDate, setSelectedDate] = useState<CalendarValue>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // ── 장소 검색 상태 ──
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<KakaoPlace[]>([]);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [confirmedId, setConfirmedId] = useState<string | null>(null);
+
+  const mapRef = useRef<HTMLDivElement>(null);
+  const kakaoMapRef = useRef<any>(null);
+  const markersRef = useRef<any[]>([]);
+
+  // ── 캘린더 ──────────────────────────────────────────────
 
   const fetchFreeSlots = async () => {
     setLoading(true);
@@ -150,6 +183,120 @@ export default function DataPane() {
 
   const selectedKey = selectedDate ? toDateKey(selectedDate) : null;
   const selectedInfo = selectedKey && calendarData ? calendarData.dates[selectedKey] : undefined;
+
+  // ── 장소 검색 ─────────────────────────────────────────
+
+  const searchPlaces = () => {
+    if (!searchQuery.trim()) return;
+    if (!window.kakao) {
+      setSearchError("카카오맵 SDK가 아직 로딩 중입니다. 잠시 후 다시 시도해주세요.");
+      return;
+    }
+
+    setSearchLoading(true);
+    setSearchError(null);
+    setSearchResults([]);
+    setHighlightedId(null);
+
+    window.kakao.maps.load(() => {
+      const ps = new window.kakao.maps.services.Places();
+      ps.keywordSearch(searchQuery, (data: KakaoPlace[], status: string) => {
+        setSearchLoading(false);
+        if (status === window.kakao.maps.services.Status.OK) {
+          setSearchResults(data);
+        } else if (status === window.kakao.maps.services.Status.ZERO_RESULT) {
+          setSearchError("검색 결과가 없습니다.");
+        } else {
+          setSearchError("검색 중 오류가 발생했습니다.");
+        }
+      });
+    });
+  };
+
+  // ── 지도 초기화 ───────────────────────────────────────
+
+  useEffect(() => {
+    if (searchResults.length === 0 || !mapRef.current) return;
+    if (!window.kakao) return;
+
+    window.kakao.maps.load(() => {
+      if (!mapRef.current) return;
+
+      const firstPlace = searchResults[0];
+      const center = new window.kakao.maps.LatLng(
+        parseFloat(firstPlace.y),
+        parseFloat(firstPlace.x)
+      );
+
+      const map = new window.kakao.maps.Map(mapRef.current, {
+        center,
+        level: 5,
+      });
+      kakaoMapRef.current = map;
+
+      // 기존 마커 제거
+      markersRef.current.forEach((m) => m.setMap(null));
+
+      // 마커 생성
+      markersRef.current = searchResults.map((place) => {
+        const position = new window.kakao.maps.LatLng(
+          parseFloat(place.y),
+          parseFloat(place.x)
+        );
+        const marker = new window.kakao.maps.Marker({ position, map });
+
+        window.kakao.maps.event.addListener(marker, "click", () => {
+          setHighlightedId(place.id);
+          map.setCenter(position);
+        });
+
+        return marker;
+      });
+
+      // 전체 마커가 보이도록 bounds 설정
+      if (searchResults.length > 1) {
+        const bounds = new window.kakao.maps.LatLngBounds();
+        searchResults.forEach((p) => {
+          bounds.extend(new window.kakao.maps.LatLng(parseFloat(p.y), parseFloat(p.x)));
+        });
+        map.setBounds(bounds);
+      }
+    });
+  }, [searchResults]);
+
+  // ── 확정 ──────────────────────────────────────────────
+
+  const confirmPlace = async (place: KakaoPlace) => {
+    setConfirmingId(place.id);
+    try {
+      const token = localStorage.getItem("auth_token");
+      const resp = await fetch("/api/v1/events/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          title: place.place_name,
+          location_name: place.road_address_name || place.address_name,
+          latitude: parseFloat(place.y),
+          longitude: parseFloat(place.x),
+          kakao_place_id: place.id,
+          kakao_place_url: place.place_url,
+          starts_at: new Date().toISOString(),
+        }),
+      });
+      if (!resp.ok) throw new Error("저장 실패");
+      setConfirmedId(place.id);
+      setTimeout(() => setConfirmedId(null), 3000);
+    } catch {
+      // no-op
+    } finally {
+      setConfirmingId(null);
+    }
+  };
+
+  // ── 렌더링 ─────────────────────────────────────────────
 
   return (
     <section
@@ -188,7 +335,7 @@ export default function DataPane() {
           gap: 12,
         }}
       >
-        {/* 캘린더 섹션 헤더 */}
+        {/* ── 캘린더 섹션 헤더 ── */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ fontSize: 11, color: "#444", letterSpacing: "0.06em", textTransform: "uppercase" }}>
             캘린더
@@ -245,7 +392,7 @@ export default function DataPane() {
           />
         </div>
 
-        {/* 초기 로드 버튼 — 데이터 없을 때만 표시 */}
+        {/* 초기 로드 버튼 */}
         {!calendarData && (
           <button
             onClick={fetchFreeSlots}
@@ -275,14 +422,10 @@ export default function DataPane() {
         )}
 
         {/* 에러 */}
-        {error && (
-          <div style={{ fontSize: 12, color: "#ef4444" }}>{error}</div>
-        )}
+        {error && <div style={{ fontSize: 12, color: "#ef4444" }}>{error}</div>}
 
         {/* 날짜 상세 */}
-        {selectedKey && (
-          <DateDetail dateKey={selectedKey} info={selectedInfo} />
-        )}
+        {selectedKey && <DateDetail dateKey={selectedKey} info={selectedInfo} />}
 
         {/* 빈 상태 */}
         {!calendarData && !loading && !error && (
@@ -291,17 +434,131 @@ export default function DataPane() {
           </div>
         )}
 
-        {/* 이벤트 섹션 구분선 */}
-        <div
-          style={{
-            borderTop: "1px solid #1a1a1a",
-            paddingTop: 12,
-            fontSize: 12,
-            color: "#2a2a2a",
-          }}
-        >
-          일정 · 장소 데이터 영역
+        {/* ── 구분선 ── */}
+        <div style={{ borderTop: "1px solid #1a1a1a", paddingTop: 12 }} />
+
+        {/* ── 장소 검색 섹션 ── */}
+        <div style={{ fontSize: 11, color: "#444", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+          장소 검색
         </div>
+
+        {/* 검색 입력 */}
+        <div style={{ display: "flex", gap: 6 }}>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && searchPlaces()}
+            placeholder="장소 키워드 입력"
+            style={{
+              flex: 1,
+              background: "#141414",
+              border: "1px solid #2a2a2a",
+              borderRadius: 6,
+              padding: "7px 10px",
+              color: "#ddd",
+              fontSize: 12,
+              outline: "none",
+            }}
+          />
+          <button
+            onClick={searchPlaces}
+            disabled={searchLoading || !searchQuery.trim()}
+            style={{
+              background: searchLoading ? "#141414" : "#1a2233",
+              border: "1px solid #2a3a4a",
+              borderRadius: 6,
+              padding: "7px 12px",
+              color: searchLoading ? "#444" : "#60a5fa",
+              fontSize: 12,
+              cursor: searchLoading || !searchQuery.trim() ? "not-allowed" : "pointer",
+              whiteSpace: "nowrap",
+              flexShrink: 0,
+            }}
+          >
+            {searchLoading ? "검색 중" : "검색"}
+          </button>
+        </div>
+
+        {/* 검색 오류 */}
+        {searchError && <div style={{ fontSize: 12, color: "#ef4444" }}>{searchError}</div>}
+
+        {/* 검색 결과 카드 */}
+        {searchResults.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {searchResults.map((place) => {
+              const isHighlighted = highlightedId === place.id;
+              const isConfirmed = confirmedId === place.id;
+              const isConfirming = confirmingId === place.id;
+              return (
+                <div
+                  key={place.id}
+                  onClick={() => setHighlightedId(place.id)}
+                  style={{
+                    background: isHighlighted ? "#1a2a1a" : "#141414",
+                    border: `1px solid ${isHighlighted ? "#22c55e44" : "#222"}`,
+                    borderRadius: 7,
+                    padding: "10px 12px",
+                    cursor: "pointer",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                    transition: "border-color 0.15s",
+                  }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#ddd" }}>
+                    {place.place_name}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#555" }}>
+                    {place.road_address_name || place.address_name}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                    <a
+                      href={place.place_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ fontSize: 11, color: "#3b82f6", textDecoration: "none" }}
+                    >
+                      카카오맵에서 보기 →
+                    </a>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); confirmPlace(place); }}
+                      disabled={isConfirming}
+                      style={{
+                        background: isConfirmed ? "#14532d" : "#1a2233",
+                        border: `1px solid ${isConfirmed ? "#22c55e" : "#2a3a4a"}`,
+                        borderRadius: 5,
+                        padding: "3px 10px",
+                        color: isConfirmed ? "#4ade80" : "#60a5fa",
+                        fontSize: 11,
+                        cursor: isConfirming ? "not-allowed" : "pointer",
+                        fontWeight: 500,
+                      }}
+                    >
+                      {isConfirmed ? "저장됨 ✓" : isConfirming ? "저장 중..." : "확정"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* 카카오맵 지도 */}
+        {searchResults.length > 0 && (
+          <div
+            ref={mapRef}
+            style={{
+              width: "100%",
+              height: 220,
+              borderRadius: 8,
+              border: "1px solid #222",
+              overflow: "hidden",
+              flexShrink: 0,
+            }}
+          />
+        )}
       </div>
     </section>
   );

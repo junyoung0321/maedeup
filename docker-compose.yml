@@ -26,11 +26,14 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_KAKAO_MAP_KEY: ${NEXT_PUBLIC_KAKAO_MAP_KEY}
     container_name: maedeup-frontend
     ports:
       - "3000:3000"
     environment:
       BACKEND_URL: http://fastapi-app:8000
+      NEXT_PUBLIC_KAKAO_MAP_KEY: ${NEXT_PUBLIC_KAKAO_MAP_KEY}
     depends_on:
       - fastapi-app
     restart: unless-stopped

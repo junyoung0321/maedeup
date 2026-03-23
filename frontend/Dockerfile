@@ -20,6 +20,9 @@ COPY . .
 ARG BACKEND_URL=http://fastapi-app:8000
 ENV BACKEND_URL=$BACKEND_URL
 
+ARG NEXT_PUBLIC_KAKAO_MAP_KEY
+ENV NEXT_PUBLIC_KAKAO_MAP_KEY=$NEXT_PUBLIC_KAKAO_MAP_KEY
+
 RUN npm run build
 
 # ── 3. runner: 프로덕션 실행 ──────────────────────────────────────

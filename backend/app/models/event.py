@@ -15,6 +15,8 @@ class Event(SQLModel, table=True):
     longitude: Optional[float] = None
     starts_at: datetime
     ends_at: Optional[datetime] = None
+    kakao_place_id: Optional[str] = Field(default=None, max_length=64)
+    kakao_place_url: Optional[str] = Field(default=None, max_length=512)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -27,6 +29,8 @@ class EventCreate(SQLModel):
     longitude: Optional[float] = None
     starts_at: datetime
     ends_at: Optional[datetime] = None
+    kakao_place_id: Optional[str] = None
+    kakao_place_url: Optional[str] = None
 
 
 class EventRead(SQLModel):
@@ -38,5 +42,7 @@ class EventRead(SQLModel):
     longitude: Optional[float]
     starts_at: datetime
     ends_at: Optional[datetime]
+    kakao_place_id: Optional[str]
+    kakao_place_url: Optional[str]
     created_at: datetime
     updated_at: datetime

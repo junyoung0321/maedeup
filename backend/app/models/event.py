@@ -17,6 +17,8 @@ class Event(SQLModel, table=True):
     ends_at: Optional[datetime] = None
     kakao_place_id: Optional[str] = Field(default=None, max_length=64)
     kakao_place_url: Optional[str] = Field(default=None, max_length=512)
+    room_id: Optional[int] = Field(default=None, foreign_key="rooms.id", index=True)
+    meeting_id: Optional[int] = Field(default=None, foreign_key="meeting_schedules.id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

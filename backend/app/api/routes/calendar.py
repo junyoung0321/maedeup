@@ -73,7 +73,7 @@ async def _get_busy_periods(
     session: AsyncSession,
 ) -> list[dict]:
     """
-    Google Calendar freebusy API로 바쁜 시간대(시작/종료)만 조회합니다.
+    Google Calendar API로 바쁜 시간대(시작/종료)만 조회합니다.
     일정 제목·내용은 수집하지 않습니다.
     """
     logger.warning(f"[CALENDAR] _get_busy_periods called for {user.name}, has_token={bool(user.google_access_token)}")

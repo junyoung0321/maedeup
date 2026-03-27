@@ -42,9 +42,9 @@ export default function AuthCallbackPage() {
         alignItems: "center",
         justifyContent: "center",
         height: "100vh",
-        background: "#0d0d0d",
-        color: "#555",
-        fontSize: "13px",
+        background: "var(--color-bg)",
+        color: "var(--color-text-dim)",
+        fontSize: "var(--font-size-base)",
       }}
     >
       로그인 처리 중...

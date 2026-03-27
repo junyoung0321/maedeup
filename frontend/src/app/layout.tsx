@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "매듭 (Maedeup)",
-  description: "Social · Agent · Data — three panes, one workspace",
+  description: "AI와 함께하는 똑똑한 모임 일정 조율",
 };
 
 export default function RootLayout({
@@ -14,7 +14,15 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ko">
-      <body style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
+      <head>
+        <link
+          rel="stylesheet"
+          as="style"
+          crossOrigin="anonymous"
+          href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
+        />
+      </head>
+      <body className="min-h-screen bg-white font-pretendard antialiased">
         {children}
         <Script
           src={`//dapi.kakao.com/v2/maps/sdk.js?appkey=${process.env.NEXT_PUBLIC_KAKAO_MAP_KEY}&libraries=services&autoload=false`}

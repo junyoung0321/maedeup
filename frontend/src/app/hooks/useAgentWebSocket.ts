@@ -16,6 +16,7 @@ type WsStatus = "connecting" | "open" | "closed" | "error";
 export function useAgentWebSocket(roomId: string, sender: string) {
   const [messages, setMessages] = useState<ChatMessagePayload[]>([]);
   const [status, setStatus] = useState<WsStatus>("connecting");
+  const [isAiLoading, setIsAiLoading] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -34,7 +35,20 @@ export function useAgentWebSocket(roomId: string, sender: string) {
     ws.onopen = () => setStatus("open");
 
     ws.onmessage = (event) => {
-      const msg: ChatMessagePayload = JSON.parse(event.data as string);
+      const data = JSON.parse(event.data as string) as
+        | ChatMessagePayload
+        | { type: string; room_id: string };
+
+      // 로딩 신호
+      if ("type" in data && data.type === "loading") {
+        setIsAiLoading(true);
+        return;
+      }
+
+      const msg = data as ChatMessagePayload;
+      if (msg.role === "assistant") {
+        setIsAiLoading(false);
+      }
       setMessages((prev) => [...prev, msg]);
     };
 
@@ -42,7 +56,6 @@ export function useAgentWebSocket(roomId: string, sender: string) {
 
     ws.onclose = (event) => {
       setStatus("closed");
-      // 1008: Policy Violation - 토큰 없음 또는 만료
       if (event.code === 1008) {
         localStorage.removeItem("auth_token");
         window.location.href = "/";
@@ -64,5 +77,5 @@ export function useAgentWebSocket(roomId: string, sender: string) {
     [sender]
   );
 
-  return { messages, sendMessage, status };
+  return { messages, sendMessage, status, isAiLoading };
 }

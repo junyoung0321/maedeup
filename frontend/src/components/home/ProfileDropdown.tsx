@@ -1,6 +1,7 @@
 "use client";
 
 import { User, Users, Settings, CreditCard, Clock, LogOut } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 
 interface Props {
   open: boolean;
@@ -16,6 +17,8 @@ const menuItems = [
 ];
 
 export default function ProfileDropdown({ open, onClose }: Props) {
+  const { user, logout } = useAuth();
+
   if (!open) return null;
 
   return (
@@ -42,12 +45,16 @@ export default function ProfileDropdown({ open, onClose }: Props) {
       >
         {/* User info */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 18px", borderBottom: "1px solid #f1f5f9" }}>
-          <div style={{ width: 40, height: 40, borderRadius: "50%", background: "#4f46e5", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <User style={{ width: 20, height: 20, color: "#ffffff" }} />
+          <div style={{ width: 40, height: 40, borderRadius: "50%", background: "#4f46e5", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }}>
+            {user?.picture ? (
+              <img src={user.picture} alt="profile" style={{ width: 40, height: 40, objectFit: "cover" }} />
+            ) : (
+              <User style={{ width: 20, height: 20, color: "#ffffff" }} />
+            )}
           </div>
           <div style={{ display: "flex", flexDirection: "column" }}>
-            <span style={{ fontSize: 14, fontWeight: 600, color: "#111827" }}>김준수</span>
-            <span style={{ fontSize: 11, fontWeight: 400, color: "#94a3b8" }}>jinsoo@gmail.com</span>
+            <span style={{ fontSize: 14, fontWeight: 600, color: "#111827" }}>{user?.name ?? ""}</span>
+            <span style={{ fontSize: 11, fontWeight: 400, color: "#94a3b8" }}>{user?.email ?? ""}</span>
           </div>
         </div>
 
@@ -58,6 +65,7 @@ export default function ProfileDropdown({ open, onClose }: Props) {
             return (
               <button
                 key={item.label}
+                onClick={item.label === "로그아웃" ? logout : undefined}
                 style={{
                   display: "flex",
                   alignItems: "center",

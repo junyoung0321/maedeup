@@ -15,7 +15,6 @@ export default function Home() {
     );
   }
 
-  // TODO: 임시 - 인증 없이 탐색 페이지 확인용, 나중에 원복
-  // if (!user) return <LoginPage />;
+  if (!user) return <LoginPage />;
   return <ExplorePage />;
 }

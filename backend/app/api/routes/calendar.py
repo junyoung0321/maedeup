@@ -30,16 +30,21 @@ LOOKAHEAD_DAYS = 14
 # ── 응답 모델 ──────────────────────────────────────────────
 
 
-class FreeSlot(BaseModel):
-    start: str
-    end: str
-    available_members: list[str]
+class HalfDay(BaseModel):
+    count: int
+    total: int
 
 
 class DayInfo(BaseModel):
-    available: list[str]
-    busy: list[str]
-    unconnected: list[str]
+    top: HalfDay    # 오전 (09:00~12:00) 가용 인원
+    bottom: HalfDay  # 오후 (12:00~22:00) 가용 인원
+
+
+class FreeSlot(BaseModel):
+    label: str           # "3월 21일 (월) 오후 3:00 ~ 5:00"
+    available_count: int
+    total_count: int
+    is_recommended: bool  # available_count == total_count
 
 
 class FreeSlotsResponse(BaseModel):
@@ -133,41 +138,54 @@ async def _get_busy_periods(
 
 # ── 계산 헬퍼 ─────────────────────────────────────────────
 
-
-def _day_utc_range(kst_date: date) -> tuple[datetime, datetime]:
-    """KST 날짜의 시작/종료 UTC datetime을 반환합니다."""
-    day_start = datetime(kst_date.year, kst_date.month, kst_date.day, tzinfo=KST)
-    day_end = day_start + timedelta(days=1)
-    return day_start.astimezone(timezone.utc), day_end.astimezone(timezone.utc)
+WEEKDAY_KR = ["월", "화", "수", "목", "금", "토", "일"]
 
 
-def _is_busy_on_day(busy_periods: list[dict], kst_date: date) -> bool:
-    day_start_utc, day_end_utc = _day_utc_range(kst_date)
-    return any(
-        bp["start"] < day_end_utc and bp["end"] > day_start_utc
-        for bp in busy_periods
+def _format_label(start: datetime, end: datetime) -> str:
+    """datetime → "3월 21일 (월) 오후 3:00 ~ 5:00" 형태의 한국어 문자열"""
+    s = start.astimezone(KST)
+    e = end.astimezone(KST)
+    weekday = WEEKDAY_KR[s.weekday()]
+    ampm = "오전" if s.hour < 12 else "오후"
+    s_hour = s.hour if s.hour <= 12 else s.hour - 12
+    e_hour = e.hour if e.hour <= 12 else e.hour - 12
+    return (
+        f"{s.month}월 {s.day}일 ({weekday}) "
+        f"{ampm} {s_hour}:{s.minute:02d} ~ {e_hour}:{e.minute:02d}"
     )
+
+
+def _is_busy_in_halfday(busy_periods: list[dict], kst_date: date, *, morning: bool) -> bool:
+    """오전(09-12) 또는 오후(12-22) 구간에 바쁜 시간이 겹치는지 확인합니다."""
+    if morning:
+        half_start = datetime(kst_date.year, kst_date.month, kst_date.day, 9, tzinfo=KST)
+        half_end = datetime(kst_date.year, kst_date.month, kst_date.day, 12, tzinfo=KST)
+    else:
+        half_start = datetime(kst_date.year, kst_date.month, kst_date.day, 12, tzinfo=KST)
+        half_end = datetime(kst_date.year, kst_date.month, kst_date.day, 22, tzinfo=KST)
+    return any(bp["start"] < half_end and bp["end"] > half_start for bp in busy_periods)
 
 
 def _compute_dates(
     busy_by_user: dict[str, list[dict]],
-    unconnected_names: list[str],
     start_date: date,
 ) -> dict[str, DayInfo]:
-    """날짜별 available/busy/unconnected 멤버를 계산합니다."""
+    """날짜별 오전/오후 가용 인원(count/total)을 계산합니다."""
+    total = len(busy_by_user)
     result: dict[str, DayInfo] = {}
     for offset in range(LOOKAHEAD_DAYS):
         kst_date = start_date + timedelta(days=offset)
-        available, busy = [], []
-        for name, periods in busy_by_user.items():
-            if _is_busy_on_day(periods, kst_date):
-                busy.append(name)
-            else:
-                available.append(name)
+        morning_count = sum(
+            1 for periods in busy_by_user.values()
+            if not _is_busy_in_halfday(periods, kst_date, morning=True)
+        )
+        afternoon_count = sum(
+            1 for periods in busy_by_user.values()
+            if not _is_busy_in_halfday(periods, kst_date, morning=False)
+        )
         result[kst_date.isoformat()] = DayInfo(
-            available=sorted(available),
-            busy=sorted(busy),
-            unconnected=sorted(unconnected_names),
+            top=HalfDay(count=morning_count, total=total),
+            bottom=HalfDay(count=afternoon_count, total=total),
         )
     return result
 
@@ -177,6 +195,7 @@ def _compute_free_slots(
     time_min: datetime,
     time_max: datetime,
 ) -> list[FreeSlot]:
+    total = len(busy_by_user)
     slots: list[dict] = []
     current = time_min
 
@@ -187,14 +206,13 @@ def _compute_free_slots(
             current = slot_end
             continue
 
-        available = [
-            name
-            for name, periods in busy_by_user.items()
+        available_count = sum(
+            1 for periods in busy_by_user.values()
             if not any(bp["start"] < slot_end and bp["end"] > current for bp in periods)
-        ]
+        )
 
-        if available:
-            slots.append({"start": current, "end": slot_end, "available_members": sorted(available)})
+        if available_count > 0:
+            slots.append({"start": current, "end": slot_end, "available_count": available_count})
 
         current = slot_end
 
@@ -202,7 +220,7 @@ def _compute_free_slots(
     for slot in slots:
         if (
             merged
-            and merged[-1]["available_members"] == slot["available_members"]
+            and merged[-1]["available_count"] == slot["available_count"]
             and merged[-1]["end"] == slot["start"]
         ):
             merged[-1]["end"] = slot["end"]
@@ -211,9 +229,10 @@ def _compute_free_slots(
 
     return [
         FreeSlot(
-            start=s["start"].astimezone(KST).isoformat(),
-            end=s["end"].astimezone(KST).isoformat(),
-            available_members=s["available_members"],
+            label=_format_label(s["start"], s["end"]),
+            available_count=s["available_count"],
+            total_count=total,
+            is_recommended=(s["available_count"] == total),
         )
         for s in merged
     ]
@@ -252,7 +271,7 @@ async def get_free_slots(
     for user in consenting:
         busy_by_user[user.name] = await _get_busy_periods(user, time_min, time_max, session)
 
-    dates = _compute_dates(busy_by_user, unconnected_names, today_kst)
+    dates = _compute_dates(busy_by_user, today_kst)
     free_slots = _compute_free_slots(busy_by_user, time_min, time_max)
 
     return FreeSlotsResponse(free_slots=free_slots, dates=dates)

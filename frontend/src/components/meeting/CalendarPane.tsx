@@ -1,49 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Check, Vote } from "lucide-react";
 
-/* Availability data matching .pen file exactly */
+/* ── Types ─────────────────────────────────────────────── */
 interface DayAvail {
   top?: { count: number; total: number };
   bottom?: { count: number; total: number };
 }
-
-const availabilityData: Record<number, DayAvail> = {
-  2: { top: { count: 3, total: 5 }, bottom: { count: 3, total: 5 } },
-  3: { top: { count: 4, total: 5 }, bottom: { count: 4, total: 5 } },
-  4: { top: { count: 5, total: 5 }, bottom: { count: 5, total: 5 } },
-  5: { top: { count: 4, total: 5 }, bottom: { count: 4, total: 5 } },
-  6: { top: { count: 3, total: 5 }, bottom: { count: 3, total: 5 } },
-  9: { top: { count: 2, total: 5 }, bottom: { count: 2, total: 5 } },
-  10: { top: { count: 4, total: 5 }, bottom: { count: 3, total: 5 } },
-  11: { top: { count: 5, total: 5 }, bottom: { count: 4, total: 5 } },
-  12: { top: { count: 5, total: 5 }, bottom: { count: 5, total: 5 } },
-  13: { top: { count: 3, total: 5 }, bottom: { count: 3, total: 5 } },
-  16: { top: { count: 4, total: 5 }, bottom: { count: 4, total: 5 } },
-  17: { top: { count: 5, total: 5 }, bottom: { count: 5, total: 5 } },
-  18: { top: { count: 5, total: 5 }, bottom: { count: 3, total: 5 } },
-  19: { top: { count: 4, total: 5 }, bottom: { count: 2, total: 5 } },
-  20: { top: { count: 3, total: 5 }, bottom: { count: 4, total: 5 } },
-  23: { top: { count: 5, total: 5 }, bottom: { count: 5, total: 5 } },
-  24: { top: { count: 5, total: 5 }, bottom: { count: 5, total: 5 } },
-  25: { top: { count: 4, total: 5 }, bottom: { count: 4, total: 5 } },
-  26: { top: { count: 3, total: 5 }, bottom: { count: 3, total: 5 } },
-  27: { top: { count: 2, total: 5 }, bottom: { count: 2, total: 5 } },
-  30: { top: { count: 4, total: 5 }, bottom: { count: 4, total: 5 } },
-  31: { top: { count: 5, total: 5 }, bottom: { count: 3, total: 5 } },
-};
-
-function availColor(count: number, total: number): string {
-  if (count === total) return "#22c55e";
-  if (count >= 4) return "#eab308";
-  if (count >= 3) return "#eab308";
-  return "#ef4444";
-}
-
-/* Highlighted days from .pen */
-const highlightedDays = new Set([23, 25]);
-const selectedDay = 24;
 
 interface TimeSlot {
   label: string;
@@ -54,47 +18,91 @@ interface TimeSlot {
   selected?: boolean;
 }
 
-const timeSlots: TimeSlot[] = [
-  {
-    label: "3월 23일 (월) 오후 3:00 ~ 5:00",
-    count: "5/5",
-    labelColor: "#166534",
-    countColor: "#22c55e",
-    avatarColors: ["#c7d2fe", "#93c5fd", "#86efac", "#fca5a5", "#fde68a"],
-    selected: true,
-  },
-  {
-    label: "3월 24일 (화) 오후 2:00 ~ 4:00",
-    count: "5/5",
-    labelColor: "#166534",
-    countColor: "#22c55e",
-    avatarColors: ["#c7d2fe", "#93c5fd", "#86efac", "#fca5a5", "#fde68a"],
-    selected: true,
-  },
-  {
-    label: "3월 25일 (수) 오전 10:00 ~ 12:00",
-    count: "4/5",
-    labelColor: "#64748b",
-    countColor: "#94a3b8",
-    avatarColors: ["#c7d2fe", "#93c5fd", "#86efac", "#fca5a5"],
-  },
-  {
-    label: "3월 25일 (수) 오후 7:00 ~ 9:00",
-    count: "2/5",
-    labelColor: "#64748b",
-    countColor: "#94a3b8",
-    avatarColors: ["#c7d2fe", "#fca5a5"],
-  },
+interface ApiFreeSlot {
+  label: string;
+  available_count: number;
+  total_count: number;
+  is_recommended?: boolean;
+}
+
+interface CalendarApiResponse {
+  dates: Record<string, DayAvail>; // key: "YYYY-MM-DD"
+  free_slots: ApiFreeSlot[];
+}
+
+/* ── Helpers ────────────────────────────────────────────── */
+const AVATAR_PALETTE = [
+  "#c7d2fe", "#93c5fd", "#86efac", "#fca5a5", "#fde68a", "#fbcfe8", "#a5f3fc",
 ];
 
+function availColor(count: number, total: number): string {
+  if (count === total) return "#22c55e";
+  if (count >= 3) return "#eab308";
+  return "#ef4444";
+}
+
+function getToken(): string | null {
+  try {
+    return localStorage.getItem("auth_token");
+  } catch {
+    return null;
+  }
+}
+
+function mapFreeSlot(slot: ApiFreeSlot): TimeSlot {
+  const isFull = slot.available_count === slot.total_count;
+  return {
+    label: slot.label,
+    count: `${slot.available_count}/${slot.total_count}`,
+    labelColor: isFull ? "#166534" : "#64748b",
+    countColor: isFull ? "#22c55e" : "#94a3b8",
+    avatarColors: AVATAR_PALETTE.slice(0, slot.available_count),
+    selected: slot.is_recommended,
+  };
+}
+
+const highlightedDays = new Set([23, 25]);
+const selectedDay = 24;
+
+/* ── Component ──────────────────────────────────────────── */
 export default function CalendarPane() {
   const [selected, setSelected] = useState<Set<number>>(new Set([0, 1]));
+  const [availabilityData, setAvailabilityData] = useState<Record<number, DayAvail>>({});
+  const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
   const year = 2026;
   const month = 3;
   const daysInMonth = new Date(year, month, 0).getDate();
   const firstDay = new Date(year, month - 1, 1).getDay();
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
   const blanks = Array.from({ length: firstDay }, (_, i) => i);
+
+  useEffect(() => {
+    const token = getToken();
+    fetch("/api/v1/calendar/free-slots?room_id=room-1", {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error();
+        return res.json() as Promise<CalendarApiResponse>;
+      })
+      .then((data) => {
+        const dayMap: Record<number, DayAvail> = {};
+        for (const [dateStr, avail] of Object.entries(data.dates)) {
+          const day = new Date(dateStr).getDate();
+          dayMap[day] = avail;
+        }
+        setAvailabilityData(dayMap);
+        setTimeSlots(data.free_slots.map(mapFreeSlot));
+        setLoading(false);
+      })
+      .catch(() => {
+        setError(true);
+        setLoading(false);
+      });
+  }, []);
 
   const toggleSlot = (idx: number) => {
     setSelected((prev) => {
@@ -120,7 +128,7 @@ export default function CalendarPane() {
         fontFamily: "Pretendard Variable, Pretendard, sans-serif",
       }}
     >
-      {/* Header - gray bg matching .pen */}
+      {/* Header */}
       <div
         style={{
           background: "#f2f4f7",
@@ -268,9 +276,10 @@ export default function CalendarPane() {
                     style={{
                       fontSize: 9,
                       fontWeight: "normal",
-                      color: isSelected && avail.top.count === avail.top.total
-                        ? "#22c55e"
-                        : availColor(avail.top.count, avail.top.total),
+                      color:
+                        isSelected && avail.top.count === avail.top.total
+                          ? "#22c55e"
+                          : availColor(avail.top.count, avail.top.total),
                       lineHeight: 1.2,
                       fontFamily: "Inter, sans-serif",
                     }}
@@ -340,122 +349,142 @@ export default function CalendarPane() {
           3월 23일 ~ 25일 기준
         </span>
 
-        {/* Time slots */}
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-          }}
-        >
-          {timeSlots.map((slot, idx) => {
-            const isChecked = selected.has(idx);
-            const isActive = slot.selected;
-            return (
-              <div
-                key={idx}
-                onClick={() => toggleSlot(idx)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "0 12px",
-                  height: 38,
-                  borderRadius: 12,
-                  background: isActive ? "#f0fdf4" : "#f8fafc",
-                  border: isActive
-                    ? "1.5px solid #22c55e"
-                    : "1px solid #cbd5e1",
-                  cursor: "pointer",
-                  boxShadow: isActive
-                    ? "0 1px 3.5px rgba(79, 70, 229, 0.13)"
-                    : "none",
-                }}
-              >
-                {/* Checkbox */}
-                <div
-                  style={{
-                    width: 20,
-                    height: 20,
-                    borderRadius: 4,
-                    background: isChecked ? "#4f46e5" : "#ffffff",
-                    border: isChecked
-                      ? "none"
-                      : "1.5px solid #cbd5e1",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  {isChecked && (
-                    <Check
-                      style={{ width: 14, height: 14, color: "#ffffff" }}
-                    />
-                  )}
-                </div>
-                {/* Label */}
-                <span
-                  style={{
-                    fontSize: 12,
-                    fontWeight: "normal",
-                    color: slot.labelColor,
-                    fontFamily: "Inter, sans-serif",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {slot.label}
-                </span>
-                {/* Spacer */}
-                <div style={{ flex: 1 }} />
-                {/* Count */}
-                <span
-                  style={{
-                    fontSize: 10,
-                    fontWeight: "normal",
-                    color: slot.countColor,
-                    fontFamily: "Inter, sans-serif",
-                  }}
-                >
-                  {slot.count}
-                </span>
-                {/* Avatar circles */}
-                <div
-                  style={{
-                    display: "flex",
-                    marginLeft: 4,
-                  }}
-                >
-                  {slot.avatarColors.map((color, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        width: 18,
-                        height: 18,
-                        borderRadius: "50%",
-                        background: color,
-                        marginLeft: i > 0 ? -6 : 0,
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Selection count */}
-        <div style={{ marginTop: 8 }}>
-          <span
+        {/* Loading / Error / Time slots */}
+        {loading ? (
+          <div
             style={{
-              fontSize: 12,
-              fontWeight: "normal",
-              color: "#4f46e5",
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#94a3b8",
+              fontSize: 13,
             }}
           >
-            {selected.size}개 선택됨
-          </span>
-        </div>
+            불러오는 중...
+          </div>
+        ) : error ? (
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#ef4444",
+              fontSize: 13,
+            }}
+          >
+            캘린더 데이터를 불러올 수 없습니다
+          </div>
+        ) : (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+            }}
+          >
+            {timeSlots.map((slot, idx) => {
+              const isChecked = selected.has(idx);
+              const isActive = slot.selected;
+              return (
+                <div
+                  key={idx}
+                  onClick={() => toggleSlot(idx)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "0 12px",
+                    height: 38,
+                    borderRadius: 12,
+                    background: isActive ? "#f0fdf4" : "#f8fafc",
+                    border: isActive
+                      ? "1.5px solid #22c55e"
+                      : "1px solid #cbd5e1",
+                    cursor: "pointer",
+                    boxShadow: isActive
+                      ? "0 1px 3.5px rgba(79, 70, 229, 0.13)"
+                      : "none",
+                  }}
+                >
+                  {/* Checkbox */}
+                  <div
+                    style={{
+                      width: 20,
+                      height: 20,
+                      borderRadius: 4,
+                      background: isChecked ? "#4f46e5" : "#ffffff",
+                      border: isChecked ? "none" : "1.5px solid #cbd5e1",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {isChecked && (
+                      <Check style={{ width: 14, height: 14, color: "#ffffff" }} />
+                    )}
+                  </div>
+                  {/* Label */}
+                  <span
+                    style={{
+                      fontSize: 12,
+                      fontWeight: "normal",
+                      color: slot.labelColor,
+                      fontFamily: "Inter, sans-serif",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {slot.label}
+                  </span>
+                  <div style={{ flex: 1 }} />
+                  {/* Count */}
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: "normal",
+                      color: slot.countColor,
+                      fontFamily: "Inter, sans-serif",
+                    }}
+                  >
+                    {slot.count}
+                  </span>
+                  {/* Avatar circles */}
+                  <div style={{ display: "flex", marginLeft: 4 }}>
+                    {slot.avatarColors.map((color, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          width: 18,
+                          height: 18,
+                          borderRadius: "50%",
+                          background: color,
+                          marginLeft: i > 0 ? -6 : 0,
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Selection count */}
+        {!loading && !error && (
+          <div style={{ marginTop: 8 }}>
+            <span
+              style={{
+                fontSize: 12,
+                fontWeight: "normal",
+                color: "#4f46e5",
+              }}
+            >
+              {selected.size}개 선택됨
+            </span>
+          </div>
+        )}
 
         {/* Submit button */}
         <div style={{ marginTop: "auto" }}>

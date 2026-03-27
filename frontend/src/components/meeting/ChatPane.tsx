@@ -1,16 +1,33 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { User, Send } from "lucide-react";
-import { mockSocialMessages } from "@/mocks/chatMessages";
+import { useSocialWebSocket } from "@/hooks/useSocialWebSocket";
+
+function getNameFromToken(): string {
+  try {
+    const token = localStorage.getItem("auth_token");
+    if (!token) return "익명";
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.name ?? "익명";
+  } catch {
+    return "익명";
+  }
+}
 
 export default function ChatPane() {
   const [input, setInput] = useState("");
-  const myName = "김준영";
+  const [currentUserName, setCurrentUserName] = useState<string>("익명");
+
+  useEffect(() => {
+    setCurrentUserName(getNameFromToken());
+  }, []);
+
+  const { messages, sendMessage } = useSocialWebSocket("room-1", currentUserName);
 
   const handleSend = () => {
     if (!input.trim()) return;
-    console.log("social:", input.trim());
+    sendMessage(input.trim());
     setInput("");
   };
 
@@ -64,8 +81,8 @@ export default function ChatPane() {
           gap: 12,
         }}
       >
-        {mockSocialMessages.map((msg) => {
-          const isMe = msg.sender === myName;
+        {messages.map((msg) => {
+          const isMe = msg.sender === currentUserName;
           return (
             <div
               key={msg.id}
@@ -92,7 +109,7 @@ export default function ChatPane() {
                     flexShrink: 0,
                   }}
                 >
-                  {msg.sender.charAt(0)}
+                  {(msg.sender ?? "?").charAt(0)}
                 </div>
               )}
               <div

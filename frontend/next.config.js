@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  trailingSlash: true,
   async headers() {
     // 카카오맵 SDK 스크립트 도메인 허용: dapi.kakao.com, *.daumcdn.net
     return [

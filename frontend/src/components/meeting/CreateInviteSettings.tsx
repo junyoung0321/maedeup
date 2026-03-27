@@ -1,5 +1,7 @@
 "use client";
 
+import { useState, useEffect } from "react";
+import { API_BASE_URL } from "@/lib/api";
 import {
   Users,
   Search,
@@ -17,13 +19,17 @@ interface Member {
   color: string;
 }
 
-const members: Member[] = [
-  { name: "김준영", color: "#818cf8" },
-  { name: "이서연", color: "#f472b6" },
-  { name: "박민수", color: "#fb923c" },
-  { name: "최하은", color: "#34d399" },
-  { name: "정우진", color: "#fbbf24" },
+const AVATAR_PALETTE = [
+  "#818cf8", "#f472b6", "#fb923c", "#34d399", "#fbbf24",
+  "#60a5fa", "#a78bfa", "#f87171", "#4ade80", "#facc15",
 ];
+
+interface FriendInfo {
+  id: number;
+  name: string;
+  email: string;
+  picture?: string;
+}
 
 interface Props {
   invitedMembers: Set<string>;
@@ -47,6 +53,26 @@ export default function CreateInviteSettings({
   onCreate,
 }: Props) {
   const selectedCount = invitedMembers.size;
+  const [members, setMembers] = useState<Member[]>([]);
+  const [loadingFriends, setLoadingFriends] = useState(true);
+
+  useEffect(() => {
+    const token = localStorage.getItem("auth_token");
+    fetch(`${API_BASE_URL}/api/v1/users/friends`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((friends: FriendInfo[]) => {
+        setMembers(
+          friends.map((f, i) => ({
+            name: f.name,
+            color: AVATAR_PALETTE[i % AVATAR_PALETTE.length],
+          }))
+        );
+      })
+      .catch(() => setMembers([]))
+      .finally(() => setLoadingFriends(false));
+  }, []);
 
   return (
     <div
@@ -122,72 +148,82 @@ export default function CreateInviteSettings({
 
           {/* 멤버 리스트 */}
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {members.map((member) => {
-              const isSelected = invitedMembers.has(member.name);
-              return (
-                <div
-                  key={member.name}
-                  onClick={() => onToggleMember(member.name)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    padding: "8px 14px",
-                    borderRadius: 10,
-                    cursor: "pointer",
-                    background: isSelected ? "#eef2ff" : "transparent",
-                  }}
-                >
-                  {/* Avatar */}
+            {loadingFriends ? (
+              <span style={{ fontSize: 13, color: "#94a3b8", padding: "8px 14px" }}>
+                친구 목록 불러오는 중...
+              </span>
+            ) : members.length === 0 ? (
+              <span style={{ fontSize: 13, color: "#94a3b8", padding: "8px 14px" }}>
+                아직 친구가 없어요
+              </span>
+            ) : (
+              members.map((member) => {
+                const isSelected = invitedMembers.has(member.name);
+                return (
                   <div
+                    key={member.name}
+                    onClick={() => onToggleMember(member.name)}
                     style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: "50%",
-                      background: member.color,
-                      flexShrink: 0,
-                    }}
-                  />
-                  {/* Name */}
-                  <span
-                    style={{
-                      flex: 1,
-                      fontSize: 14,
-                      fontWeight: 500,
-                      color: "#111827",
-                    }}
-                  >
-                    {member.name}
-                  </span>
-                  {/* Checkbox */}
-                  <div
-                    style={{
-                      width: 22,
-                      height: 22,
-                      borderRadius: 6,
-                      border: isSelected ? "none" : "2px solid #d1d5db",
-                      background: isSelected ? "#4f46e5" : "#ffffff",
                       display: "flex",
                       alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
+                      gap: 12,
+                      padding: "8px 14px",
+                      borderRadius: 10,
+                      cursor: "pointer",
+                      background: isSelected ? "#eef2ff" : "transparent",
                     }}
                   >
-                    {isSelected && (
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                        <path
-                          d="M3 7L6 10L11 4"
-                          stroke="#ffffff"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    )}
+                    {/* Avatar */}
+                    <div
+                      style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: "50%",
+                        background: member.color,
+                        flexShrink: 0,
+                      }}
+                    />
+                    {/* Name */}
+                    <span
+                      style={{
+                        flex: 1,
+                        fontSize: 14,
+                        fontWeight: 500,
+                        color: "#111827",
+                      }}
+                    >
+                      {member.name}
+                    </span>
+                    {/* Checkbox */}
+                    <div
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: 6,
+                        border: isSelected ? "none" : "2px solid #d1d5db",
+                        background: isSelected ? "#4f46e5" : "#ffffff",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {isSelected && (
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                          <path
+                            d="M3 7L6 10L11 4"
+                            stroke="#ffffff"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
 
           {/* 선택됨 카운트 */}

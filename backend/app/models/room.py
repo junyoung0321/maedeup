@@ -21,6 +21,7 @@ class Room(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(max_length=255)
     description: Optional[str] = None
+    category: Optional[str] = Field(default=None, max_length=64)
     created_by: int = Field(foreign_key="users.id")
     status: RoomStatus = Field(default=RoomStatus.active)
     created_at: datetime = Field(default_factory=datetime.utcnow)

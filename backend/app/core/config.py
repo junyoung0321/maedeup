@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:3000"
 
     GEMINI_API_KEY: str = ""
+    KAKAO_REST_API_KEY: str = ""
 
 
 settings = Settings()

@@ -1,10 +1,45 @@
 "use client";
 
-import { Clock, MapPin, Phone, Star } from "lucide-react";
-import { mockPlaces } from "@/mocks/places";
+import { MapPin, Phone, ExternalLink } from "lucide-react";
+import { API_BASE_URL } from "@/lib/api";
 
-export default function PlaceDetailPane() {
-  const place = mockPlaces[0];
+interface PlaceResult {
+  id: string;
+  name: string;
+  address: string;
+  phone: string;
+  url: string;
+  x: string;
+  y: string;
+  category: string;
+}
+
+interface Props {
+  place: PlaceResult | null;
+}
+
+export default function PlaceDetailPane({ place }: Props) {
+  const handleSelect = async () => {
+    if (!place) return;
+    const token = localStorage.getItem("auth_token");
+    const now = new Date().toISOString();
+    await fetch(`${API_BASE_URL}/api/v1/events/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        title: place.name,
+        location_name: place.address,
+        latitude: place.y ? parseFloat(place.y) : null,
+        longitude: place.x ? parseFloat(place.x) : null,
+        starts_at: now,
+        kakao_place_id: place.id,
+        kakao_place_url: place.url || null,
+      }),
+    });
+  };
 
   return (
     <div
@@ -29,120 +64,103 @@ export default function PlaceDetailPane() {
         </h3>
       </div>
 
-      {/* Scrollable content */}
+      {/* Content */}
       <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-5">
-        {/* Name + Tags + Rating + Price */}
-        <div>
-          <h4
+        {!place ? (
+          <div
             style={{
-              fontSize: 22,
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 15,
               fontWeight: 300,
-              color: "#1e293b",
-              margin: 0,
+              color: "#94a3b8",
             }}
           >
-            {place.name}
-          </h4>
-
-          {/* Tags */}
-          <div className="flex items-center gap-1.5 mt-2">
-            {place.tags.map((tag, i) => (
-              <span
-                key={tag}
+            장소를 선택해주세요
+          </div>
+        ) : (
+          <>
+            {/* Name */}
+            <div>
+              <h4
                 style={{
-                  fontSize: 12,
+                  fontSize: 22,
                   fontWeight: 300,
-                  color: place.tagColors[i].text,
-                  backgroundColor: place.tagColors[i].bg,
-                  padding: "2px 8px",
-                  borderRadius: 4,
+                  color: "#1e293b",
+                  margin: 0,
                 }}
               >
-                {tag}
-              </span>
-            ))}
-          </div>
+                {place.name}
+              </h4>
 
-          {/* Rating + Price */}
-          <div className="flex items-center gap-1.5 mt-2">
-            <Star className="w-4 h-4 text-yellow-400 fill-yellow-400" />
-            <span style={{ fontSize: 15, fontWeight: 300, color: "#1e293b" }}>
-              {place.rating}
-            </span>
-            <span style={{ fontSize: 13, fontWeight: 300, color: "#94a3b8" }}>
-              ({place.reviewCount})
-            </span>
-            <span style={{ fontSize: 13, color: "#94a3b8", margin: "0 2px" }}>
-              ·
-            </span>
-            <span style={{ fontSize: 13, fontWeight: 300, color: "#64748b" }}>
-              {place.priceRange}
-            </span>
-          </div>
-        </div>
+              {/* Category */}
+              {place.category && (
+                <div className="flex items-center gap-1.5 mt-2">
+                  <span
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 300,
+                      color: "#4f46e5",
+                      backgroundColor: "#eef2ff",
+                      padding: "2px 8px",
+                      borderRadius: 4,
+                    }}
+                  >
+                    {place.category.split(" > ").pop()}
+                  </span>
+                </div>
+              )}
+            </div>
 
-        {/* Address / Hours / Phone */}
-        <div className="flex flex-col gap-2">
-          <div className="flex items-start gap-2">
-            <MapPin className="w-4 h-4 mt-0.5 shrink-0" style={{ color: "#94a3b8" }} />
-            <span style={{ fontSize: 13, fontWeight: 300, color: "#64748b" }}>
-              {place.address}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Clock className="w-4 h-4 shrink-0" style={{ color: "#94a3b8" }} />
-            <span style={{ fontSize: 13, fontWeight: 300, color: "#64748b" }}>
-              영업시간: {place.hours}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Phone className="w-4 h-4 shrink-0" style={{ color: "#94a3b8" }} />
-            <span style={{ fontSize: 13, fontWeight: 300, color: "#64748b" }}>
-              {place.phone}
-            </span>
-          </div>
-        </div>
-
-        {/* Menu */}
-        <div>
-          <h5
-            style={{
-              fontSize: 16,
-              fontWeight: 300,
-              color: "#1e293b",
-              margin: "0 0 12px 0",
-            }}
-          >
-            대표 메뉴
-          </h5>
-          <div className="flex flex-col gap-2">
-            {place.menu.map((item) => (
-              <div
-                key={item.name}
-                className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0"
-              >
-                <span style={{ fontSize: 14, fontWeight: 300, color: "#334155" }}>
-                  {item.name}
-                </span>
-                <span style={{ fontSize: 14, fontWeight: 300, color: "#4f46e5" }}>
-                  {item.price.toLocaleString()}원
+            {/* Address / Phone / URL */}
+            <div className="flex flex-col gap-2">
+              <div className="flex items-start gap-2">
+                <MapPin className="w-4 h-4 mt-0.5 shrink-0" style={{ color: "#94a3b8" }} />
+                <span style={{ fontSize: 13, fontWeight: 300, color: "#64748b" }}>
+                  {place.address}
                 </span>
               </div>
-            ))}
-          </div>
-        </div>
+              {place.phone && (
+                <div className="flex items-center gap-2">
+                  <Phone className="w-4 h-4 shrink-0" style={{ color: "#94a3b8" }} />
+                  <span style={{ fontSize: 13, fontWeight: 300, color: "#64748b" }}>
+                    {place.phone}
+                  </span>
+                </div>
+              )}
+              {place.url && (
+                <div className="flex items-center gap-2">
+                  <ExternalLink className="w-4 h-4 shrink-0" style={{ color: "#94a3b8" }} />
+                  <a
+                    href={place.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: 13, fontWeight: 300, color: "#4f46e5" }}
+                  >
+                    카카오맵에서 보기
+                  </a>
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Bottom buttons */}
       <div className="p-5 flex gap-3">
         <button
+          onClick={handleSelect}
+          disabled={!place}
           className="flex-1 rounded-xl transition-colors hover:opacity-90"
           style={{
             fontSize: 14,
             fontWeight: 300,
             color: "#ffffff",
-            backgroundColor: "#4f46e5",
+            backgroundColor: place ? "#4f46e5" : "#cbd5e1",
             padding: "10px 20px",
+            cursor: place ? "pointer" : "not-allowed",
           }}
         >
           이 장소로 선택

@@ -1,32 +1,54 @@
 "use client";
 
 import { useState } from "react";
-import { Sparkles, Send, Star, UtensilsCrossed, CreditCard, MessageCircle } from "lucide-react";
+import { Sparkles, Send, UtensilsCrossed, MessageCircle } from "lucide-react";
+import { API_BASE_URL } from "@/lib/api";
 
-interface Restaurant {
+interface PlaceResult {
+  id: string;
   name: string;
-  tag: string;
-  tagColor: string;
-  tagBg: string;
-  rating: string;
   address: string;
-  price: string;
+  phone: string;
+  url: string;
+  x: string;
+  y: string;
+  category: string;
 }
 
-const restaurants: Restaurant[] = [
-  { name: "을지로 골목식당", tag: "한식", tagColor: "#4f46e5", tagBg: "#eef2ff", rating: "4.5", address: "강남구 역삼동", price: "1~2만원대" },
-  { name: "모모스커피", tag: "카페", tagColor: "#d97706", tagBg: "#fef3c7", rating: "4.3", address: "강남구 논현동", price: "1만원대" },
-  { name: "오스테리아 오르조", tag: "이탈리안", tagColor: "#db2777", tagBg: "#fce7f3", rating: "4.7", address: "강남구 신사동", price: "3~4만원대" },
-  { name: "명동교자", tag: "한식", tagColor: "#4f46e5", tagBg: "#eef2ff", rating: "4.2", address: "중구 명동", price: "1만원대" },
-];
+interface Props {
+  onSelectPlace: (place: PlaceResult) => void;
+}
 
-export default function PlaceAiPane() {
+export default function PlaceAiPane({ onSelectPlace }: Props) {
   const [input, setInput] = useState("");
+  const [results, setResults] = useState<PlaceResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [searched, setSearched] = useState(false);
 
-  const handleSend = () => {
-    if (!input.trim()) return;
-    console.log("agent:", input.trim());
+  const handleSend = async () => {
+    const query = input.trim();
+    if (!query) return;
+    const token = localStorage.getItem("auth_token");
+    if (!token) return;
+    setLoading(true);
+    setSearched(true);
     setInput("");
+    try {
+      const resp = await fetch(`${API_BASE_URL}/api/v1/places/search`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ query }),
+      });
+      if (resp.ok) {
+        const data: PlaceResult[] = await resp.json();
+        setResults(data);
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -118,26 +140,45 @@ export default function PlaceAiPane() {
             모임 장소를 추천해드리겠습니다
           </span>
           <span style={{ fontSize: 12, fontWeight: 300, color: "#ffffff", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
-            {"채팅 내용을 분석하여 근처 맛집과\n모임 장소를 찾아보았어요."}
+            {"검색어를 입력하면 카카오맵에서\n모임 장소를 찾아드려요."}
           </span>
         </div>
 
         {/* List header */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <UtensilsCrossed style={{ width: 18, height: 18, color: "#1e293b" }} />
-          <span style={{ fontSize: 14, fontWeight: 300, color: "#1e293b" }}>
-            추천 장소
-          </span>
-          <span style={{ fontSize: 12, fontWeight: 300, color: "#94a3b8" }}>
-            {restaurants.length}곳
-          </span>
-        </div>
+        {(searched || results.length > 0) && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <UtensilsCrossed style={{ width: 18, height: 18, color: "#1e293b" }} />
+            <span style={{ fontSize: 14, fontWeight: 300, color: "#1e293b" }}>
+              검색 결과
+            </span>
+            {!loading && (
+              <span style={{ fontSize: 12, fontWeight: 300, color: "#94a3b8" }}>
+                {results.length}곳
+              </span>
+            )}
+          </div>
+        )}
 
-        {/* Restaurant cards */}
+        {/* Loading */}
+        {loading && (
+          <div style={{ textAlign: "center", padding: "20px 0", fontSize: 14, color: "#94a3b8" }}>
+            검색 중...
+          </div>
+        )}
+
+        {/* No results */}
+        {searched && !loading && results.length === 0 && (
+          <div style={{ textAlign: "center", padding: "20px 0", fontSize: 14, color: "#94a3b8" }}>
+            검색 결과가 없습니다
+          </div>
+        )}
+
+        {/* Place cards */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12, flex: 1 }}>
-          {restaurants.map((r, i) => (
+          {results.map((place) => (
             <div
-              key={i}
+              key={place.id}
+              onClick={() => onSelectPlace(place)}
               style={{
                 borderRadius: 14,
                 background: "#ffffff",
@@ -145,43 +186,44 @@ export default function PlaceAiPane() {
                 overflow: "hidden",
                 display: "flex",
                 flexDirection: "column",
+                cursor: "pointer",
               }}
             >
               {/* Image placeholder */}
               <div style={{ width: "100%", height: 120, background: "#d9d9de" }} />
               {/* Body */}
               <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
-                {/* Name + tag */}
+                {/* Name + category */}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <span style={{ fontSize: 15, fontWeight: 300, color: "#0f172a" }}>
-                    {r.name}
+                    {place.name}
                   </span>
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 300,
-                      color: r.tagColor,
-                      background: r.tagBg,
-                      borderRadius: 10,
-                      padding: "3px 8px",
-                      fontFamily: "Inter, sans-serif",
-                    }}
-                  >
-                    {r.tag}
-                  </span>
+                  {place.category && (
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 300,
+                        color: "#4f46e5",
+                        background: "#eef2ff",
+                        borderRadius: 10,
+                        padding: "3px 8px",
+                        fontFamily: "Inter, sans-serif",
+                      }}
+                    >
+                      {place.category.split(" > ").pop()}
+                    </span>
+                  )}
                 </div>
-                {/* Rating + address */}
+                {/* Address */}
                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <Star style={{ width: 14, height: 14, color: "#eab308", fill: "#eab308" }} />
-                  <span style={{ fontSize: 12, fontWeight: 300, color: "#0f172a" }}>{r.rating}</span>
-                  <span style={{ fontSize: 12, fontWeight: 300, color: "#94a3b8" }}>·</span>
-                  <span style={{ fontSize: 11, fontWeight: 300, color: "#64748b" }}>{r.address}</span>
+                  <span style={{ fontSize: 11, fontWeight: 300, color: "#64748b" }}>{place.address}</span>
                 </div>
-                {/* Price */}
-                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <CreditCard style={{ width: 14, height: 14, color: "#64748b" }} />
-                  <span style={{ fontSize: 11, fontWeight: 300, color: "#64748b" }}>{r.price}</span>
-                </div>
+                {/* Phone */}
+                {place.phone && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ fontSize: 11, fontWeight: 300, color: "#94a3b8" }}>{place.phone}</span>
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -204,7 +246,7 @@ export default function PlaceAiPane() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
-          placeholder="AI에게 질문하세요"
+          placeholder="장소를 검색하세요 (예: 강남 카페)"
           style={{
             flex: 1,
             padding: "10px 16px",

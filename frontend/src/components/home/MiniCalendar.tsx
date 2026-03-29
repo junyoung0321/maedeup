@@ -5,14 +5,27 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { mockCalendarEvents } from "@/mocks/calendar";
 
 export default function MiniCalendar() {
-  const [year] = useState(2026);
-  const [month] = useState(3);
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
 
   const daysInMonth = new Date(year, month, 0).getDate();
   const firstDay = new Date(year, month - 1, 1).getDay();
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
-  const today = 20;
+  const todayYear = now.getFullYear();
+  const todayMonth = now.getMonth() + 1;
+  const todayDay = now.getDate();
+  const today = year === todayYear && month === todayMonth ? todayDay : -1;
+
+  const goPrev = () => {
+    if (month === 1) { setYear((y) => y - 1); setMonth(12); }
+    else setMonth((m) => m - 1);
+  };
+  const goNext = () => {
+    if (month === 12) { setYear((y) => y + 1); setMonth(1); }
+    else setMonth((m) => m + 1);
+  };
 
   const prevMonthDays = new Date(year, month - 1, 0).getDate();
   const prevDays = Array.from(
@@ -26,9 +39,12 @@ export default function MiniCalendar() {
 
   const eventsByDay: Record<number, { title: string; color: string }[]> = {};
   mockCalendarEvents.forEach((ev) => {
-    const d = parseInt(ev.date.split("-")[2], 10);
-    if (!eventsByDay[d]) eventsByDay[d] = [];
-    eventsByDay[d].push({ title: ev.title, color: ev.color });
+    const [evYear, evMonth, evDayStr] = ev.date.split("-");
+    if (Number(evYear) === year && Number(evMonth) === month) {
+      const d = parseInt(evDayStr, 10);
+      if (!eventsByDay[d]) eventsByDay[d] = [];
+      eventsByDay[d].push({ title: ev.title, color: ev.color });
+    }
   });
 
   const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
@@ -64,13 +80,13 @@ export default function MiniCalendar() {
     >
       {/* Month navigation */}
       <div className="flex items-center justify-between px-5 py-4">
-        <button className="p-1 hover:bg-[#f1f5f9] rounded-lg transition-colors">
+        <button onClick={goPrev} className="p-1 hover:bg-[#f1f5f9] rounded-lg transition-colors">
           <ChevronLeft className="w-5 h-5 text-[#64748b]" />
         </button>
         <span className="text-[20px] font-bold text-[#1e293b]">
           {year}년 {month}월
         </span>
-        <button className="p-1 hover:bg-[#f1f5f9] rounded-lg transition-colors">
+        <button onClick={goNext} className="p-1 hover:bg-[#f1f5f9] rounded-lg transition-colors">
           <ChevronRight className="w-5 h-5 text-[#64748b]" />
         </button>
       </div>

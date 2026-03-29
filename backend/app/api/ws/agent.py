@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from typing import Optional
 
 import redis.asyncio as aioredis
@@ -10,7 +11,9 @@ from app.core.config import settings
 from app.core.security import verify_token
 from app.db.session import AsyncSessionLocal
 from app.models.chat import ChatMessage, PaneType
+from app.services.gemini import call_gemini
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -96,6 +99,33 @@ async def agent_ws(
             )
             await r.publish(channel, out)
             await r.rpush(f"agent_queue:{room_id}", out)
+
+            logger.warning(f"[AGENT] role={role}, has_key={bool(settings.GEMINI_API_KEY)}")
+            if role == "user" and settings.GEMINI_API_KEY:
+                logger.warning(f"[AGENT] Calling Gemini for message: {content[:50]}")
+                ai_text = await call_gemini(content)
+                logger.warning(f"[AGENT] Gemini response: {ai_text[:50]}")
+
+                async with AsyncSessionLocal() as session:
+                    ai_msg = ChatMessage(
+                        pane_type=PaneType.agent,
+                        role="assistant",
+                        content=ai_text,
+                        sender="AI 어시스턴트",
+                    )
+                    session.add(ai_msg)
+                    await session.commit()
+                    await session.refresh(ai_msg)
+
+                ai_out = json.dumps({
+                    "id": ai_msg.id,
+                    "pane_type": ai_msg.pane_type.value,
+                    "role": ai_msg.role,
+                    "content": ai_msg.content,
+                    "sender": ai_msg.sender,
+                    "created_at": ai_msg.created_at.isoformat(),
+                })
+                await r.publish(channel, ai_out)
 
     except WebSocketDisconnect:
         pass

@@ -3,16 +3,34 @@
 import { Check, Share2, List, Calendar, MapPin, Users } from "lucide-react";
 import Avatar from "@/components/ui/Avatar";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/hooks/useAuth";
+
+function formatMeetingDate(date: Date): string {
+  const y = date.getFullYear();
+  const m = date.getMonth() + 1;
+  const d = date.getDate();
+  const dayNames = ["일", "월", "화", "수", "목", "금", "토"];
+  const hours = date.getHours();
+  const ampm = hours < 12 ? "오전" : "오후";
+  const h = hours % 12 || 12;
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${y}년 ${m}월 ${d}일 (${dayNames[date.getDay()]}) ${ampm} ${h}:${min}`;
+}
 
 export default function CompletionPage() {
   const router = useRouter();
+  const { user } = useAuth();
+
+  const meetingDate = new Date();
+  meetingDate.setDate(meetingDate.getDate() + 1);
+  meetingDate.setHours(15, 0, 0, 0);
 
   const meetingInfo = {
     title: "졸업 프로젝트 회의",
-    date: "2026년 3월 23일 (월) 오후 3:00",
+    date: formatMeetingDate(meetingDate),
     location: "강남역 스타벅스 3층",
     members: [
-      { name: "김준영", color: "#818cf8" },
+      { name: user?.name ?? "나", color: "#818cf8" },
       { name: "정은빈", color: "#f472b6" },
       { name: "한도이", color: "#34d399" },
       { name: "가인영", color: "#fbbf24" },

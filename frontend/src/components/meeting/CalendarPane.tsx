@@ -2,11 +2,15 @@
 
 import { useState, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Check, Vote } from "lucide-react";
+import { API_BASE_URL } from "@/lib/api";
 
 /* ── Types ─────────────────────────────────────────────── */
 interface DayAvail {
-  top?: { count: number; total: number };
-  bottom?: { count: number; total: number };
+  count: number;
+  total: number;
+  available: string[];
+  busy: string[];
+  unconnected: string[];
 }
 
 interface TimeSlot {
@@ -37,7 +41,7 @@ const AVATAR_PALETTE = [
 
 function availColor(count: number, total: number): string {
   if (count === total) return "#22c55e";
-  if (count >= 3) return "#eab308";
+  if (count > 0) return "#eab308";
   return "#ef4444";
 }
 
@@ -61,9 +65,6 @@ function mapFreeSlot(slot: ApiFreeSlot): TimeSlot {
   };
 }
 
-const highlightedDays = new Set([23, 25]);
-const selectedDay = 24;
-
 /* ── Component ──────────────────────────────────────────── */
 export default function CalendarPane() {
   const [selected, setSelected] = useState<Set<number>>(new Set([0, 1]));
@@ -71,17 +72,41 @@ export default function CalendarPane() {
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [month, setMonth] = useState(new Date().getMonth() + 1);
+  const [dateRangeLabel, setDateRangeLabel] = useState<string>("");
+  const [clickedDay, setClickedDay] = useState<number | null>(null);
 
-  const year = 2026;
-  const month = 3;
   const daysInMonth = new Date(year, month, 0).getDate();
   const firstDay = new Date(year, month - 1, 1).getDay();
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
   const blanks = Array.from({ length: firstDay }, (_, i) => i);
 
+  const highlightedDays = new Set(
+    Object.entries(availabilityData)
+      .filter(([, avail]) => avail.count > 0)
+      .map(([day]) => Number(day))
+  );
+
+  const goPrev = () => {
+    setClickedDay(null);
+    if (month === 1) { setYear((y) => y - 1); setMonth(12); }
+    else setMonth((m) => m - 1);
+  };
+  const goNext = () => {
+    setClickedDay(null);
+    if (month === 12) { setYear((y) => y + 1); setMonth(1); }
+    else setMonth((m) => m + 1);
+  };
+
   useEffect(() => {
+    setLoading(true);
+    setError(false);
+    setAvailabilityData({});
+    setTimeSlots([]);
+
     const token = getToken();
-    fetch("/api/v1/calendar/free-slots?room_id=room-1", {
+    fetch(`${API_BASE_URL}/api/v1/calendar/free-slots?room_id=room-1&year=${year}&month=${month}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
       .then((res) => {
@@ -91,18 +116,37 @@ export default function CalendarPane() {
       .then((data) => {
         const dayMap: Record<number, DayAvail> = {};
         for (const [dateStr, avail] of Object.entries(data.dates)) {
-          const day = new Date(dateStr).getDate();
-          dayMap[day] = avail;
+          const day = parseInt(dateStr.split("-")[2], 10);
+          dayMap[day] = {
+            count: avail.count,
+            total: avail.total,
+            available: avail.available ?? [],
+            busy: avail.busy ?? [],
+            unconnected: avail.unconnected ?? [],
+          };
         }
         setAvailabilityData(dayMap);
         setTimeSlots(data.free_slots.map(mapFreeSlot));
+
+        const dateKeys = Object.keys(data.dates).sort();
+        if (dateKeys.length >= 2) {
+          const d1 = parseInt(dateKeys[0].split("-")[2], 10);
+          const d2 = parseInt(dateKeys[dateKeys.length - 1].split("-")[2], 10);
+          setDateRangeLabel(`${month}월 ${d1}일 ~ ${d2}일 기준`);
+        } else if (dateKeys.length === 1) {
+          setDateRangeLabel(`${month}월 ${parseInt(dateKeys[0].split("-")[2], 10)}일 기준`);
+        } else {
+          setDateRangeLabel(`${month}월 기준`);
+        }
+
         setLoading(false);
       })
       .catch(() => {
         setError(true);
+        setDateRangeLabel(`${month}월 기준`);
         setLoading(false);
       });
-  }, []);
+  }, [year, month]);
 
   const toggleSlot = (idx: number) => {
     setSelected((prev) => {
@@ -117,7 +161,7 @@ export default function CalendarPane() {
     <div
       style={{
         width: 414,
-        height: 733,
+        minHeight: 733,
         borderRadius: 20,
         border: "1px solid #e2e8f0",
         boxShadow: "0 4px 3.5px rgba(0,0,0,0.25)",
@@ -161,6 +205,7 @@ export default function CalendarPane() {
         }}
       >
         <div
+          onClick={goPrev}
           style={{
             width: 20,
             height: 20,
@@ -185,6 +230,7 @@ export default function CalendarPane() {
           매듭 {year}년 {month}월
         </span>
         <div
+          onClick={goNext}
           style={{
             width: 20,
             height: 20,
@@ -239,12 +285,18 @@ export default function CalendarPane() {
             <div key={`b-${b}`} style={{ height: 52 }} />
           ))}
           {days.map((day) => {
-            const isSelected = day === selectedDay;
             const isHighlighted = highlightedDays.has(day);
             const avail = availabilityData[day];
+            const todayDate = new Date();
+            const isToday =
+              year === todayDate.getFullYear() &&
+              month === todayDate.getMonth() + 1 &&
+              day === todayDate.getDate();
+            const isClicked = day === clickedDay;
             return (
               <div
                 key={day}
+                onClick={() => setClickedDay(isClicked ? null : day)}
                 style={{
                   display: "flex",
                   flexDirection: "column",
@@ -252,54 +304,33 @@ export default function CalendarPane() {
                   justifyContent: "center",
                   height: 52,
                   width: 50,
-                  borderRadius: isSelected || isHighlighted ? 8 : 0,
+                  borderRadius: isHighlighted || isToday || isClicked ? 8 : 0,
                   cursor: "pointer",
-                  background: isSelected
-                    ? "#4f46e5"
-                    : isHighlighted
-                      ? "#e0e7ff"
-                      : "transparent",
+                  background: isHighlighted ? "#e0e7ff" : "transparent",
+                  border: isToday || isClicked ? "2px solid #4f46e5" : undefined,
                 }}
               >
                 <span
                   style={{
                     fontSize: 13,
                     fontWeight: "normal",
-                    color: isSelected ? "#ffffff" : "#334155",
+                    color: "#334155",
                     lineHeight: 1.4,
                   }}
                 >
                   {day}
                 </span>
-                {avail?.top && (
+                {avail && (
                   <span
                     style={{
                       fontSize: 9,
                       fontWeight: "normal",
-                      color:
-                        isSelected && avail.top.count === avail.top.total
-                          ? "#22c55e"
-                          : availColor(avail.top.count, avail.top.total),
+                      color: availColor(avail.count, avail.total),
                       lineHeight: 1.2,
                       fontFamily: "Inter, sans-serif",
                     }}
                   >
-                    {avail.top.count}/{avail.top.total}
-                  </span>
-                )}
-                {avail?.bottom && (
-                  <span
-                    style={{
-                      fontSize: 9,
-                      fontWeight: "normal",
-                      color: isSelected
-                        ? "#ffffff"
-                        : availColor(avail.bottom.count, avail.bottom.total),
-                      lineHeight: 1.2,
-                      fontFamily: "Inter, sans-serif",
-                    }}
-                  >
-                    {avail.bottom.count}/{avail.bottom.total}
+                    {avail.count}/{avail.total}
                   </span>
                 )}
               </div>
@@ -327,6 +358,63 @@ export default function CalendarPane() {
           overflow: "hidden",
         }}
       >
+        {/* 날짜 클릭 시 멤버 현황 */}
+        {clickedDay !== null && (
+          <div
+            style={{
+              marginBottom: 10,
+              padding: "10px 12px",
+              borderRadius: 10,
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
+            }}
+          >
+            <span
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: "#1e293b",
+                display: "block",
+                marginBottom: 6,
+                fontFamily: "Inter, sans-serif",
+              }}
+            >
+              {month}월 {clickedDay}일 멤버 현황
+            </span>
+            {(availabilityData[clickedDay]?.available ?? []).length > 0 && (
+              <div style={{ display: "flex", gap: 4, marginBottom: 3, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, color: "#94a3b8" }}>✅</span>
+                <span style={{ fontSize: 11, color: "#16a34a", fontFamily: "Inter, sans-serif" }}>
+                  {availabilityData[clickedDay]!.available!.join(", ")}
+                </span>
+              </div>
+            )}
+            {(availabilityData[clickedDay]?.busy ?? []).length > 0 && (
+              <div style={{ display: "flex", gap: 4, marginBottom: 3, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, color: "#94a3b8" }}>❌</span>
+                <span style={{ fontSize: 11, color: "#ef4444", fontFamily: "Inter, sans-serif" }}>
+                  {availabilityData[clickedDay]!.busy!.join(", ")}
+                </span>
+              </div>
+            )}
+            {(availabilityData[clickedDay]?.unconnected ?? []).length > 0 && (
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, color: "#94a3b8" }}>🔗</span>
+                <span style={{ fontSize: 11, color: "#94a3b8", fontFamily: "Inter, sans-serif" }}>
+                  {availabilityData[clickedDay]!.unconnected!.join(", ")}
+                </span>
+              </div>
+            )}
+            {(availabilityData[clickedDay]?.available ?? []).length === 0 &&
+              (availabilityData[clickedDay]?.busy ?? []).length === 0 &&
+              (availabilityData[clickedDay]?.unconnected ?? []).length === 0 && (
+              <span style={{ fontSize: 11, color: "#94a3b8", fontFamily: "Inter, sans-serif" }}>
+                멤버 정보 없음
+              </span>
+            )}
+          </div>
+        )}
+
         <span
           style={{
             fontSize: 15,
@@ -346,7 +434,7 @@ export default function CalendarPane() {
             marginBottom: 8,
           }}
         >
-          3월 23일 ~ 25일 기준
+          {dateRangeLabel}
         </span>
 
         {/* Loading / Error / Time slots */}
@@ -382,6 +470,8 @@ export default function CalendarPane() {
               display: "flex",
               flexDirection: "column",
               gap: 4,
+              overflowY: "auto",
+              maxHeight: 180,
             }}
           >
             {timeSlots.map((slot, idx) => {

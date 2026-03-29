@@ -24,20 +24,18 @@ EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 SLOT_MINUTES = 30
 WORK_HOUR_START = 9
 WORK_HOUR_END = 22
-LOOKAHEAD_DAYS = 14
+LOOKAHEAD_DAYS = 90
 
 
 # ── 응답 모델 ──────────────────────────────────────────────
 
 
-class HalfDay(BaseModel):
-    count: int
-    total: int
-
-
 class DayInfo(BaseModel):
-    top: HalfDay    # 오전 (09:00~12:00) 가용 인원
-    bottom: HalfDay  # 오후 (12:00~22:00) 가용 인원
+    count: int              # 해당 날 가능한 멤버 수
+    total: int              # 전체 연동 멤버 수
+    available: list[str]    # 가능한 멤버 이름 목록
+    busy: list[str]         # 바쁜 멤버 이름 목록
+    unconnected: list[str]  # 캘린더 미연동 멤버 이름 목록
 
 
 class FreeSlot(BaseModel):
@@ -155,37 +153,39 @@ def _format_label(start: datetime, end: datetime) -> str:
     )
 
 
-def _is_busy_in_halfday(busy_periods: list[dict], kst_date: date, *, morning: bool) -> bool:
-    """오전(09-12) 또는 오후(12-22) 구간에 바쁜 시간이 겹치는지 확인합니다."""
-    if morning:
-        half_start = datetime(kst_date.year, kst_date.month, kst_date.day, 9, tzinfo=KST)
-        half_end = datetime(kst_date.year, kst_date.month, kst_date.day, 12, tzinfo=KST)
-    else:
-        half_start = datetime(kst_date.year, kst_date.month, kst_date.day, 12, tzinfo=KST)
-        half_end = datetime(kst_date.year, kst_date.month, kst_date.day, 22, tzinfo=KST)
-    return any(bp["start"] < half_end and bp["end"] > half_start for bp in busy_periods)
+def _has_event_on_day(busy_periods: list[dict], kst_date: date) -> bool:
+    """해당 날짜(KST 00:00~24:00) 안에 일정이 하나라도 있는지 확인합니다."""
+    day_start = datetime(kst_date.year, kst_date.month, kst_date.day, tzinfo=KST)
+    day_end = day_start + timedelta(days=1)
+    return any(bp["start"] < day_end and bp["end"] > day_start for bp in busy_periods)
 
 
 def _compute_dates(
     busy_by_user: dict[str, list[dict]],
     start_date: date,
+    lookahead_days: int = LOOKAHEAD_DAYS,
+    unconnected_names: list[str] | None = None,
 ) -> dict[str, DayInfo]:
-    """날짜별 오전/오후 가용 인원(count/total)을 계산합니다."""
+    """날짜별 가용 인원(count/total) 및 멤버별 가능/불가능 목록을 계산합니다."""
     total = len(busy_by_user)
+    unconnected = unconnected_names or []
     result: dict[str, DayInfo] = {}
-    for offset in range(LOOKAHEAD_DAYS):
+    for offset in range(lookahead_days):
         kst_date = start_date + timedelta(days=offset)
-        morning_count = sum(
-            1 for periods in busy_by_user.values()
-            if not _is_busy_in_halfday(periods, kst_date, morning=True)
-        )
-        afternoon_count = sum(
-            1 for periods in busy_by_user.values()
-            if not _is_busy_in_halfday(periods, kst_date, morning=False)
-        )
+        available_names = [
+            name for name, periods in busy_by_user.items()
+            if not _has_event_on_day(periods, kst_date)
+        ]
+        busy_names = [
+            name for name, periods in busy_by_user.items()
+            if _has_event_on_day(periods, kst_date)
+        ]
         result[kst_date.isoformat()] = DayInfo(
-            top=HalfDay(count=morning_count, total=total),
-            bottom=HalfDay(count=afternoon_count, total=total),
+            count=len(available_names),
+            total=total,
+            available=available_names,
+            busy=busy_names,
+            unconnected=unconnected,
         )
     return result
 
@@ -245,19 +245,36 @@ def _compute_free_slots(
 async def get_free_slots(
     response: Response,
     room_id: str = Query(..., description="채팅방 ID"),
+    year: int = Query(default=None, description="조회 연도 (없으면 오늘 기준)"),
+    month: int = Query(default=None, description="조회 월 (없으면 오늘 기준)"),
     _current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     """
     캘린더 수집 동의 멤버의 가능 시간대와 날짜별 가용 현황을 반환합니다.
-    일정 제목/내용은 수집하지 않으며, 오늘부터 14일 범위를 조회합니다.
+    일정 제목/내용은 수집하지 않으며, year/month 지정 시 해당 월, 없으면 오늘부터 90일 범위를 조회합니다.
     """
     # 브라우저·프록시 캐싱 방지 — 항상 구글 캘린더 API 실시간 호출
     response.headers["Cache-Control"] = "no-store"
 
     today_kst = datetime.now(tz=KST).date()
-    time_min = datetime(today_kst.year, today_kst.month, today_kst.day, tzinfo=KST).astimezone(timezone.utc)
-    time_max = time_min + timedelta(days=LOOKAHEAD_DAYS)
+
+    if year and month:
+        start_date = date(year, month, 1)
+        # 해당 월의 마지막 날 계산 (다음 달 1일 - 1일)
+        if month == 12:
+            next_month_start = date(year + 1, 1, 1)
+        else:
+            next_month_start = date(year, month + 1, 1)
+        days_in_month = (next_month_start - start_date).days
+        time_min = datetime(year, month, 1, tzinfo=KST).astimezone(timezone.utc)
+        time_max = datetime(next_month_start.year, next_month_start.month, next_month_start.day, tzinfo=KST).astimezone(timezone.utc)
+        lookahead = days_in_month
+    else:
+        start_date = today_kst
+        time_min = datetime(today_kst.year, today_kst.month, today_kst.day, tzinfo=KST).astimezone(timezone.utc)
+        time_max = time_min + timedelta(days=LOOKAHEAD_DAYS)
+        lookahead = LOOKAHEAD_DAYS
 
     # 전체 유저 조회
     all_users_result = await session.execute(select(User))
@@ -271,7 +288,7 @@ async def get_free_slots(
     for user in consenting:
         busy_by_user[user.name] = await _get_busy_periods(user, time_min, time_max, session)
 
-    dates = _compute_dates(busy_by_user, today_kst)
+    dates = _compute_dates(busy_by_user, start_date, lookahead, unconnected_names)
     free_slots = _compute_free_slots(busy_by_user, time_min, time_max)
 
     return FreeSlotsResponse(free_slots=free_slots, dates=dates)

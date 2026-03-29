@@ -8,6 +8,15 @@ interface Props {
   onClose: () => void;
 }
 
+function getNextWednesday(): string {
+  const d = new Date();
+  const daysUntilWed = ((3 - d.getDay() + 7) % 7) || 7;
+  d.setDate(d.getDate() + daysUntilWed);
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  return `${m}월 ${day}일(수) 오전 09 ~ 13:00`;
+}
+
 export default function AiRecommendDetailModal({ open, onClose }: Props) {
   const router = useRouter();
 
@@ -63,7 +72,7 @@ export default function AiRecommendDetailModal({ open, onClose }: Props) {
           >
             <CalendarDays style={{ width: 20, height: 20, color: "#16a34a" }} />
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <span style={{ fontSize: 15, fontWeight: 600, color: "#16a34a" }}>3월 25일(수) 오전 09 ~ 13:00</span>
+              <span style={{ fontSize: 15, fontWeight: 600, color: "#16a34a" }}>{getNextWednesday()}</span>
               <span style={{ fontSize: 12, fontWeight: 400, color: "#64748b" }}>참여 가능 · 김예지 외 2명</span>
             </div>
           </div>

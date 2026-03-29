@@ -16,13 +16,23 @@ interface Props {
   };
 }
 
+function getDefaultSchedule(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  const names = ["일", "월", "화", "수", "목", "금", "토"];
+  return `${y}년 ${m}월 ${day}일 (${names[d.getDay()]}) 14:00 ~ 17:00`;
+}
+
 const defaultMeeting = {
   id: "1",
   name: "봄 프로젝트 킥오프 미팅",
   badge: "프로젝트 · 스터디",
-  schedule: "2026년 3월 28일 (토) 14:00 ~ 17:00",
+  schedule: getDefaultSchedule(),
   location: "스타포크퍼블릭스 강남점",
-  members: "참여자 3명 (김준영, 박민수, 이서연)",
+  members: "참여자 3명",
 };
 
 interface ProgressItem {

@@ -12,8 +12,17 @@ interface Notification {
   isNew?: boolean;
 }
 
+function formatKoreanDate(daysOffset: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - daysOffset);
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  const names = ["일", "월", "화", "수", "목", "금", "토"];
+  return `${m}월 ${day}일(${names[d.getDay()]})`;
+}
+
 const notifications: Notification[] = [
-  { id: 1, icon: "📋", iconColor: "#4f46e5", title: "팀 프로젝트 일정이 확정되었습니다", description: "3월 23일(월) 오후 3시 ~ 오후 5시", time: "6 시간 전", isNew: true },
+  { id: 1, icon: "📋", iconColor: "#4f46e5", title: "팀 프로젝트 일정이 확정되었습니다", description: `${formatKoreanDate(0)} 오후 3시 ~ 오후 5시`, time: "6 시간 전", isNew: true },
   { id: 2, icon: "💬", iconColor: "#f472b6", title: "임지수님이 만든 속소에 변경되었습니다", description: "AI가 근처에 핫는 장소 업데이트 완료", time: "어제" },
   { id: 3, icon: "👤", iconColor: "#fb923c", title: "새 친구 요청이 도착했습니다", description: "이승우님이 친구 요청을 보냈습니다", time: "2일 전", isNew: true },
   { id: 4, icon: "🔔", iconColor: "#ef4444", title: "미팅 알림: 곧 시작 되겠습니다", description: "10분 뒤에 팀 미팅 시작이니 서둘러주세요!", time: "3일 전" },

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { API_BASE_URL } from "@/lib/api";
 
 function decodeJwt(token: string): { calendar_consent?: boolean; exp: number } {
   const payload = token.split(".")[1];
@@ -34,7 +35,7 @@ export default function ConsentPage() {
 
     if (consent && token) {
       try {
-        const resp = await fetch("/api/v1/users/me/consent", {
+        const resp = await fetch(`${API_BASE_URL}/api/v1/users/me/consent`, {
           method: "PATCH",
           headers: {
             "Content-Type": "application/json",

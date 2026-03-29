@@ -25,8 +25,9 @@ export function useAgentWebSocket(roomId: string, sender: string) {
       return;
     }
 
+    const wsBase = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
     const ws = new WebSocket(
-      `ws://localhost:8000/ws/agent/${roomId}?token=${encodeURIComponent(token)}`
+      `${wsBase}/ws/agent/${roomId}?token=${encodeURIComponent(token)}`
     );
     wsRef.current = ws;
     setStatus("connecting");

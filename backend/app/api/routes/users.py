@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +29,15 @@ class FriendInfo(BaseModel):
     name: str
     email: str
     picture: Optional[str]
+
+
+class FriendRequest(BaseModel):
+    addressee_id: int
+
+
+class FriendRequestResponse(BaseModel):
+    id: int
+    status: str
 
 
 @router.patch("/me/consent", response_model=ConsentResponse)
@@ -81,3 +90,59 @@ async def get_friends(
         FriendInfo(id=u.id, name=u.name, email=u.email, picture=u.picture)
         for u in result.scalars().all()
     ]
+
+
+@router.get("/search", response_model=list[FriendInfo])
+async def search_users(
+    q: str = Query(..., min_length=1),
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """이름 또는 이메일로 유저를 검색합니다. 본인은 제외됩니다."""
+    user_id = int(current_user.sub)
+    pattern = f"%{q}%"
+    result = await session.execute(
+        select(User).where(
+            or_(User.name.ilike(pattern), User.email.ilike(pattern)),
+            User.id != user_id,
+        ).limit(20)
+    )
+    return [
+        FriendInfo(id=u.id, name=u.name, email=u.email, picture=u.picture)
+        for u in result.scalars().all()
+    ]
+
+
+@router.post("/friends", response_model=FriendRequestResponse, status_code=201)
+async def send_friend_request(
+    body: FriendRequest,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """친구 요청을 보냅니다. 이미 요청이 존재하면 409를 반환합니다."""
+    requester_id = int(current_user.sub)
+
+    if requester_id == body.addressee_id:
+        raise HTTPException(status_code=400, detail="자기 자신에게 친구 요청을 보낼 수 없습니다.")
+
+    addressee = await session.get(User, body.addressee_id)
+    if not addressee:
+        raise HTTPException(status_code=404, detail="존재하지 않는 유저입니다.")
+
+    existing = await session.execute(
+        select(Friendship).where(
+            or_(
+                (Friendship.requester_id == requester_id) & (Friendship.addressee_id == body.addressee_id),
+                (Friendship.requester_id == body.addressee_id) & (Friendship.addressee_id == requester_id),
+            )
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="이미 친구 요청이 존재합니다.")
+
+    friendship = Friendship(requester_id=requester_id, addressee_id=body.addressee_id)
+    session.add(friendship)
+    await session.commit()
+    await session.refresh(friendship)
+
+    return FriendRequestResponse(id=friendship.id, status=friendship.status.value)

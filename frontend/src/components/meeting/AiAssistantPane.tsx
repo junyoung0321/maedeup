@@ -2,23 +2,23 @@
 
 import { useState } from "react";
 import { Sparkles, Send, MessageCircle } from "lucide-react";
+import { useAgentWebSocket } from "@/hooks/useAgentWebSocket";
+import { useAuth } from "@/hooks/useAuth";
 
 export default function AiAssistantPane() {
   const [input, setInput] = useState("");
+  const { user } = useAuth();
+  const { messages, sendMessage, status } = useAgentWebSocket("room-1", user?.name ?? "나");
+
+  const isAiLoading =
+    status === "connecting" ||
+    (messages.length > 0 && messages[messages.length - 1].role === "user");
 
   const handleSend = () => {
     if (!input.trim()) return;
-    console.log("agent:", input.trim());
+    sendMessage(input.trim());
     setInput("");
   };
-
-  const messages = [
-    { text: "저희 회식 언제 할까요?", sender: "이서연", isMe: false },
-    { text: "저는 다음주엔 전부 가능해요.", sender: "박민수", isMe: false },
-    { text: "저도 다음주엔 다 가능합니다!", sender: "김준영", isMe: true },
-    { text: "시간은 언제가 좋으세요?", sender: "이서연", isMe: false },
-    { text: "저녁 7시 괜찮을까요?", sender: "김준영", isMe: true },
-  ];
 
   return (
     <div
@@ -88,120 +88,142 @@ export default function AiAssistantPane() {
         </div>
 
         {/* Messages */}
-        {messages.map((msg, i) => (
-          <div
-            key={i}
-            style={{
-              display: "flex",
-              flexDirection: msg.isMe ? "row-reverse" : "row",
-              gap: 8,
-              alignItems: "flex-end",
-            }}
-          >
-            {!msg.isMe && (
-              <div
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: "50%",
-                  background: "#818cf8",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "#fff",
-                  fontSize: 12,
-                  fontWeight: 300,
-                  flexShrink: 0,
-                }}
-              >
-                {msg.sender.charAt(0)}
-              </div>
-            )}
+        {messages.map((msg, i) => {
+          const isMe = msg.role === "user";
+          const senderLabel = isMe
+            ? (msg.sender ?? user?.name ?? "나")
+            : (msg.sender ?? "AI 어시스턴트");
+          return (
             <div
+              key={msg.id ?? i}
               style={{
-                maxWidth: "75%",
                 display: "flex",
-                flexDirection: "column",
-                alignItems: msg.isMe ? "flex-end" : "flex-start",
+                flexDirection: isMe ? "row-reverse" : "row",
+                gap: 8,
+                alignItems: "flex-end",
               }}
             >
-              {!msg.isMe && (
-                <span style={{ fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>
-                  {msg.sender}
-                </span>
+              {!isMe && (
+                <div
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: "50%",
+                    background: "#818cf8",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#fff",
+                    fontSize: 12,
+                    fontWeight: 300,
+                    flexShrink: 0,
+                  }}
+                >
+                  {senderLabel.charAt(0)}
+                </div>
               )}
               <div
                 style={{
-                  padding: "10px 16px",
-                  borderRadius: 16,
-                  ...(msg.isMe
-                    ? {
-                        borderBottomRightRadius: 6,
-                        background: "#4f46e5",
-                        color: "#ffffff",
-                      }
-                    : {
-                        borderBottomLeftRadius: 6,
-                        background: "#f1f5f9",
-                        color: "#000000",
-                      }),
-                  fontSize: 17,
-                  fontWeight: 300,
-                  lineHeight: 1.5,
-                  whiteSpace: "pre-wrap" as const,
+                  maxWidth: "75%",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: isMe ? "flex-end" : "flex-start",
                 }}
               >
-                {msg.text}
+                {!isMe && (
+                  <span style={{ fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>
+                    {senderLabel}
+                  </span>
+                )}
+                <div
+                  style={{
+                    padding: "10px 16px",
+                    borderRadius: 16,
+                    ...(isMe
+                      ? {
+                          borderBottomRightRadius: 6,
+                          background: "#4f46e5",
+                          color: "#ffffff",
+                        }
+                      : {
+                          borderBottomLeftRadius: 6,
+                          background: "#f1f5f9",
+                          color: "#000000",
+                        }),
+                    fontSize: 17,
+                    fontWeight: 300,
+                    lineHeight: 1.5,
+                    whiteSpace: "pre-wrap" as const,
+                  }}
+                >
+                  {msg.content}
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
 
-        {/* AI Card */}
-        <div
-          style={{
-            background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #a855f7 100%)",
-            borderRadius: 16,
-            padding: 20,
-            display: "flex",
-            flexDirection: "column",
-            gap: 12,
-            marginTop: 4,
-            boxShadow: "0 4px 14px rgba(79, 70, 229, 0.13)",
-          }}
-        >
-          {/* AI icon + label row */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Sparkles style={{ width: 20, height: 20, color: "#ffffff" }} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: "#ffffff", fontFamily: "Inter, sans-serif" }}>
-              AI 어시스턴트
-            </span>
-          </div>
-          <span style={{ fontSize: 18, fontWeight: 600, color: "#ffffff", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}>
-            일정 조율을 시작하겠습니다
-          </span>
-          <span
+        {/* AI Card — 메시지 없을 때 또는 AI 응답 대기 중 */}
+        {(messages.length === 0 || isAiLoading) && (
+          <div
             style={{
-              fontSize: 13,
-              fontWeight: 300,
-              color: "#ffffff",
-              lineHeight: 1.5,
-              whiteSpace: "pre-wrap",
-              fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+              background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #a855f7 100%)",
+              borderRadius: 16,
+              padding: 20,
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+              marginTop: 4,
+              boxShadow: "0 4px 14px rgba(79, 70, 229, 0.13)",
             }}
           >
-            {"채팅 내용을 분석하여 모임원들의\n가능한 시간대를 정리하고 있어요."}
-          </span>
-          {/* Divider */}
-          <div style={{ width: "100%", height: 1, background: "rgba(255,255,255,0.19)" }} />
-          {/* Status row */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#34d399", flexShrink: 0 }} />
-            <span style={{ fontSize: 12, fontWeight: 300, color: "#ffffff", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}>
-              분석 중 · 5명의 일정 확인됨
+            {/* AI icon + label row */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Sparkles style={{ width: 20, height: 20, color: "#ffffff" }} />
+              <span style={{ fontSize: 12, fontWeight: 600, color: "#ffffff", fontFamily: "Inter, sans-serif" }}>
+                AI 어시스턴트
+              </span>
+            </div>
+            <span style={{ fontSize: 18, fontWeight: 600, color: "#ffffff", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}>
+              {isAiLoading ? "분석 중..." : "일정 조율을 시작하겠습니다"}
             </span>
+            <span
+              style={{
+                fontSize: 13,
+                fontWeight: 300,
+                color: "#ffffff",
+                lineHeight: 1.5,
+                whiteSpace: "pre-wrap",
+                fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+              }}
+            >
+              {isAiLoading
+                ? "채팅 내용을 분석하여 모임원들의\n가능한 시간대를 정리하고 있어요."
+                : "메시지를 보내 일정 조율을 시작해보세요."}
+            </span>
+            {/* Divider */}
+            <div style={{ width: "100%", height: 1, background: "rgba(255,255,255,0.19)" }} />
+            {/* Status row */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: isAiLoading ? "#fbbf24" : "#34d399",
+                  flexShrink: 0,
+                }}
+              />
+              <span style={{ fontSize: 12, fontWeight: 300, color: "#ffffff", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}>
+                {status === "connecting"
+                  ? "연결 중..."
+                  : isAiLoading
+                  ? "AI가 응답 중..."
+                  : "연결됨 · 메시지를 기다리는 중"}
+              </span>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Input */}

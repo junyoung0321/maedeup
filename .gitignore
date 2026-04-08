@@ -21,6 +21,10 @@ out/
 postgres_data/
 redis_data/
 
+# Data crawler
+data/.venv/
+data/output/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -1,13 +1,13 @@
 "use client";
 
-import Header from "@/components/layout/Header";
-import CompletionPage from "@/components/meeting/CompletionPage";
+import { useEffect } from "react";
+import { useRouter, useParams } from "next/navigation";
 
-export default function DonePage() {
-  return (
-    <div className="min-h-screen bg-white flex flex-col">
-      <Header showSteps currentStep="done" />
-      <CompletionPage />
-    </div>
-  );
+export default function DoneRedirect() {
+  const router = useRouter();
+  const params = useParams();
+  useEffect(() => {
+    router.replace(`/meeting/${params.id}`);
+  }, [router, params.id]);
+  return null;
 }

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { User, Send } from "lucide-react";
 import { useSocialWebSocket } from "@/hooks/useSocialWebSocket";
+import { useMeeting } from "@/contexts/MeetingContext";
 
 function getNameFromToken(): string {
   try {
@@ -23,7 +24,9 @@ export default function ChatPane() {
     setCurrentUserName(getNameFromToken());
   }, []);
 
-  const { messages, sendMessage } = useSocialWebSocket("room-1", currentUserName);
+  let roomId = "room-1";
+  try { roomId = useMeeting().roomId || "room-1"; } catch { /* not in provider */ }
+  const { messages, sendMessage } = useSocialWebSocket(roomId, currentUserName);
 
   const handleSend = () => {
     if (!input.trim()) return;

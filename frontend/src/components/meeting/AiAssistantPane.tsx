@@ -4,11 +4,34 @@ import { useState } from "react";
 import { Sparkles, Send, MessageCircle } from "lucide-react";
 import { useAgentWebSocket } from "@/hooks/useAgentWebSocket";
 import { useAuth } from "@/hooks/useAuth";
+import { useMeeting } from "@/contexts/MeetingContext";
+import type { ContextMode } from "@/types";
+
+const PANE_TYPE_MAP: Record<string, ContextMode> = {
+  schedule: "schedule",
+  place: "place",
+  done: "done",
+};
 
 export default function AiAssistantPane() {
   const [input, setInput] = useState("");
   const { user } = useAuth();
-  const { messages, sendMessage, status } = useAgentWebSocket("room-1", user?.name ?? "나");
+  let setContextMode: ((mode: ContextMode) => void) | undefined;
+  try { setContextMode = useMeeting().setContextMode; } catch { /* not in provider */ }
+
+  let roomId = "room-1";
+  try { roomId = useMeeting().roomId || "room-1"; } catch { /* already tried above */ }
+
+  const { messages, sendMessage, status } = useAgentWebSocket(
+    roomId,
+    user?.name ?? "나",
+    {
+      onPaneSwitch: (paneType) => {
+        const mode = PANE_TYPE_MAP[paneType];
+        if (mode && setContextMode) setContextMode(mode);
+      },
+    },
+  );
 
   const isAiLoading =
     status === "connecting" ||

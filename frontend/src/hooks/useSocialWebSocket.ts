@@ -1,15 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ChatMessagePayload } from "@/types";
 
-export interface ChatMessagePayload {
-  id: number;
-  pane_type: string;
-  role: string;
-  content: string;
-  sender: string | null;
-  created_at: string;
-}
+export type { ChatMessagePayload };
 
 type WsStatus = "connecting" | "open" | "closed" | "error";
 

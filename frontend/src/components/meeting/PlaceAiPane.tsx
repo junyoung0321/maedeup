@@ -2,18 +2,8 @@
 
 import { useState } from "react";
 import { Sparkles, Send, UtensilsCrossed, MessageCircle } from "lucide-react";
-import { API_BASE_URL } from "@/lib/api";
-
-interface PlaceResult {
-  id: string;
-  name: string;
-  address: string;
-  phone: string;
-  url: string;
-  x: string;
-  y: string;
-  category: string;
-}
+import { apiFetch } from "@/lib/api";
+import type { PlaceResult } from "@/types";
 
 interface Props {
   onSelectPlace: (place: PlaceResult) => void;
@@ -28,24 +18,17 @@ export default function PlaceAiPane({ onSelectPlace }: Props) {
   const handleSend = async () => {
     const query = input.trim();
     if (!query) return;
-    const token = localStorage.getItem("auth_token");
-    if (!token) return;
     setLoading(true);
     setSearched(true);
     setInput("");
     try {
-      const resp = await fetch(`${API_BASE_URL}/api/v1/places/search`, {
+      const data = await apiFetch<PlaceResult[]>("/api/v1/places/search", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
         body: JSON.stringify({ query }),
       });
-      if (resp.ok) {
-        const data: PlaceResult[] = await resp.json();
-        setResults(data);
-      }
+      setResults(data);
+    } catch {
+      /* API unavailable */
     } finally {
       setLoading(false);
     }

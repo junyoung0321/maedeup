@@ -1,19 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ChatMessagePayload } from "@/types";
 
-export interface ChatMessagePayload {
-  id: number;
-  pane_type: string;
-  role: string;
-  content: string;
-  sender: string | null;
-  created_at: string;
-}
+export type { ChatMessagePayload };
 
 type WsStatus = "connecting" | "open" | "closed" | "error";
 
-export function useAgentWebSocket(roomId: string, sender: string) {
+interface AgentOptions {
+  /** Called when AI response suggests switching context (e.g. pane_type: "place") */
+  onPaneSwitch?: (paneType: string) => void;
+}
+
+export function useAgentWebSocket(roomId: string, sender: string, options?: AgentOptions) {
   const [messages, setMessages] = useState<ChatMessagePayload[]>([]);
   const [status, setStatus] = useState<WsStatus>("connecting");
   const wsRef = useRef<WebSocket | null>(null);
@@ -37,6 +36,11 @@ export function useAgentWebSocket(roomId: string, sender: string) {
     ws.onmessage = (event) => {
       const msg: ChatMessagePayload = JSON.parse(event.data as string);
       setMessages((prev) => [...prev, msg]);
+
+      // Auto-switch context panel based on AI pane_type
+      if (msg.pane_type && options?.onPaneSwitch) {
+        options.onPaneSwitch(msg.pane_type);
+      }
     };
 
     ws.onerror = () => setStatus("error");

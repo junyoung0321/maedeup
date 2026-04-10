@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { API_BASE_URL } from "@/lib/api";
+import { apiFetchWithFallback } from "@/lib/api";
 import {
   Users,
   Search,
@@ -24,12 +24,7 @@ const AVATAR_PALETTE = [
   "#60a5fa", "#a78bfa", "#f87171", "#4ade80", "#facc15",
 ];
 
-interface FriendInfo {
-  id: number;
-  name: string;
-  email: string;
-  picture?: string;
-}
+import type { FriendInfo } from "@/types";
 
 interface Props {
   invitedMembers: Set<string>;
@@ -57,12 +52,8 @@ export default function CreateInviteSettings({
   const [loadingFriends, setLoadingFriends] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem("auth_token");
-    fetch(`${API_BASE_URL}/api/v1/users/friends`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-      .then((res) => (res.ok ? res.json() : []))
-      .then((friends: FriendInfo[]) => {
+    apiFetchWithFallback<FriendInfo[]>("/api/v1/users/friends", [])
+      .then((friends) => {
         setMembers(
           friends.map((f, i) => ({
             name: f.name,
@@ -70,7 +61,6 @@ export default function CreateInviteSettings({
           }))
         );
       })
-      .catch(() => setMembers([]))
       .finally(() => setLoadingFriends(false));
   }, []);
 

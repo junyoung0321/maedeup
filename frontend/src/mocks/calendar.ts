@@ -20,4 +20,13 @@ export const mockCalendarEvents: CalendarEvent[] = [
   { id: "12", title: "러닝 크루", date: "2026-03-29", color: "#16a34a" },
   { id: "13", title: "등산 모임", date: "2026-03-30", color: "#ef4444" },
   { id: "14", title: "봉사활동", date: "2026-03-31", color: "#16a34a" },
+  { id: "15", title: "기획 스터디", date: "2026-04-02", color: "#4f46e5" },
+  { id: "16", title: "팀 프로젝트", date: "2026-04-07", color: "#4f46e5" },
+  { id: "17", title: "팀 회의", date: "2026-04-10", color: "#4f46e5" },
+  { id: "18", title: "등산 모임", date: "2026-04-15", color: "#16a34a" },
+  { id: "19", title: "영어 회화", date: "2026-04-16", color: "#ea580c" },
+  { id: "20", title: "러닝 크루", date: "2026-04-19", color: "#16a34a" },
+  { id: "21", title: "기획 스터디", date: "2026-04-22", color: "#4f46e5" },
+  { id: "22", title: "졸프 회의", date: "2026-04-23", color: "#ef4444" },
+  { id: "23", title: "독서 모임", date: "2026-04-28", color: "#4f46e5" },
 ];

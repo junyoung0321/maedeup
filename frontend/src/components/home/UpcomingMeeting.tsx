@@ -91,7 +91,7 @@ export default function UpcomingMeeting() {
           </span>
           <div className="flex flex-col gap-2 w-full mt-2">
             <button
-              onClick={() => router.push("/meeting/upcoming-1/schedule")}
+              onClick={() => router.push("/meeting/upcoming-1")}
               className="w-full py-2 rounded-[10px] bg-white text-[#4f46e5] text-[14px] font-bold hover:bg-white/90 transition-colors"
             >
               바로 입장

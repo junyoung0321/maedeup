@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { API_BASE_URL } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 function decodeJwt(token: string): { calendar_consent?: boolean; exp: number } {
   const payload = token.split(".")[1];
@@ -33,21 +33,13 @@ export default function ConsentPage() {
     setLoading(true);
     const token = localStorage.getItem("auth_token");
 
-    if (consent && token) {
+    if (consent) {
       try {
-        const resp = await fetch(`${API_BASE_URL}/api/v1/users/me/consent`, {
+        const data = await apiFetch<{ token: string }>("/api/v1/users/me/consent", {
           method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
           body: JSON.stringify({ calendar_consent: true }),
         });
-        if (resp.ok) {
-          const data = await resp.json();
-          // 갱신된 JWT(calendar_consent: true 포함)를 저장
-          localStorage.setItem("auth_token", data.token);
-        }
+        localStorage.setItem("auth_token", data.token);
       } catch {
         // 동의 저장 실패해도 메인으로 이동
       }

@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Check, Vote } from "lucide-react";
-import { API_BASE_URL } from "@/lib/api";
+import { apiFetchWithFallback } from "@/lib/api";
+import { useMeeting } from "@/contexts/MeetingContext";
 
 /* ── Types ─────────────────────────────────────────────── */
 interface DayAvail {
@@ -45,14 +46,6 @@ function availColor(count: number, total: number): string {
   return "#ef4444";
 }
 
-function getToken(): string | null {
-  try {
-    return localStorage.getItem("auth_token");
-  } catch {
-    return null;
-  }
-}
-
 function mapFreeSlot(slot: ApiFreeSlot): TimeSlot {
   const isFull = slot.available_count === slot.total_count;
   return {
@@ -67,6 +60,8 @@ function mapFreeSlot(slot: ApiFreeSlot): TimeSlot {
 
 /* ── Component ──────────────────────────────────────────── */
 export default function CalendarPane() {
+  let roomId = "room-1";
+  try { roomId = useMeeting().roomId || "room-1"; } catch { /* not in provider */ }
   const [selected, setSelected] = useState<Set<number>>(new Set([0, 1]));
   const [availabilityData, setAvailabilityData] = useState<Record<number, DayAvail>>({});
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
@@ -105,14 +100,10 @@ export default function CalendarPane() {
     setAvailabilityData({});
     setTimeSlots([]);
 
-    const token = getToken();
-    fetch(`${API_BASE_URL}/api/v1/calendar/free-slots?room_id=room-1&year=${year}&month=${month}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error();
-        return res.json() as Promise<CalendarApiResponse>;
-      })
+    apiFetchWithFallback<CalendarApiResponse>(
+      `/api/v1/calendar/free-slots?room_id=${roomId}&year=${year}&month=${month}`,
+      { dates: {}, free_slots: [] },
+    )
       .then((data) => {
         const dayMap: Record<number, DayAvail> = {};
         for (const [dateStr, avail] of Object.entries(data.dates)) {

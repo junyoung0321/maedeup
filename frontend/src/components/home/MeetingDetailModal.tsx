@@ -123,7 +123,7 @@ export default function MeetingDetailModal({ open, onClose, meeting }: Props) {
         {/* Button */}
         <div style={{ padding: "24px 28px", display: "flex", justifyContent: "center" }}>
           <button
-            onClick={() => { onClose(); router.push(`/meeting/${m.id}/schedule`); }}
+            onClick={() => { onClose(); router.push(`/meeting/${m.id}`); }}
             style={{ padding: "12px 32px", borderRadius: 14, border: "none", background: "linear-gradient(135deg, #4338ca, #4f46e5)", color: "#ffffff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}
           >
             모임 상세보기

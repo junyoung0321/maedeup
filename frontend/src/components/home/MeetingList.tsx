@@ -3,24 +3,9 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
-import { API_BASE_URL } from "@/lib/api";
-
-interface Room {
-  id: number;
-  name: string;
-  description: string | null;
-  category: string | null;
-  created_by: number;
-  created_at: string;
-}
-
-interface MeetingItem {
-  id: string;
-  name: string;
-  schedule: string;
-  badge: string;
-  badgeColor: string;
-}
+import { apiFetchWithFallback } from "@/lib/api";
+import { mockMeetings } from "@/mocks/meetings";
+import type { Room, MeetingItem } from "@/types";
 
 const CATEGORY_MAP: Record<string, { badge: string; badgeColor: string }> = {
   study:  { badge: "스터디",  badgeColor: "#4f46e5" },
@@ -28,10 +13,6 @@ const CATEGORY_MAP: Record<string, { badge: string; badgeColor: string }> = {
   sports: { badge: "스포츠",  badgeColor: "#ea580c" },
   hobby:  { badge: "취미",    badgeColor: "#7c3aed" },
 };
-
-function getToken(): string | null {
-  try { return localStorage.getItem("auth_token"); } catch { return null; }
-}
 
 function mapRoom(room: Room): MeetingItem {
   const cat = room.category ? CATEGORY_MAP[room.category] : null;
@@ -51,13 +32,12 @@ export default function MeetingList() {
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    const token = getToken();
-    fetch(`${API_BASE_URL}/api/v1/rooms/`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-      .then((res) => { if (!res.ok) throw new Error(); return res.json() as Promise<Room[]>; })
-      .then((data) => { setMeetings(data.map(mapRoom)); setLoading(false); })
-      .catch(() => { setError(true); setLoading(false); });
+    const fallback: MeetingItem[] = mockMeetings.map((m) => ({ id: m.id, name: m.name, schedule: m.schedule, badge: m.badge, badgeColor: m.badgeColor }));
+    apiFetchWithFallback<Room[]>("/api/v1/rooms/", [])
+      .then((data) => {
+        setMeetings(data.length > 0 ? data.map(mapRoom) : fallback);
+        setLoading(false);
+      });
   }, []);
 
   return (
@@ -85,7 +65,7 @@ export default function MeetingList() {
           {meetings.map((meeting) => (
             <div
               key={meeting.id}
-              onClick={() => router.push(`/meeting/${meeting.id}/schedule`)}
+              onClick={() => router.push(`/meeting/${meeting.id}`)}
               className="bg-[#f9fafb] rounded-[12px] p-3 flex items-center gap-3 cursor-pointer hover:bg-[#f1f5f9] transition-colors shrink-0"
               style={{ height: 103 }}
             >
@@ -107,7 +87,7 @@ export default function MeetingList() {
               </div>
               {meeting.badge === "지난 일정" && (
                 <button
-                  onClick={(e) => { e.stopPropagation(); router.push(`/meeting/${meeting.id}/schedule`); }}
+                  onClick={(e) => { e.stopPropagation(); router.push(`/meeting/${meeting.id}`); }}
                   className="animate-float shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-full text-white text-[12px] font-semibold"
                   style={{ background: "linear-gradient(135deg, #4338ca, #4f46e5)" }}
                 >

@@ -4,23 +4,14 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { UserPlus, Send } from "lucide-react";
 import AddFriendModal from "./AddFriendModal";
-import { API_BASE_URL } from "@/lib/api";
-
-interface FriendInfo {
-  id: number;
-  name: string;
-  email: string;
-  picture: string | null;
-}
+import { apiFetchWithFallback } from "@/lib/api";
+import { mockFriends } from "@/mocks/friends";
+import type { FriendInfo } from "@/types";
 
 const AVATAR_PALETTE = [
   "#c7d2fe", "#93c5fd", "#86efac", "#fca5a5",
   "#fde68a", "#fbcfe8", "#a5f3fc", "#d9f99d",
 ];
-
-function getToken(): string | null {
-  try { return localStorage.getItem("auth_token"); } catch { return null; }
-}
 
 export default function FriendList() {
   const router = useRouter();
@@ -30,13 +21,9 @@ export default function FriendList() {
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    const token = getToken();
-    fetch(`${API_BASE_URL}/api/v1/users/friends`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-      .then((res) => { if (!res.ok) throw new Error(); return res.json() as Promise<FriendInfo[]>; })
-      .then((data) => { setFriends(data); setLoading(false); })
-      .catch(() => { setError(true); setLoading(false); });
+    const fallback: FriendInfo[] = mockFriends.map((f, i) => ({ id: i + 1, name: f.name, email: "", picture: null }));
+    apiFetchWithFallback<FriendInfo[]>("/api/v1/users/friends", fallback)
+      .then((data) => { setFriends(data); setLoading(false); });
   }, []);
 
   return (
@@ -78,7 +65,7 @@ export default function FriendList() {
                     </span>
                   </div>
                   <button
-                    onClick={() => router.push(`/meeting/dm-${friend.id}/schedule`)}
+                    onClick={() => router.push(`/meeting/dm-${friend.id}`)}
                     className="w-[42px] h-[37px] rounded-full bg-[#4f46e5] flex items-center justify-center shrink-0 hover:bg-[#4338ca] transition-colors"
                   >
                     <Send className="w-[18px] h-[18px] text-white" />

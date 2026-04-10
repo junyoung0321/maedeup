@@ -1,18 +1,8 @@
 "use client";
 
 import { MapPin, Phone, ExternalLink } from "lucide-react";
-import { API_BASE_URL } from "@/lib/api";
-
-interface PlaceResult {
-  id: string;
-  name: string;
-  address: string;
-  phone: string;
-  url: string;
-  x: string;
-  y: string;
-  category: string;
-}
+import { apiFetch } from "@/lib/api";
+import type { PlaceResult } from "@/types";
 
 interface Props {
   place: PlaceResult | null;
@@ -21,14 +11,9 @@ interface Props {
 export default function PlaceDetailPane({ place }: Props) {
   const handleSelect = async () => {
     if (!place) return;
-    const token = localStorage.getItem("auth_token");
     const now = new Date().toISOString();
-    await fetch(`${API_BASE_URL}/api/v1/events/`, {
+    await apiFetch("/api/v1/events/", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
       body: JSON.stringify({
         title: place.name,
         location_name: place.address,
@@ -38,7 +23,7 @@ export default function PlaceDetailPane({ place }: Props) {
         kakao_place_id: place.id,
         kakao_place_url: place.url || null,
       }),
-    });
+    }).catch(() => { /* API unavailable */ });
   };
 
   return (

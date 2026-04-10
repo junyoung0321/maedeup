@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Header from "@/components/layout/Header";
 import CreateBasicInfo from "@/components/meeting/CreateBasicInfo";
 import CreateInviteSettings from "@/components/meeting/CreateInviteSettings";
-import { API_BASE_URL } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 export interface MeetingFormState {
   name: string;
@@ -43,14 +43,9 @@ export default function CreateMeetingPage() {
   };
 
   const handleCreate = async () => {
-    const token = localStorage.getItem("auth_token");
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/rooms/`, {
+      const data = await apiFetch<{ id: number }>("/api/v1/rooms/", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify({
           name: form.name,
           description: form.description,
@@ -58,15 +53,9 @@ export default function CreateMeetingPage() {
           member_names: Array.from(form.invitedMembers),
         }),
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        alert(`모임 생성 실패: ${err.detail ?? res.statusText}`);
-        return;
-      }
-      const data = await res.json();
-      router.push(`/meeting/${data.id}/schedule`);
-    } catch {
-      alert("모임 생성 중 오류가 발생했습니다.");
+      router.push(`/meeting/${data.id}`);
+    } catch (e) {
+      alert(`모임 생성 실패: ${e instanceof Error ? e.message : "오류 발생"}`);
     }
   };
 

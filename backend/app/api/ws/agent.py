@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import suppress
 import json
 import logging
 from typing import Optional
@@ -53,7 +54,10 @@ async def _redis_subscriber(
                 ignore_subscribe_messages=True, timeout=0.01
             )
             if msg:
-                await websocket.send_text(msg["data"])
+                try:
+                    await websocket.send_text(msg["data"])
+                except WebSocketDisconnect:
+                    break
             else:
                 await asyncio.sleep(0.01)
     finally:
@@ -120,7 +124,10 @@ async def agent_ws(
     try:
         while True:
             raw = await websocket.receive_text()
-            payload = json.loads(raw)
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
 
             role = payload.get("role", "user")
             content = payload.get("content", "")
@@ -250,6 +257,9 @@ async def agent_ws(
                     "date_hint": None,
                     "place_hint": None,
                     "place_coord": None,
+                    "confirmed_date": None,
+                    "confirmed_time": None,
+                    "confirmed_place": None,
                     "default_place_hint": slot_context.get("default_place_hint") or "서울 강남",
                     "headcount": None,
                     "meeting_type": None,
@@ -320,6 +330,7 @@ async def agent_ws(
         pass
     finally:
         stop_event.set()
-        await subscriber_task
+        with suppress(Exception):
+            await subscriber_task
         manager.remove(room_id, websocket)
         await r.aclose()

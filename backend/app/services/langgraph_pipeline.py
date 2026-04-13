@@ -208,7 +208,10 @@ async def _compress_message_history(state: GraphState) -> None:
             f"Conversation:\n{older_block}"
         )
 
-    summary = (await call_gemini(prompt)).strip()
+    try:
+        summary = (await call_gemini(prompt)).strip()
+    except Exception:
+        summary = ""
     state["conversation_summary"] = summary or state.get("conversation_summary", "")
     state["recent_messages"] = recent_messages
 
@@ -350,7 +353,10 @@ async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
         f"대화 맥락:\n{_serialize_context(state) or '(empty)'}\n\n"
         "모르면 null로 반환하세요."
     )
-    return _extract_json_object(await call_gemini(prompt))
+    try:
+        return _extract_json_object(await call_gemini(prompt))
+    except Exception:
+        return {}
 
 
 async def _resolve_place_coord(keyword: str | None) -> dict[str, str] | None:
@@ -436,7 +442,10 @@ async def _build_slot_question(state: GraphState) -> str:
         f"지금 물어볼 슬롯: {slot_labels.get(missing_slots[0], '정보') if missing_slots else '없음'}\n"
         f"이미 파악된 정보: {json.dumps(known_slots, ensure_ascii=False)}"
     )
-    question = (await call_gemini(prompt)).strip()
+    try:
+        question = (await call_gemini(prompt)).strip()
+    except Exception:
+        question = ""
     return question or "모임 일정을 이어가려면 날짜, 장소, 인원, 모임 종류 중 빠진 정보를 알려주세요."
 
 
@@ -469,50 +478,61 @@ async def _get_user_busy_periods(
     db: AsyncSession,
 ) -> list[dict[str, Any]]:
     """Google Calendar freeBusy API로 특정 유저의 바쁜 시간대(시작/종료)만 조회합니다."""
-    if not user.google_access_token:
-        return []
-
-    payload = {
-        "timeMin": time_min.isoformat(),
-        "timeMax": time_max.isoformat(),
-        "timeZone": "Asia/Seoul",
-        "items": [{"id": "primary"}],
-    }
-    headers = {"Authorization": f"Bearer {user.google_access_token}"}
-
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(GOOGLE_FREEBUSY_URL, json=payload, headers=headers)
-
-        # 토큰 만료 시 refresh
-        if resp.status_code == 401 and user.google_refresh_token:
-            token_resp = await client.post(
-                "https://oauth2.googleapis.com/token",
-                data={
-                    "client_id": settings.GOOGLE_CLIENT_ID,
-                    "client_secret": settings.GOOGLE_CLIENT_SECRET,
-                    "refresh_token": user.google_refresh_token,
-                    "grant_type": "refresh_token",
-                },
-            )
-            if token_resp.status_code == 200:
-                new_token = token_resp.json().get("access_token")
-                if new_token:
-                    user.google_access_token = new_token
-                    db.add(user)
-                    await db.commit()
-                    headers = {"Authorization": f"Bearer {new_token}"}
-                    resp = await client.post(GOOGLE_FREEBUSY_URL, json=payload, headers=headers)
-
-        if resp.status_code != 200:
+    try:
+        if not user.google_access_token:
             return []
 
-    result = []
-    busy_periods = resp.json().get("calendars", {}).get("primary", {}).get("busy", [])
-    for item in busy_periods:
-        start = datetime.fromisoformat(item["start"].replace("Z", "+00:00"))
-        end = datetime.fromisoformat(item["end"].replace("Z", "+00:00"))
-        result.append({"start": start, "end": end})
-    return result
+        payload = {
+            "timeMin": time_min.isoformat(),
+            "timeMax": time_max.isoformat(),
+            "timeZone": "Asia/Seoul",
+            "items": [{"id": "primary"}],
+        }
+        headers = {"Authorization": f"Bearer {user.google_access_token}"}
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(GOOGLE_FREEBUSY_URL, json=payload, headers=headers)
+
+            # 토큰 만료 시 refresh
+            if resp.status_code == 401 and user.google_refresh_token:
+                token_resp = await client.post(
+                    "https://oauth2.googleapis.com/token",
+                    data={
+                        "client_id": settings.GOOGLE_CLIENT_ID,
+                        "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                        "refresh_token": user.google_refresh_token,
+                        "grant_type": "refresh_token",
+                    },
+                )
+                if token_resp.status_code == 200:
+                    new_token = token_resp.json().get("access_token")
+                    if new_token:
+                        user.google_access_token = new_token
+                        db.add(user)
+                        await db.commit()
+                        headers = {"Authorization": f"Bearer {new_token}"}
+                        resp = await client.post(
+                            GOOGLE_FREEBUSY_URL,
+                            json=payload,
+                            headers=headers,
+                        )
+
+            if resp.status_code != 200:
+                return []
+
+        result = []
+        busy_periods = resp.json().get("calendars", {}).get("primary", {}).get("busy", [])
+        for item in busy_periods:
+            start_raw = item.get("start")
+            end_raw = item.get("end")
+            if not start_raw or not end_raw:
+                continue
+            start = datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
+            end = datetime.fromisoformat(end_raw.replace("Z", "+00:00"))
+            result.append({"start": start, "end": end})
+        return result
+    except Exception:
+        return []
 
 
 def _find_free_slots(
@@ -775,7 +795,10 @@ async def general_response(state: GraphState) -> GraphState:
         "있다고 짧게 안내하세요.\n\n"
         f"대화 내용:\n{context or '(empty)'}"
     )
-    reply = (await call_gemini(prompt)).strip()
+    try:
+        reply = (await call_gemini(prompt)).strip()
+    except Exception:
+        reply = ""
     if not reply:
         reply = "안녕하세요! 모임 일정이나 장소 조율이 필요하시면 말씀해주세요 😊"
     await _emit_assistant_message(state["room_id"], state["db"], reply, state)
@@ -959,6 +982,7 @@ async def supervisor_validation(state: GraphState) -> GraphState:
 async def vote_card_creation(state: GraphState) -> GraphState:
     selected_slot = state["calendar_free_slots"][0] if state.get("calendar_free_slots") else {}
     start_at = _parse_iso_datetime(selected_slot.get("start_at")) if selected_slot else None
+    meeting_id = selected_slot.get("meeting_id") or selected_slot.get("id")
     if state.get("date_hint"):
         state["confirmed_date"] = state.get("date_hint")
     if start_at is not None:
@@ -967,6 +991,7 @@ async def vote_card_creation(state: GraphState) -> GraphState:
         "type": "vote_card",
         "title": f"{state.get('meeting_type') or '모임'} 시간 투표",
         "room_id": state["room_id"],
+        "meeting_id": meeting_id,
         "time_options": [
             {
                 "slot_id": slot.get("slot_id"),
@@ -1059,7 +1084,7 @@ async def place_recommendation(state: GraphState) -> GraphState:
             reranked: list[dict[str, Any]] = []
             for place in top_candidates:
                 place_copy = dict(place)
-                place_copy["score"] = score_map.get(str(place.get("place_id")), 1.0)
+                place_copy["score"] = score_map.get(str(place.get("place_id")), 0.5)
                 disliked_keyword = _contains_disliked_keyword(
                     str(place_copy.get("category", "")),
                     disliked_foods,
@@ -1073,11 +1098,11 @@ async def place_recommendation(state: GraphState) -> GraphState:
             reranked.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
             ranked_places = reranked + place_results[10:]
         except Exception:
-            ranked_places = sorted(
-                place_results,
-                key=lambda item: float(item.get("score", 1.0)),
-                reverse=True,
-            )
+            ranked_places = []
+            for place in place_results:
+                place_copy = dict(place)
+                place_copy["score"] = 0.5
+                ranked_places.append(place_copy)
     else:
         ranked_places = []
 

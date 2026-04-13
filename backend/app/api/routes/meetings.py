@@ -59,6 +59,15 @@ async def confirm_meeting(
     if body.end_at <= body.scheduled_at:
         raise HTTPException(status_code=400, detail="end_at must be after scheduled_at")
 
+    member_result = await session.execute(
+        select(RoomMember).where(
+            RoomMember.user_id == int(current_user.sub),
+            RoomMember.room_id == body.room_id,
+        )
+    )
+    if member_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
     meeting = MeetingSchedule(
         room_id=body.room_id,
         title=body.title,
@@ -89,6 +98,15 @@ async def vote_meeting(
     meeting = result.scalar_one_or_none()
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
+
+    member_result = await session.execute(
+        select(RoomMember).where(
+            RoomMember.user_id == int(current_user.sub),
+            RoomMember.room_id == meeting.room_id,
+        )
+    )
+    if member_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=403, detail="Forbidden")
 
     vote_options = meeting.vote_options or []
     if body.option_index < 0 or body.option_index >= len(vote_options):

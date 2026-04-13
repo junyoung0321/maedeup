@@ -16,6 +16,7 @@ export interface VoteCardPayload {
   type: "vote_card";
   title: string;
   room_id: string;
+  meeting_id?: number;
   time_options: VoteCardTimeOption[];
   headcount: number;
 }
@@ -86,6 +87,9 @@ export function useAgentWebSocket(roomId: string, sender: string, options?: Agen
   const [maedeupCard, setMaedeupCard] = useState<MaedeupCardPayload | null>(null);
   const [status, setStatus] = useState<WsStatus>("connecting");
   const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const shouldReconnectRef = useRef(true);
 
   useEffect(() => {
     const token = localStorage.getItem("auth_token");
@@ -110,56 +114,102 @@ export function useAgentWebSocket(roomId: string, sender: string, options?: Agen
     }
 
     const wsBase = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
-    const ws = new WebSocket(
-      `${wsBase}/ws/agent/${roomId}?token=${encodeURIComponent(token)}`
-    );
-    wsRef.current = ws;
-    setStatus("connecting");
+    const scheduleReconnect = (code?: number) => {
+      if (!shouldReconnectRef.current) return;
+      if (code === 4001) return;
+      if (reconnectTimeoutRef.current !== null) return;
+      if (reconnectAttemptsRef.current >= 5) return;
 
-    ws.onopen = () => setStatus("open");
+      const delay = 1000 * (2 ** reconnectAttemptsRef.current);
+      reconnectAttemptsRef.current += 1;
+      reconnectTimeoutRef.current = window.setTimeout(() => {
+        reconnectTimeoutRef.current = null;
+        connect();
+      }, delay);
+    };
 
-    ws.onmessage = (event) => {
-      const parsed = JSON.parse(event.data as string) as ChatMessagePayload | AgentCardPayload;
+    const connect = () => {
+      setStatus("connecting");
+      const ws = new WebSocket(
+        `${wsBase}/ws/agent/${roomId}?token=${encodeURIComponent(token)}`
+      );
+      wsRef.current = ws;
 
-      if ("type" in parsed) {
-        if (parsed.type === "vote_card") {
-          setVoteCard(parsed);
-        } else if (parsed.type === "vote_update") {
-          setVoteUpdate(parsed);
-        } else if (parsed.type === "place_recommendation") {
-          setPlaceRecommendation(parsed);
-        } else if (parsed.type === "maedeup_card") {
-          setMaedeupCard(parsed);
+      ws.onopen = () => {
+        if (reconnectTimeoutRef.current !== null) {
+          window.clearTimeout(reconnectTimeoutRef.current);
+          reconnectTimeoutRef.current = null;
         }
-        return;
-      }
+        reconnectAttemptsRef.current = 0;
+        setStatus("open");
+      };
 
-      const msg = parsed;
-      setMessages((prev) => {
-        // 중복 방지 (REST 로드 후 WS에서 같은 메시지가 올 경우)
-        if (msg.id && prev.some((m) => m.id === msg.id)) return prev;
-        return [...prev, msg];
-      });
+      ws.onmessage = (event) => {
+        let parsed: ChatMessagePayload | AgentCardPayload;
+        try {
+          parsed = JSON.parse(event.data as string) as ChatMessagePayload | AgentCardPayload;
+        } catch {
+          return;
+        }
 
-      // Auto-switch context panel based on AI pane_type
-      if (msg.pane_type && options?.onPaneSwitch) {
-        options.onPaneSwitch(msg.pane_type);
-      }
+        if ("type" in parsed) {
+          if (parsed.type === "vote_card") {
+            setVoteCard(parsed);
+          } else if (parsed.type === "vote_update") {
+            setVoteUpdate(parsed);
+          } else if (parsed.type === "place_recommendation") {
+            setPlaceRecommendation(parsed);
+          } else if (parsed.type === "maedeup_card") {
+            setMaedeupCard(parsed);
+          }
+          return;
+        }
+
+        const msg = parsed;
+        setMessages((prev) => {
+          // 중복 방지 (REST 로드 후 WS에서 같은 메시지가 올 경우)
+          if (msg.id && prev.some((m) => m.id === msg.id)) return prev;
+          return [...prev, msg];
+        });
+
+        // Auto-switch context panel based on AI pane_type
+        if (msg.pane_type && options?.onPaneSwitch) {
+          options.onPaneSwitch(msg.pane_type);
+        }
+      };
+
+      ws.onerror = () => {
+        setStatus("error");
+        scheduleReconnect(0);
+      };
+
+      ws.onclose = (event) => {
+        setStatus("closed");
+        // 1008: Policy Violation - 토큰 없음 또는 만료
+        if (event.code === 1008) {
+          shouldReconnectRef.current = false;
+          localStorage.removeItem("auth_token");
+          window.location.href = "/";
+          return;
+        }
+        scheduleReconnect(event.code);
+      };
     };
 
-    ws.onerror = () => setStatus("error");
-
-    ws.onclose = (event) => {
-      setStatus("closed");
-      // 1008: Policy Violation - 토큰 없음 또는 만료
-      if (event.code === 1008) {
-        localStorage.removeItem("auth_token");
-        window.location.href = "/";
-      }
-    };
+    shouldReconnectRef.current = true;
+    reconnectAttemptsRef.current = 0;
+    connect();
 
     return () => {
-      ws.close();
+      shouldReconnectRef.current = false;
+      if (reconnectTimeoutRef.current !== null) {
+        window.clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      const ws = wsRef.current;
+      if (ws) {
+        ws.close();
+      }
     };
   }, [roomId]);
 

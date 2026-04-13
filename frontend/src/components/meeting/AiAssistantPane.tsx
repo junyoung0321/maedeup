@@ -74,7 +74,7 @@ export default function AiAssistantPane() {
     setConfirmedMeetingId(null);
     setVotedOptionIndex(null);
     setVoteCounts({});
-    setTotalVoters(voteCard?.headcount ?? 0);
+    setTotalVoters(0);
     setIsVoting(false);
     setVoteError(null);
   }, [voteCard]);
@@ -163,7 +163,8 @@ export default function AiAssistantPane() {
   };
 
   const handleVote = async (optionIndex: number) => {
-    if (!confirmedMeetingId || votedOptionIndex !== null) return;
+    const meetingId = voteCard?.meeting_id ?? confirmedMeetingId;
+    if (!meetingId || votedOptionIndex !== null) return;
 
     setIsVoting(true);
     setVoteError(null);
@@ -173,7 +174,7 @@ export default function AiAssistantPane() {
         votes: Record<string, number>;
         total_voters: number;
         selected_option_index: number;
-      }>(`/api/v1/meetings/${confirmedMeetingId}/vote`, {
+      }>(`/api/v1/meetings/${meetingId}/vote`, {
         method: "POST",
         body: JSON.stringify({ option_index: optionIndex }),
       });
@@ -373,7 +374,7 @@ export default function AiAssistantPane() {
                         padding: 0,
                       }}
                     >
-                      {option.label} ({optionVotes}표 / {totalVoters}명)
+                      {option.label} ({optionVotes}표 / {totalVoters > 0 ? `${totalVoters}명` : "투표 중"})
                     </button>
                     <button
                       onClick={() => handleVote(optionIndex)}

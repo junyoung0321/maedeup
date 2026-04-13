@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import suppress
 import json
 from typing import Optional
 
@@ -36,13 +37,19 @@ async def _redis_subscriber(
                 try:
                     parsed = json.loads(data)
                 except json.JSONDecodeError:
-                    await websocket.send_text(data)
+                    try:
+                        await websocket.send_text(data)
+                    except WebSocketDisconnect:
+                        break
                     continue
 
-                if parsed.get("type") == "reminder":
-                    await websocket.send_text(json.dumps(parsed, ensure_ascii=False))
-                else:
-                    await websocket.send_text(data)
+                try:
+                    if parsed.get("type") == "reminder":
+                        await websocket.send_text(json.dumps(parsed, ensure_ascii=False))
+                    else:
+                        await websocket.send_text(data)
+                except WebSocketDisconnect:
+                    break
             else:
                 await asyncio.sleep(0.01)
     finally:
@@ -86,7 +93,10 @@ async def social_ws(
     try:
         while True:
             raw = await websocket.receive_text()
-            payload = json.loads(raw)
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
 
             role = payload.get("role", "user")
             content = payload.get("content", "")
@@ -126,7 +136,8 @@ async def social_ws(
         pass
     finally:
         stop_event.set()
-        await subscriber_task
+        with suppress(Exception):
+            await subscriber_task
         manager.remove(room_id, websocket)
         await r.aclose()
 

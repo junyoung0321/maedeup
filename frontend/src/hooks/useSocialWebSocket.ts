@@ -27,6 +27,9 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     useState<IntentDetectedPayload | null>(null);
   const [status, setStatus] = useState<WsStatus>("connecting");
   const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const shouldReconnectRef = useRef(true);
 
   useEffect(() => {
     const token = localStorage.getItem("auth_token");
@@ -51,56 +54,102 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     }
 
     const wsBase = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
-    const ws = new WebSocket(
-      `${wsBase}/ws/social/${roomId}?token=${encodeURIComponent(token)}`
-    );
-    wsRef.current = ws;
-    setStatus("connecting");
+    const scheduleReconnect = (code?: number) => {
+      if (!shouldReconnectRef.current) return;
+      if (code === 4001) return;
+      if (reconnectTimeoutRef.current !== null) return;
+      if (reconnectAttemptsRef.current >= 5) return;
 
-    ws.onopen = () => setStatus("open");
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data as string);
-
-      // intent_detected 이벤트와 일반 채팅 메시지 구분
-      if (data.type === "intent_detected") {
-        setDetectedIntent(data as IntentDetectedPayload);
-      } else if (data.type === "reminder") {
-        const reminder = data as ReminderPayload;
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: Date.now(),
-            pane_type: "social",
-            role: "system",
-            content: reminder.message,
-            sender: "매듭이",
-            created_at: new Date().toISOString(),
-          },
-        ]);
-      } else {
-        const msg = data as ChatMessagePayload;
-        setMessages((prev) => {
-          // 중복 방지 (REST 로드 후 WS에서 같은 메시지가 올 경우)
-          if (msg.id && prev.some((m) => m.id === msg.id)) return prev;
-          return [...prev, msg];
-        });
-      }
+      const delay = 1000 * (2 ** reconnectAttemptsRef.current);
+      reconnectAttemptsRef.current += 1;
+      reconnectTimeoutRef.current = window.setTimeout(() => {
+        reconnectTimeoutRef.current = null;
+        connect();
+      }, delay);
     };
 
-    ws.onerror = () => setStatus("error");
+    const connect = () => {
+      setStatus("connecting");
+      const ws = new WebSocket(
+        `${wsBase}/ws/social/${roomId}?token=${encodeURIComponent(token)}`
+      );
+      wsRef.current = ws;
 
-    ws.onclose = (event) => {
-      setStatus("closed");
-      // 1008: Policy Violation - 토큰 없음 또는 만료
-      if (event.code === 1008) {
-        localStorage.removeItem("auth_token");
-        window.location.href = "/";
-      }
+      ws.onopen = () => {
+        if (reconnectTimeoutRef.current !== null) {
+          window.clearTimeout(reconnectTimeoutRef.current);
+          reconnectTimeoutRef.current = null;
+        }
+        reconnectAttemptsRef.current = 0;
+        setStatus("open");
+      };
+
+      ws.onmessage = (event) => {
+        let data: unknown;
+        try {
+          data = JSON.parse(event.data as string);
+        } catch {
+          return;
+        }
+
+        // intent_detected 이벤트와 일반 채팅 메시지 구분
+        if (typeof data === "object" && data !== null && "type" in data && data.type === "intent_detected") {
+          setDetectedIntent(data as IntentDetectedPayload);
+        } else if (typeof data === "object" && data !== null && "type" in data && data.type === "reminder") {
+          const reminder = data as ReminderPayload;
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: Date.now(),
+              pane_type: "social",
+              role: "system",
+              content: reminder.message,
+              sender: "매듭이",
+              created_at: new Date().toISOString(),
+            },
+          ]);
+        } else {
+          const msg = data as ChatMessagePayload;
+          setMessages((prev) => {
+            // 중복 방지 (REST 로드 후 WS에서 같은 메시지가 올 경우)
+            if (msg.id && prev.some((m) => m.id === msg.id)) return prev;
+            return [...prev, msg];
+          });
+        }
+      };
+
+      ws.onerror = () => {
+        setStatus("error");
+        scheduleReconnect(0);
+      };
+
+      ws.onclose = (event) => {
+        setStatus("closed");
+        // 1008: Policy Violation - 토큰 없음 또는 만료
+        if (event.code === 1008) {
+          shouldReconnectRef.current = false;
+          localStorage.removeItem("auth_token");
+          window.location.href = "/";
+          return;
+        }
+        scheduleReconnect(event.code);
+      };
     };
+
+    shouldReconnectRef.current = true;
+    reconnectAttemptsRef.current = 0;
+    connect();
 
     return () => {
-      ws.close();
+      shouldReconnectRef.current = false;
+      if (reconnectTimeoutRef.current !== null) {
+        window.clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      const ws = wsRef.current;
+      if (ws) {
+        ws.close();
+      }
     };
   }, [roomId]);
 

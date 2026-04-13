@@ -17,12 +17,16 @@ async def search_address(keyword: str) -> dict[str, str] | None:
     if not api_key or not keyword.strip():
         return None
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            KAKAO_ADDRESS_URL,
-            params={"query": keyword.strip()},
-            headers={"Authorization": f"KakaoAK {api_key}"},
-        )
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                KAKAO_ADDRESS_URL,
+                params={"query": keyword.strip()},
+                headers={"Authorization": f"KakaoAK {api_key}"},
+                timeout=5.0,
+            )
+    except Exception:
+        return None
 
     if resp.status_code != 200:
         return None
@@ -59,12 +63,16 @@ async def search_keyword(
         if radius is not None:
             params["radius"] = radius
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            KAKAO_KEYWORD_URL,
-            params=params,
-            headers={"Authorization": f"KakaoAK {api_key}"},
-        )
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                KAKAO_KEYWORD_URL,
+                params=params,
+                headers={"Authorization": f"KakaoAK {api_key}"},
+                timeout=5.0,
+            )
+    except Exception:
+        return []
 
     if resp.status_code != 200:
         return []

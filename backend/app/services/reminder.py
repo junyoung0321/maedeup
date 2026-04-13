@@ -1,9 +1,8 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import redis.asyncio as aioredis
-from sqlalchemy import func
 from sqlmodel import select
 
 from app.core.config import settings
@@ -14,7 +13,9 @@ KST = ZoneInfo("Asia/Seoul")
 
 
 async def send_today_meeting_reminders() -> None:
-    today_kst = datetime.now(KST).date()
+    now_kst = datetime.now(KST)
+    today_start = now_kst.replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow_start = today_start + timedelta(days=1)
     redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
 
     try:
@@ -23,7 +24,8 @@ async def send_today_meeting_reminders() -> None:
                 select(MeetingSchedule).where(
                     MeetingSchedule.status == MeetingStatus.confirmed,
                     MeetingSchedule.reminder_sent == False,  # noqa: E712
-                    func.date(MeetingSchedule.scheduled_at) == today_kst,
+                    MeetingSchedule.scheduled_at >= today_start,
+                    MeetingSchedule.scheduled_at < tomorrow_start,
                 )
             )
             meetings = result.scalars().all()

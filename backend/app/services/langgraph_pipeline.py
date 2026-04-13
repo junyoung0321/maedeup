@@ -248,6 +248,27 @@ def _extract_json_object(text: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _extract_json_array(text: str) -> list[dict[str, Any]]:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        chunks = [chunk.strip() for chunk in stripped.split("```") if chunk.strip()]
+        if chunks:
+            stripped = chunks[0].removeprefix("json").strip()
+
+    start = stripped.find("[")
+    end = stripped.rfind("]")
+    if start != -1 and end != -1 and end > start:
+        stripped = stripped[start : end + 1]
+
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict)]
+
+
 def _room_id_as_int(room_id: str) -> int | None:
     try:
         return int(room_id)
@@ -256,17 +277,25 @@ def _room_id_as_int(room_id: str) -> int | None:
 
 
 async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
+    today_kst = datetime.now(KST).strftime("%Y-%m-%d")
     prompt = (
-        "Extract meeting planning entities from the conversation.\n"
-        "Return JSON only with this exact schema:\n"
+        "당신은 매듭 AI입니다. 한국인들의 모임 일정을 돕는 어시스턴트입니다.\n"
+        f"오늘 날짜는 {today_kst}입니다.\n"
+        "대화에서 모임 조율에 필요한 정보를 추출하세요.\n"
+        "아래 스키마 그대로 JSON만 반환하세요:\n"
         "{"
         '"date_hint": string | null, '
         '"place_hint": string | null, '
         '"headcount": number | null, '
         '"meeting_type": string | null'
         "}\n\n"
-        f"Conversation context:\n{_serialize_context(state) or '(empty)'}\n\n"
-        "Use null for unknown values."
+        "date_hint: 날짜 표현. 가능하면 YYYY-MM-DD 형식으로 변환, 범위면 "
+        "'YYYY-MM-DD~YYYY-MM-DD'\n"
+        "place_hint: 장소 힌트\n"
+        "headcount: 예상 인원 수\n"
+        "meeting_type: 모임 종류\n\n"
+        f"대화 맥락:\n{_serialize_context(state) or '(empty)'}\n\n"
+        "모르면 null로 반환하세요."
     )
     return _extract_json_object(await call_gemini(prompt))
 
@@ -321,11 +350,27 @@ async def _emit_assistant_message(
 
 
 async def _build_slot_question(state: GraphState) -> str:
+    slot_labels = {
+        "date_hint": "날짜",
+        "place_hint": "장소",
+        "headcount": "인원",
+        "meeting_type": "모임 종류",
+    }
+    missing_slots = state.get("missing_slots", [])
+    known_slots = {
+        slot_labels[key]: value
+        for key, value in _slot_snapshot(state).items()
+        if key in slot_labels and value not in (None, "", [])
+    }
     prompt = (
-        "You are helping schedule a meeting.\n"
-        "Write one concise follow-up question in Korean asking only for the missing information.\n"
-        f"Missing slots: {', '.join(state.get('missing_slots', [])) or '(none)'}\n"
-        f"Known slots: {json.dumps(_slot_snapshot(state), ensure_ascii=False)}"
+        "당신은 매듭 AI입니다. 한국인들의 모임 일정을 돕는 어시스턴트입니다.\n"
+        "한 번에 하나의 부족한 정보만 자연스럽게 질문하세요.\n"
+        "반드시 한국어로, 짧고 대화체로 작성하세요.\n"
+        "이미 알려진 정보가 있으면 자연스럽게 짚어주고 다음 질문으로 이어가세요.\n"
+        "예: '강남 쪽으로 생각하고 계시는군요! 그럼 날짜는 언제가 좋으세요?'\n"
+        "슬롯 이름 매핑: date_hint→날짜, place_hint→장소, headcount→인원, meeting_type→모임 종류\n"
+        f"지금 물어볼 슬롯: {slot_labels.get(missing_slots[0], '정보') if missing_slots else '없음'}\n"
+        f"이미 파악된 정보: {json.dumps(known_slots, ensure_ascii=False)}"
     )
     question = (await call_gemini(prompt)).strip()
     return question or "모임 일정을 이어가려면 날짜, 장소, 인원, 모임 종류 중 빠진 정보를 알려주세요."
@@ -620,10 +665,12 @@ async def general_response(state: GraphState) -> GraphState:
     """일반 대화에 대해 Gemini로 친근한 응답을 반환합니다."""
     context = _serialize_context(state)
     prompt = (
-        "You are a helpful meeting coordination assistant (매듭 AI).\n"
-        "Respond in Korean, briefly and warmly.\n"
-        "If the user seems to want to schedule a meeting, suggest they ask you to start scheduling.\n\n"
-        f"Conversation:\n{context or '(empty)'}"
+        "당신은 매듭 AI입니다. 한국인들의 모임 일정과 장소 조율을 돕는 친근하고 "
+        "전문적인 어시스턴트입니다.\n"
+        "항상 한국어로 간결하고 자연스럽게 답변하세요.\n"
+        "사용자가 모임 일정 조율을 원해 보이면, 매듭이 일정과 장소를 함께 정리해드릴 수 "
+        "있다고 짧게 안내하세요.\n\n"
+        f"대화 내용:\n{context or '(empty)'}"
     )
     reply = (await call_gemini(prompt)).strip()
     if not reply:
@@ -786,11 +833,55 @@ async def vote_card_creation(state: GraphState) -> GraphState:
 
 
 async def place_recommendation(state: GraphState) -> GraphState:
-    ranked_places = sorted(
-        state.get("place_search_results", []),
-        key=lambda item: float(item.get("score", 0.0)),
-        reverse=True,
-    )
+    place_results = list(state.get("place_search_results", []))
+    ranked_places = place_results
+
+    if place_results:
+        top_candidates = place_results[:10]
+        headcount = state.get("headcount") or 0
+        meeting_type = state.get("meeting_type") or "모임"
+        scoring_payload = [
+            {
+                "place_id": place.get("place_id", ""),
+                "name": place.get("name", ""),
+                "address": place.get("address", ""),
+                "category": place.get("category", ""),
+            }
+            for place in top_candidates
+        ]
+        scoring_prompt = (
+            "당신은 매듭 AI입니다. 한국인들의 모임 일정과 장소 조율을 돕는 "
+            "어시스턴트입니다.\n"
+            f"아래 장소 후보들을 {headcount}명 {meeting_type} 모임에 얼마나 적합한지 "
+            "0부터 1 사이 점수로 평가하세요.\n"
+            "반드시 JSON 배열만 반환하세요.\n"
+            '형식: [{"place_id": "...", "score": 0.9}]\n'
+            "place_id는 입력과 동일해야 하며, 모든 후보를 빠짐없이 포함하세요.\n\n"
+            f"장소 후보:\n{json.dumps(scoring_payload, ensure_ascii=False)}"
+        )
+        try:
+            score_items = _extract_json_array(await call_gemini(scoring_prompt))
+            score_map = {
+                str(item.get("place_id")): float(item.get("score"))
+                for item in score_items
+                if item.get("place_id") not in (None, "")
+            }
+            reranked: list[dict[str, Any]] = []
+            for place in top_candidates:
+                place_copy = dict(place)
+                place_copy["score"] = score_map.get(str(place.get("place_id")), 1.0)
+                reranked.append(place_copy)
+            reranked.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
+            ranked_places = reranked + place_results[10:]
+        except Exception:
+            ranked_places = sorted(
+                place_results,
+                key=lambda item: float(item.get("score", 1.0)),
+                reverse=True,
+            )
+    else:
+        ranked_places = []
+
     state["place_search_results"] = ranked_places
     state["place_recommendation_payload"] = {
         "type": "place_recommendation",

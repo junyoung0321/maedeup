@@ -18,8 +18,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("users", sa.Column("food_preferences", sa.JSON(), nullable=True))
-    op.add_column("users", sa.Column("food_preference_note", sa.String(length=255), nullable=True))
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    cols = [c["name"] for c in inspector.get_columns("users")]
+    if "food_preferences" not in cols:
+        op.add_column("users", sa.Column("food_preferences", sa.JSON(), nullable=True))
+    if "food_preference_note" not in cols:
+        op.add_column("users", sa.Column("food_preference_note", sa.String(length=255), nullable=True))
 
 
 def downgrade() -> None:

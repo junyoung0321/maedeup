@@ -17,14 +17,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "meeting_schedules",
-        sa.Column("vote_options", sa.JSON(), nullable=True),
-    )
-    op.add_column(
-        "meeting_schedules",
-        sa.Column("votes", sa.JSON(), nullable=True),
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    cols = [c["name"] for c in inspector.get_columns("meeting_schedules")]
+    if "vote_options" not in cols:
+        op.add_column("meeting_schedules", sa.Column("vote_options", sa.JSON(), nullable=True))
+    if "votes" not in cols:
+        op.add_column("meeting_schedules", sa.Column("votes", sa.JSON(), nullable=True))
 
 
 def downgrade() -> None:

@@ -17,10 +17,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "meeting_schedules",
-        sa.Column("reminder_sent", sa.Boolean(), nullable=False, server_default=sa.false()),
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    cols = [c["name"] for c in inspector.get_columns("meeting_schedules")]
+    if "reminder_sent" not in cols:
+        op.add_column(
+            "meeting_schedules",
+            sa.Column("reminder_sent", sa.Boolean(), nullable=False, server_default=sa.false()),
+        )
 
 
 def downgrade() -> None:

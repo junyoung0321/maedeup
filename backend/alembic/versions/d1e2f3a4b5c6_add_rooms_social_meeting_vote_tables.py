@@ -160,20 +160,36 @@ def upgrade() -> None:
     op.create_index("ix_ai_memories_user_id", "ai_memories", ["user_id"])
 
     # -------------------------------- alter existing: chat_messages, events
-    op.add_column("chat_messages", sa.Column("room_id", sa.Integer(), nullable=True))
-    op.create_index("ix_chat_messages_room_id", "chat_messages", ["room_id"])
-    op.create_foreign_key(
-        "fk_chat_messages_room_id", "chat_messages", "rooms", ["room_id"], ["id"]
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
 
-    op.add_column("events", sa.Column("room_id", sa.Integer(), nullable=True))
-    op.create_index("ix_events_room_id", "events", ["room_id"])
-    op.create_foreign_key("fk_events_room_id", "events", "rooms", ["room_id"], ["id"])
+    cm_cols = [c["name"] for c in inspector.get_columns("chat_messages")]
+    if "room_id" not in cm_cols:
+        op.add_column("chat_messages", sa.Column("room_id", sa.Integer(), nullable=True))
+    cm_indexes = [i["name"] for i in inspector.get_indexes("chat_messages")]
+    if "ix_chat_messages_room_id" not in cm_indexes:
+        op.create_index("ix_chat_messages_room_id", "chat_messages", ["room_id"])
+    cm_fks = [f["name"] for f in inspector.get_foreign_keys("chat_messages")]
+    if "fk_chat_messages_room_id" not in cm_fks:
+        op.create_foreign_key(
+            "fk_chat_messages_room_id", "chat_messages", "rooms", ["room_id"], ["id"]
+        )
 
-    op.add_column("events", sa.Column("meeting_id", sa.Integer(), nullable=True))
-    op.create_foreign_key(
-        "fk_events_meeting_id", "events", "meeting_schedules", ["meeting_id"], ["id"]
-    )
+    ev_cols = [c["name"] for c in inspector.get_columns("events")]
+    if "room_id" not in ev_cols:
+        op.add_column("events", sa.Column("room_id", sa.Integer(), nullable=True))
+    ev_indexes = [i["name"] for i in inspector.get_indexes("events")]
+    if "ix_events_room_id" not in ev_indexes:
+        op.create_index("ix_events_room_id", "events", ["room_id"])
+    ev_fks = [f["name"] for f in inspector.get_foreign_keys("events")]
+    if "fk_events_room_id" not in ev_fks:
+        op.create_foreign_key("fk_events_room_id", "events", "rooms", ["room_id"], ["id"])
+    if "meeting_id" not in ev_cols:
+        op.add_column("events", sa.Column("meeting_id", sa.Integer(), nullable=True))
+    if "fk_events_meeting_id" not in ev_fks:
+        op.create_foreign_key(
+            "fk_events_meeting_id", "events", "meeting_schedules", ["meeting_id"], ["id"]
+        )
 
 
 def downgrade() -> None:

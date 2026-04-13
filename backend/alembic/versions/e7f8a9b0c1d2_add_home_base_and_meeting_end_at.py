@@ -18,8 +18,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("users", sa.Column("home_base", sa.String(length=128), nullable=True))
-    op.add_column("meeting_schedules", sa.Column("end_at", sa.DateTime(), nullable=True))
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    user_cols = [c["name"] for c in inspector.get_columns("users")]
+    ms_cols = [c["name"] for c in inspector.get_columns("meeting_schedules")]
+    if "home_base" not in user_cols:
+        op.add_column("users", sa.Column("home_base", sa.String(length=128), nullable=True))
+    if "end_at" not in ms_cols:
+        op.add_column("meeting_schedules", sa.Column("end_at", sa.DateTime(), nullable=True))
 
 
 def downgrade() -> None:

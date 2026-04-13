@@ -5,6 +5,7 @@ import { Sparkles, Send, MessageCircle, CalendarDays, MapPin, Users, CheckCircle
 import { useAgentWebSocket } from "@/hooks/useAgentWebSocket";
 import { useAuth } from "@/hooks/useAuth";
 import { useMeeting } from "@/contexts/MeetingContext";
+import { apiFetch } from "@/lib/api";
 import type { ContextMode } from "@/types";
 
 const PANE_TYPE_MAP: Record<string, ContextMode> = {
@@ -16,6 +17,9 @@ const PANE_TYPE_MAP: Record<string, ContextMode> = {
 export default function AiAssistantPane() {
   const [input, setInput] = useState("");
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
+  const [isConfirmingSchedule, setIsConfirmingSchedule] = useState(false);
+  const [isScheduleConfirmed, setIsScheduleConfirmed] = useState(false);
+  const [scheduleConfirmError, setScheduleConfirmError] = useState<string | null>(null);
   const { user } = useAuth();
   let setContextMode: ((mode: ContextMode) => void) | undefined;
   let aiTriggerIntent: string | null = null;
@@ -50,6 +54,9 @@ export default function AiAssistantPane() {
 
   useEffect(() => {
     setSelectedSlotId(voteCard?.time_options[0]?.slot_id ?? null);
+    setIsScheduleConfirmed(false);
+    setScheduleConfirmError(null);
+    setIsConfirmingSchedule(false);
   }, [voteCard]);
 
   // 소셜 채팅에서 의도 감지 → AI 파이프라인 자동 트리거
@@ -69,6 +76,44 @@ export default function AiAssistantPane() {
     if (!input.trim()) return;
     sendMessage(input.trim());
     setInput("");
+  };
+
+  const handleConfirmSchedule = async () => {
+    if (!voteCard || !selectedSlotId) return;
+
+    const selectedSlot = voteCard.time_options.find((option) => option.slot_id === selectedSlotId);
+    if (!selectedSlot) {
+      setScheduleConfirmError("선택한 일정 정보를 찾을 수 없습니다.");
+      return;
+    }
+
+    const roomIdMatch = String(voteCard.room_id).match(/\d+/);
+    const parsedRoomId = roomIdMatch ? Number.parseInt(roomIdMatch[0], 10) : Number.NaN;
+    if (Number.isNaN(parsedRoomId)) {
+      setScheduleConfirmError("방 정보를 확인할 수 없습니다.");
+      return;
+    }
+
+    setIsConfirmingSchedule(true);
+    setScheduleConfirmError(null);
+
+    try {
+      await apiFetch<{ id: number }>("/api/v1/meetings/confirm", {
+        method: "POST",
+        body: JSON.stringify({
+          room_id: parsedRoomId,
+          title: voteCard.title,
+          scheduled_at: selectedSlot.start_at,
+          end_at: selectedSlot.end_at,
+          location_name: null,
+        }),
+      });
+      setIsScheduleConfirmed(true);
+    } catch {
+      setScheduleConfirmError("일정 확정에 실패했습니다.");
+    } finally {
+      setIsConfirmingSchedule(false);
+    }
   };
 
   return (
@@ -217,6 +262,47 @@ export default function AiAssistantPane() {
                   </button>
                 );
               })}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {isScheduleConfirmed ? (
+                <div
+                  style={{
+                    padding: "12px 14px",
+                    borderRadius: 14,
+                    background: "#ecfdf5",
+                    border: "1px solid #86efac",
+                    color: "#166534",
+                    fontSize: 15,
+                    fontWeight: 700,
+                  }}
+                >
+                  ✓ 일정이 확정되었습니다
+                </div>
+              ) : (
+                <button
+                  onClick={handleConfirmSchedule}
+                  disabled={selectedSlotId === null || isConfirmingSchedule}
+                  style={{
+                    width: "100%",
+                    padding: "14px 16px",
+                    borderRadius: 14,
+                    border: "none",
+                    background: selectedSlotId === null || isConfirmingSchedule ? "#cbd5e1" : "#4f46e5",
+                    color: "#ffffff",
+                    cursor: selectedSlotId === null || isConfirmingSchedule ? "not-allowed" : "pointer",
+                    fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                    fontSize: 15,
+                    fontWeight: 700,
+                  }}
+                >
+                  {isConfirmingSchedule ? "확정 중..." : "일정 확정하기"}
+                </button>
+              )}
+              {scheduleConfirmError && (
+                <span style={{ fontSize: 13, fontWeight: 500, color: "#dc2626" }}>
+                  {scheduleConfirmError}
+                </span>
+              )}
             </div>
           </div>
         )}

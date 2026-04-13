@@ -835,7 +835,7 @@ def _route_after_intent(state: GraphState) -> Literal["entity_extraction", "gene
 def _route_after_slot_filling(state: GraphState) -> Literal["slot_filling", "function_calling", "__end__"]:
     if state.get("all_slots_filled"):
         return "function_calling"
-    if state.get("wait_timed_out"):
+    if state.get("wait_timed_out") or state.get("awaiting_user_reply"):
         return END
     return "slot_filling"
 

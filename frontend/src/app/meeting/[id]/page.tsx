@@ -36,7 +36,7 @@ function MeetingPageInner() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#ffffff", fontFamily: "Pretendard, sans-serif" }}>
-      <Header showSteps currentStep={contextMode} />
+      <Header showSteps currentStep={contextMode === "agent" ? "schedule" : contextMode} />
 
       {/* Context Mode Switcher */}
       <div

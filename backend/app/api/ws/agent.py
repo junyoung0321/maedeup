@@ -137,6 +137,10 @@ async def agent_ws(
                     if result.get(key) is not None:
                         slot_context[key] = result[key]
 
+                # 파이프라인이 발행한 어시스턴트 메시지(슬롯 질문, 오류, 일반 응답 등) Redis 발행
+                for new_msg in result.get("new_assistant_messages", []):
+                    await r.publish(channel, json.dumps(new_msg, ensure_ascii=False))
+
                 # awaiting_user_reply 시 슬롯 컨텍스트만 유지하고 다음 메시지 대기
                 if result.get("awaiting_user_reply") is True:
                     continue

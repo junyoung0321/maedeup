@@ -305,7 +305,19 @@ async def _emit_assistant_message(
 
     if message.id is not None:
         state["seen_message_ids"].append(message.id)
-
+        # 새 어시스턴트 메시지 추적 (agent.py가 Redis로 발행할 수 있도록)
+        if "new_assistant_messages" not in state:
+            state["new_assistant_messages"] = []  # type: ignore[typeddict-unknown-key]
+        state["new_assistant_messages"].append(  # type: ignore[typeddict-unknown-key]
+            {
+                "id": message.id,
+                "pane_type": message.pane_type.value,
+                "role": message.role,
+                "content": message.content,
+                "sender": message.sender,
+                "created_at": message.created_at.isoformat(),
+            }
+        )
 
 
 async def _build_slot_question(state: GraphState) -> str:
@@ -604,6 +616,23 @@ async def _register_google_calendar(state: GraphState) -> dict[str, Any]:
     }
 
 
+async def general_response(state: GraphState) -> GraphState:
+    """일반 대화에 대해 Gemini로 친근한 응답을 반환합니다."""
+    context = _serialize_context(state)
+    prompt = (
+        "You are a helpful meeting coordination assistant (매듭 AI).\n"
+        "Respond in Korean, briefly and warmly.\n"
+        "If the user seems to want to schedule a meeting, suggest they ask you to start scheduling.\n\n"
+        f"Conversation:\n{context or '(empty)'}"
+    )
+    reply = (await call_gemini(prompt)).strip()
+    if not reply:
+        reply = "안녕하세요! 모임 일정이나 장소 조율이 필요하시면 말씀해주세요 😊"
+    await _emit_assistant_message(state["room_id"], state["db"], reply, state)
+    state["status"] = "general_response_sent"
+    return state
+
+
 async def intent_detection(state: GraphState) -> GraphState:
     latest_user_message = ""
     for message in reversed(state["message_records"]):
@@ -796,6 +825,13 @@ async def maedeup_card_creation(state: GraphState) -> GraphState:
     return state
 
 
+def _route_after_intent(state: GraphState) -> Literal["entity_extraction", "general_response"]:
+    """general 의도이고 슬롯 필링 진행 중이 아니면 일반 응답으로 분기."""
+    if state.get("intent") == "general" and state.get("slot_filling_turns", 0) == 0:
+        return "general_response"
+    return "entity_extraction"
+
+
 def _route_after_slot_filling(state: GraphState) -> Literal["slot_filling", "function_calling", "__end__"]:
     if state.get("all_slots_filled"):
         return "function_calling"
@@ -811,6 +847,7 @@ def _route_after_validation(state: GraphState) -> Literal["vote_card_creation", 
 def _build_graph() -> Any:
     graph = StateGraph(GraphState)
     graph.add_node("intent_detection", intent_detection)
+    graph.add_node("general_response", general_response)
     graph.add_node("entity_extraction", entity_extraction)
     graph.add_node("slot_filling", slot_filling)
     graph.add_node("function_calling", function_calling)
@@ -820,7 +857,15 @@ def _build_graph() -> Any:
     graph.add_node("maedeup_card_creation", maedeup_card_creation)
 
     graph.add_edge(START, "intent_detection")
-    graph.add_edge("intent_detection", "entity_extraction")
+    graph.add_conditional_edges(
+        "intent_detection",
+        _route_after_intent,
+        {
+            "entity_extraction": "entity_extraction",
+            "general_response": "general_response",
+        },
+    )
+    graph.add_edge("general_response", END)
     graph.add_edge("entity_extraction", "slot_filling")
     graph.add_conditional_edges(
         "slot_filling",
@@ -877,4 +922,5 @@ async def run_pipeline(
         "place_hint": final_state.get("place_hint"),
         "headcount": final_state.get("headcount"),
         "meeting_type": final_state.get("meeting_type"),
+        "new_assistant_messages": final_state.get("new_assistant_messages", []),  # type: ignore[typeddict-item]
     }

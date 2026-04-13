@@ -218,22 +218,24 @@ export default function AiAssistantPane() {
           gap: 14,
         }}
       >
-        {/* Detect banner */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "8px 14px",
-            background: "#eef2ff",
-            borderRadius: 18,
-          }}
-        >
-          <MessageCircle style={{ width: 16, height: 16, color: "#4f46e5" }} />
-          <span style={{ fontSize: 15, fontWeight: 400, color: "#4f46e5", fontFamily: "Inter, sans-serif" }}>
-            채팅방에서 회식 일정 대화가 감지되었습니다
-          </span>
-        </div>
+        {/* Detect banner - 소셜 채팅에서 의도 트리거된 경우에만 표시 */}
+        {messages.length === 0 && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 14px",
+              background: "#eef2ff",
+              borderRadius: 18,
+            }}
+          >
+            <MessageCircle style={{ width: 16, height: 16, color: "#4f46e5" }} />
+            <span style={{ fontSize: 15, fontWeight: 400, color: "#4f46e5", fontFamily: "Inter, sans-serif" }}>
+              AI 어시스턴트에게 모임 일정이나 장소를 물어보세요
+            </span>
+          </div>
+        )}
 
         {voteCard && (
           <div

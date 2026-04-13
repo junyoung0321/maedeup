@@ -4,7 +4,8 @@ import { Calendar, Bot, Users } from "lucide-react";
 
 export default function LoginPage() {
   const handleGoogleLogin = () => {
-    window.location.href = "http://localhost:8000/auth/google";
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    window.location.href = `${apiBase}/auth/google`;
   };
 
   return (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Sparkles, Send, MessageCircle, CalendarDays, MapPin, Users, CheckCircle2 } from "lucide-react";
 import { useAgentWebSocket } from "@/hooks/useAgentWebSocket";
 import { useAuth } from "@/hooks/useAuth";
@@ -21,10 +21,13 @@ export default function AiAssistantPane() {
   const [isScheduleConfirmed, setIsScheduleConfirmed] = useState(false);
   const [scheduleConfirmError, setScheduleConfirmError] = useState<string | null>(null);
   const [confirmedMeetingId, setConfirmedMeetingId] = useState<number | null>(null);
+  const [confirmedSlot, setConfirmedSlot] = useState<{ label: string; start_at: string; end_at: string } | null>(null);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [confirmedPlace, setConfirmedPlace] = useState<{ name: string; address: string } | null>(null);
   const [isConfirmingPlace, setIsConfirmingPlace] = useState(false);
   const [isPlaceConfirmed, setIsPlaceConfirmed] = useState(false);
   const [placeConfirmError, setPlaceConfirmError] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const { user } = useAuth();
   let setContextMode: ((mode: ContextMode) => void) | undefined;
   let aiTriggerIntent: string | null = null;
@@ -81,6 +84,11 @@ export default function AiAssistantPane() {
     setAiTriggerIntent?.(null);
   }, [aiTriggerIntent]);
 
+  // 새 메시지나 카드 추가 시 스크롤 하단 이동
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages, voteCard, placeRecommendation, maedeupCard]);
+
   const isAiLoading =
     status === "connecting" ||
     (messages.length > 0 && messages[messages.length - 1].role === "user");
@@ -122,6 +130,7 @@ export default function AiAssistantPane() {
         }),
       });
       setConfirmedMeetingId(result.id);
+      setConfirmedSlot({ label: selectedSlot.label, start_at: selectedSlot.start_at, end_at: selectedSlot.end_at });
       setIsScheduleConfirmed(true);
     } catch {
       setScheduleConfirmError("일정 확정에 실패했습니다.");
@@ -148,6 +157,7 @@ export default function AiAssistantPane() {
           url: place.url,
         }),
       });
+      setConfirmedPlace({ name: place.name, address: place.address });
       setIsPlaceConfirmed(true);
     } catch {
       setPlaceConfirmError("장소 확정에 실패했습니다.");
@@ -198,6 +208,7 @@ export default function AiAssistantPane() {
 
       {/* Content */}
       <div
+        ref={scrollRef}
         style={{
           flex: 1,
           overflowY: "auto",
@@ -472,59 +483,75 @@ export default function AiAssistantPane() {
           </div>
         )}
 
-        {maedeupCard && (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 16,
-              padding: 20,
-              borderRadius: 20,
-              background: "linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)",
-              color: "#ffffff",
-              fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-              boxShadow: "0 10px 24px rgba(79, 70, 229, 0.22)",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <CheckCircle2 style={{ width: 24, height: 24, color: "#ffffff" }} />
-              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.82)" }}>
-                  최종 확정
-                </span>
-                <span style={{ fontSize: 21, fontWeight: 700, color: "#ffffff" }}>
-                  {maedeupCard.title}
-                </span>
-              </div>
-            </div>
+        {(maedeupCard || (confirmedSlot && confirmedPlace)) && (() => {
+          // 사용자가 직접 확정한 값 우선, 없으면 파이프라인 값 사용
+          const displayTime = confirmedSlot ?? maedeupCard?.selected_time;
+          const displayPlace = confirmedPlace ?? maedeupCard?.selected_place;
+          const title = maedeupCard?.title ?? `${maedeupCard?.meeting_type ?? "모임"} 매듭 카드`;
+          return (
             <div
               style={{
-                display: "grid",
-                gap: 10,
-                padding: 16,
-                borderRadius: 16,
-                background: "rgba(255,255,255,0.14)",
-                border: "1px solid rgba(255,255,255,0.18)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 16,
+                padding: 20,
+                borderRadius: 20,
+                background: "linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)",
+                color: "#ffffff",
+                fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                boxShadow: "0 10px 24px rgba(79, 70, 229, 0.22)",
               }}
             >
-              <span style={{ fontSize: 15, lineHeight: 1.5 }}>
-                {maedeupCard.meeting_type} · {maedeupCard.date_hint}
-              </span>
-              <span style={{ fontSize: 15, lineHeight: 1.5 }}>
-                참석 인원 {maedeupCard.headcount}명
-              </span>
-              <span style={{ fontSize: 15, lineHeight: 1.5 }}>
-                시간 {maedeupCard.selected_time.label}
-              </span>
-              <span style={{ fontSize: 15, lineHeight: 1.5 }}>
-                장소 {maedeupCard.selected_place.name}
-              </span>
-              <span style={{ fontSize: 14, lineHeight: 1.5, color: "rgba(255,255,255,0.84)" }}>
-                {maedeupCard.selected_place.address}
-              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <CheckCircle2 style={{ width: 24, height: 24, color: "#ffffff" }} />
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.82)" }}>
+                    최종 확정
+                  </span>
+                  <span style={{ fontSize: 21, fontWeight: 700, color: "#ffffff" }}>
+                    {title}
+                  </span>
+                </div>
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gap: 10,
+                  padding: 16,
+                  borderRadius: 16,
+                  background: "rgba(255,255,255,0.14)",
+                  border: "1px solid rgba(255,255,255,0.18)",
+                }}
+              >
+                {maedeupCard && (
+                  <>
+                    <span style={{ fontSize: 15, lineHeight: 1.5 }}>
+                      {maedeupCard.meeting_type} · {maedeupCard.date_hint}
+                    </span>
+                    <span style={{ fontSize: 15, lineHeight: 1.5 }}>
+                      참석 인원 {maedeupCard.headcount}명
+                    </span>
+                  </>
+                )}
+                {displayTime && (
+                  <span style={{ fontSize: 15, lineHeight: 1.5 }}>
+                    시간 {displayTime.label}
+                  </span>
+                )}
+                {displayPlace && (
+                  <>
+                    <span style={{ fontSize: 15, lineHeight: 1.5 }}>
+                      장소 {displayPlace.name}
+                    </span>
+                    <span style={{ fontSize: 14, lineHeight: 1.5, color: "rgba(255,255,255,0.84)" }}>
+                      {displayPlace.address}
+                    </span>
+                  </>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Messages */}
         {messages.map((msg, i) => {

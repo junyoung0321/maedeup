@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { User, Send, X, Calendar, MapPin } from "lucide-react";
 import { useSocialWebSocket } from "@/hooks/useSocialWebSocket";
 import { useMeeting } from "@/contexts/MeetingContext";
@@ -35,6 +35,7 @@ const INTENT_BANNER: Record<
 export default function ChatPane() {
   const [input, setInput] = useState("");
   const [currentUserName, setCurrentUserName] = useState<string>("익명");
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setCurrentUserName(getNameFromToken());
@@ -50,6 +51,10 @@ export default function ChatPane() {
 
   const { messages, sendMessage, detectedIntent, dismissIntent } =
     useSocialWebSocket(roomId, currentUserName);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages]);
 
   const handleSend = () => {
     if (!input.trim()) return;
@@ -161,6 +166,7 @@ export default function ChatPane() {
 
       {/* Messages */}
       <div
+        ref={scrollRef}
         style={{
           flex: 1,
           overflowY: "auto",

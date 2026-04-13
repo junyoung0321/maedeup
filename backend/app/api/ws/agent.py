@@ -68,6 +68,16 @@ async def agent_ws(
     )
 
     r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+
+    # 슬롯 필링 상태 – 연결 세션 내에서 유지
+    slot_context: dict = {
+        "slot_filling_turns": 0,
+        "date_hint": None,
+        "place_hint": None,
+        "headcount": None,
+        "meeting_type": None,
+    }
+
     try:
         while True:
             raw = await websocket.receive_text()
@@ -118,7 +128,27 @@ async def agent_ws(
                     )
                     recent_messages = list(reversed(recent_messages_result.scalars().all()))
 
-                    result = await run_pipeline(room_id, recent_messages, session)
+                    result = await run_pipeline(
+                        room_id, recent_messages, session, slot_context=slot_context
+                    )
+
+                # 슬롯 컨텍스트 업데이트 (다음 메시지에서 이어받기)
+                for key in ("slot_filling_turns", "date_hint", "place_hint", "headcount", "meeting_type"):
+                    if result.get(key) is not None:
+                        slot_context[key] = result[key]
+
+                # awaiting_user_reply 시 슬롯 컨텍스트만 유지하고 다음 메시지 대기
+                if result.get("awaiting_user_reply") is True:
+                    continue
+
+                # 파이프라인 완료 시 슬롯 컨텍스트 초기화
+                slot_context.update({
+                    "slot_filling_turns": 0,
+                    "date_hint": None,
+                    "place_hint": None,
+                    "headcount": None,
+                    "meeting_type": None,
+                })
 
                 vote_card_payload = result.get("vote_card_payload")
                 if vote_card_payload:
@@ -152,9 +182,6 @@ async def agent_ws(
                             ensure_ascii=False,
                         ),
                     )
-
-                if result.get("awaiting_user_reply") is True:
-                    continue
 
     except WebSocketDisconnect:
         pass

@@ -27,8 +27,6 @@ SLOT_MINUTES = 60
 
 RECENT_MESSAGE_LIMIT = 12
 SLOT_KEYS = ("date_hint", "place_hint", "headcount", "meeting_type")
-WAIT_FOR_REPLY_TIMEOUT_SECONDS = 45
-WAIT_FOR_REPLY_POLL_SECONDS = 2
 MAX_SLOT_FILLING_TURNS = 4
 
 
@@ -70,7 +68,12 @@ class GraphState(TypedDict, total=False):
     status: str
 
 
-def _default_state(room_id: str, db: AsyncSession, messages: list[Any]) -> GraphState:
+def _default_state(
+    room_id: str,
+    db: AsyncSession,
+    messages: list[Any],
+    slot_context: dict | None = None,
+) -> GraphState:
     normalized_messages = [_normalize_message(message) for message in messages]
     recent_messages, conversation_summary = _split_message_context(normalized_messages)
     seen_ids = [
@@ -78,6 +81,7 @@ def _default_state(room_id: str, db: AsyncSession, messages: list[Any]) -> Graph
         for message in normalized_messages
         if isinstance(message.get("id"), int)
     ]
+    ctx = slot_context or {}
     return {
         "room_id": room_id,
         "db": db,
@@ -87,13 +91,13 @@ def _default_state(room_id: str, db: AsyncSession, messages: list[Any]) -> Graph
         "seen_message_ids": seen_ids,
         "intent": "general",
         "intent_confidence": 0.0,
-        "date_hint": None,
-        "place_hint": None,
-        "headcount": None,
-        "meeting_type": None,
+        "date_hint": ctx.get("date_hint"),
+        "place_hint": ctx.get("place_hint"),
+        "headcount": ctx.get("headcount"),
+        "meeting_type": ctx.get("meeting_type"),
         "all_slots_filled": False,
         "missing_slots": list(SLOT_KEYS),
-        "slot_filling_turns": 0,
+        "slot_filling_turns": int(ctx.get("slot_filling_turns") or 0),
         "awaiting_user_reply": False,
         "wait_timed_out": False,
         "extracted_entities": {},
@@ -302,41 +306,6 @@ async def _emit_assistant_message(
     if message.id is not None:
         state["seen_message_ids"].append(message.id)
 
-
-async def _wait_for_user_reply(state: GraphState) -> MessageRecord | None:
-    room_pk = _room_id_as_int(state["room_id"])
-    db = state["db"]
-
-    if room_pk is None:
-        return None
-
-    deadline = datetime.now(timezone.utc) + timedelta(seconds=WAIT_FOR_REPLY_TIMEOUT_SECONDS)
-    seen_ids = set(state.get("seen_message_ids", []))
-
-    while datetime.now(timezone.utc) < deadline:
-        stmt = (
-            select(ChatMessage)
-            .where(ChatMessage.room_id == room_pk)
-            .where(ChatMessage.pane_type == PaneType.agent)
-            .where(ChatMessage.role == "user")
-            .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
-        )
-        result = await db.execute(stmt)
-        candidates = result.scalars().all()
-
-        for candidate in candidates:
-            if candidate.id is None or candidate.id in seen_ids:
-                continue
-
-            normalized = _normalize_message(candidate)
-            state["message_records"].append(normalized)
-            state["seen_message_ids"].append(candidate.id)
-            await _compress_message_history(state)
-            return normalized
-
-        await asyncio.sleep(WAIT_FOR_REPLY_POLL_SECONDS)
-
-    return None
 
 
 async def _build_slot_question(state: GraphState) -> str:
@@ -667,29 +636,32 @@ async def slot_filling(state: GraphState) -> GraphState:
 
     state["slot_filling_turns"] += 1
     if state["slot_filling_turns"] > MAX_SLOT_FILLING_TURNS:
-        state["wait_timed_out"] = True
-        state["awaiting_user_reply"] = True
-        state["status"] = "slot_filling_timeout"
+        # 최대 턴 초과 → 남은 슬롯을 기본값으로 채워 진행
+        if not state.get("date_hint"):
+            state["date_hint"] = "이번 주 내"
+        if not state.get("place_hint"):
+            state["place_hint"] = "강남"
+        if not state.get("headcount"):
+            state["headcount"] = 4
+        if not state.get("meeting_type"):
+            state["meeting_type"] = "모임"
+        state["all_slots_filled"] = True
+        state["missing_slots"] = []
+        state["awaiting_user_reply"] = False
+        state["wait_timed_out"] = False
+        state["status"] = "slots_filled_with_defaults"
         return state
 
     question = await _build_slot_question(state)
+    # 마지막 메시지가 이미 같은 질문이면 중복 발송 방지
     latest_content = state["message_records"][-1]["content"] if state["message_records"] else None
     if latest_content != question:
         await _emit_assistant_message(state["room_id"], state["db"], question, state)
 
+    # 내부 블로킹 대기 제거: WS receive loop가 다음 사용자 메시지를 받아
+    # 새 run_pipeline 호출로 이어지도록 즉시 반환
     state["awaiting_user_reply"] = True
-    reply = await _wait_for_user_reply(state)
-    if reply is None:
-        state["wait_timed_out"] = True
-        state["status"] = "awaiting_user_reply"
-        return state
-
-    state["awaiting_user_reply"] = False
-    state["wait_timed_out"] = False
-    extracted = await _extract_entities_from_context(state)
-    state["extracted_entities"] = extracted
-    _update_slot_state(state, extracted)
-    state["status"] = "slot_filling_in_progress"
+    state["status"] = "awaiting_user_reply"
     return state
 
 
@@ -865,8 +837,13 @@ def _build_graph() -> Any:
 GRAPH = _build_graph()
 
 
-async def run_pipeline(room_id: str, messages: list[Any], db: AsyncSession) -> dict[str, Any]:
-    initial_state = _default_state(room_id=room_id, db=db, messages=messages)
+async def run_pipeline(
+    room_id: str,
+    messages: list[Any],
+    db: AsyncSession,
+    slot_context: dict | None = None,
+) -> dict[str, Any]:
+    initial_state = _default_state(room_id=room_id, db=db, messages=messages, slot_context=slot_context)
     final_state = await GRAPH.ainvoke(initial_state)
     return {
         "status": final_state.get("status"),
@@ -882,4 +859,10 @@ async def run_pipeline(room_id: str, messages: list[Any], db: AsyncSession) -> d
         "calendar_registration": final_state.get("calendar_registration"),
         "conversation_summary": final_state.get("conversation_summary", ""),
         "recent_messages": final_state.get("recent_messages", []),
+        # 슬롯 컨텍스트 – agent.py가 다음 호출에 이어받을 값들
+        "slot_filling_turns": final_state.get("slot_filling_turns", 0),
+        "date_hint": final_state.get("date_hint"),
+        "place_hint": final_state.get("place_hint"),
+        "headcount": final_state.get("headcount"),
+        "meeting_type": final_state.get("meeting_type"),
     }

@@ -1,9 +1,8 @@
-import asyncio
+import os
 from logging.config import fileConfig
 
-from sqlalchemy import pool
+from sqlalchemy import engine_from_config, pool
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from sqlmodel import SQLModel
@@ -15,8 +14,12 @@ from app.core.config import settings
 
 config = context.config
 
-# alembic.ini의 sqlalchemy.url을 settings 값으로 덮어씀
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+database_url = os.getenv("DATABASE_URL") or settings.DATABASE_URL
+database_url = database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+database_url = database_url.replace("asyncpg+postgresql://", "postgresql://", 1)
+
+# alembic.ini의 sqlalchemy.url을 env 기반 sync URL로 덮어씀
+config.set_main_option("sqlalchemy.url", database_url)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -42,19 +45,14 @@ def do_run_migrations(connection: Connection) -> None:
         context.run_migrations()
 
 
-async def run_async_migrations() -> None:
-    connectable = async_engine_from_config(
+def run_migrations_online() -> None:
+    connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-    await connectable.dispose()
-
-
-def run_migrations_online() -> None:
-    asyncio.run(run_async_migrations())
+    with connectable.connect() as connection:
+        do_run_migrations(connection)
 
 
 if context.is_offline_mode():

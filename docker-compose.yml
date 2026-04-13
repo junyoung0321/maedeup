@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   fastapi-app:
     build:
@@ -13,6 +11,12 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://maedeup:maedeup@postgres-db:5432/maedeup
       REDIS_URL: redis://redis-broker:6379/0
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}
+      JWT_SECRET: ${JWT_SECRET}
+      FRONTEND_URL: ${FRONTEND_URL}
       KAKAO_REST_API_KEY: ${KAKAO_REST_API_KEY}
     depends_on:
       postgres-db:
@@ -21,6 +25,12 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
   frontend:
@@ -41,7 +51,14 @@ services:
       NEXT_PUBLIC_API_URL: http://localhost:8000
       NEXT_PUBLIC_WS_URL: ws://localhost:8000
     depends_on:
-      - fastapi-app
+      fastapi-app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
   postgres-db:

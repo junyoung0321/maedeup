@@ -1,11 +1,9 @@
 import asyncio
 import json
-from datetime import datetime
 from typing import Optional
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
-from jose import JWTError
 
 from app.api.ws.manager import manager
 from app.core.config import settings
@@ -63,6 +61,11 @@ async def social_ws(
 
     manager.add(room_id, websocket)
 
+    try:
+        room_pk: Optional[int] = int(room_id)
+    except (TypeError, ValueError):
+        room_pk = None
+
     stop_event = asyncio.Event()
     channel = f"social:{room_id}"
     subscriber_task = asyncio.create_task(
@@ -85,6 +88,7 @@ async def social_ws(
                     role=role,
                     content=content,
                     sender=sender,
+                    room_id=room_pk,
                 )
                 session.add(msg)
                 await session.commit()

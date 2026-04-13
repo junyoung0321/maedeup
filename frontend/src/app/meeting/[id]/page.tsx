@@ -48,7 +48,7 @@ function MeetingPageInner() {
         }}
       >
         <ModeTab
-          active={contextMode === "schedule"}
+          active={contextMode === "schedule" || contextMode === "agent"}
           icon={<CalendarDays size={16} />}
           label="일정 조율"
           onClick={() => setContextMode("schedule")}
@@ -81,7 +81,7 @@ function MeetingPageInner() {
       >
         <ChatPane />
 
-        {contextMode === "schedule" && (
+        {(contextMode === "schedule" || contextMode === "agent") && (
           <>
             <AiAssistantPane />
             <CalendarPane />

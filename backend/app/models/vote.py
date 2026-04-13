@@ -43,6 +43,6 @@ class VoteResponse(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     vote_id: int = Field(foreign_key="votes.id", index=True)
-    option_id: int = Field(foreign_key="vote_options.id")
+    option_id: int = Field(foreign_key="vote_options.id", index=True)
     user_id: int = Field(foreign_key="users.id", index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)

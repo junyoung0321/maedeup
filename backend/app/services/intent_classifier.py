@@ -33,6 +33,8 @@ INTENT_DESCRIPTIONS = {
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    if len(a) != len(b):
+        return 0.0
     dot = sum(x * y for x, y in zip(a, b))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(x * x for x in b))
@@ -105,6 +107,12 @@ async def classify_intent(text_input: str) -> dict:
 
 답변:"""
         gemini_response = await call_gemini(prompt)
+        if not gemini_response or not gemini_response.strip():
+            return {
+                "intent": "general",
+                "confidence": round(top_similarity, 4),
+                "method": "default",
+            }
         intent = gemini_response.strip().lower().split()[0]
         if intent not in VALID_INTENTS:
             intent = "general"

@@ -1,16 +1,20 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { User, Send, X, Calendar, MapPin } from "lucide-react";
 import { useSocialWebSocket } from "@/hooks/useSocialWebSocket";
-import { useMeeting } from "@/contexts/MeetingContext";
+import { MeetingContext } from "@/contexts/MeetingContext";
 
 function getNameFromToken(): string {
   try {
     const token = localStorage.getItem("auth_token");
     if (!token) return "익명";
-    const payload = JSON.parse(atob(token.split(".")[1]));
-    return payload.name ?? "익명";
+    const payload = token.split(".")[1];
+    if (!payload) return "익명";
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const decoded = JSON.parse(atob(padded));
+    return decoded.name ?? "익명";
   } catch {
     return "익명";
   }
@@ -36,18 +40,14 @@ export default function ChatPane() {
   const [input, setInput] = useState("");
   const [currentUserName, setCurrentUserName] = useState<string>("익명");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const meetingContext = useContext(MeetingContext);
 
   useEffect(() => {
     setCurrentUserName(getNameFromToken());
   }, []);
 
-  let roomId = "room-1";
-  let setAiTriggerIntent: ((intent: string | null) => void) | undefined;
-  try {
-    const ctx = useMeeting();
-    roomId = ctx.roomId || "room-1";
-    setAiTriggerIntent = ctx.setAiTriggerIntent;
-  } catch { /* not in provider */ }
+  const roomId = meetingContext?.roomId || "room-1";
+  const setAiTriggerIntent = meetingContext?.setAiTriggerIntent;
 
   const { messages, sendMessage, detectedIntent, dismissIntent } =
     useSocialWebSocket(roomId, currentUserName);

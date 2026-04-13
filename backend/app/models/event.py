@@ -13,12 +13,12 @@ class Event(SQLModel, table=True):
     location_name: Optional[str] = Field(default=None, max_length=255)
     latitude: Optional[float] = None
     longitude: Optional[float] = None
-    starts_at: datetime
+    starts_at: datetime = Field(index=True)
     ends_at: Optional[datetime] = None
     kakao_place_id: Optional[str] = Field(default=None, max_length=64)
     kakao_place_url: Optional[str] = Field(default=None, max_length=512)
     room_id: Optional[int] = Field(default=None, foreign_key="rooms.id", index=True)
-    meeting_id: Optional[int] = Field(default=None, foreign_key="meeting_schedules.id")
+    meeting_id: Optional[int] = Field(default=None, foreign_key="meeting_schedules.id", index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

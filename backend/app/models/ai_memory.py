@@ -18,5 +18,5 @@ class AIMemory(SQLModel, table=True):
     user_id: int = Field(foreign_key="users.id", index=True)
     memory_type: MemoryType
     content: str
-    source_room_id: Optional[int] = Field(default=None, foreign_key="rooms.id")
+    source_room_id: Optional[int] = Field(default=None, foreign_key="rooms.id", index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)

@@ -29,6 +29,7 @@ class ChatMessageCreate(SQLModel):
     content: str
     sender: Optional[str] = None
     session_id: Optional[str] = None
+    room_id: Optional[int] = None
 
 
 class ChatMessageRead(SQLModel):
@@ -38,4 +39,5 @@ class ChatMessageRead(SQLModel):
     content: str
     sender: Optional[str]
     session_id: Optional[str]
+    room_id: Optional[int]
     created_at: datetime

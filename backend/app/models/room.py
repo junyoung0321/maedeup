@@ -2,6 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -30,6 +31,9 @@ class Room(SQLModel, table=True):
 
 class RoomMember(SQLModel, table=True):
     __tablename__ = "room_members"
+    __table_args__ = (
+        UniqueConstraint("room_id", "user_id", name="uq_room_members_room_id_user_id"),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     room_id: int = Field(foreign_key="rooms.id", index=True)

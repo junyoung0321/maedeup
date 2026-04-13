@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from "react";
 import type { ContextMode, PlaceResult } from "@/types";
 
 interface MeetingState {
@@ -20,7 +20,7 @@ interface MeetingContextValue extends MeetingState {
   setAiTriggerIntent: (intent: string | null) => void;
 }
 
-const MeetingContext = createContext<MeetingContextValue | null>(null);
+export const MeetingContext = createContext<MeetingContextValue | null>(null);
 
 export function MeetingProvider({
   children,
@@ -55,10 +55,13 @@ export function MeetingProvider({
     setState((prev) => ({ ...prev, aiTriggerIntent: intent, contextMode: intent ? "agent" : prev.contextMode }));
   }, []);
 
+  const value = useMemo(
+    () => ({ ...state, setContextMode, setSelectedPlace, setRoom, setAiTriggerIntent }),
+    [state, setContextMode, setSelectedPlace, setRoom, setAiTriggerIntent],
+  );
+
   return (
-    <MeetingContext.Provider
-      value={{ ...state, setContextMode, setSelectedPlace, setRoom, setAiTriggerIntent }}
-    >
+    <MeetingContext.Provider value={value}>
       {children}
     </MeetingContext.Provider>
   );

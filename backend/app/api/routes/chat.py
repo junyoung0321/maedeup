@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from app.core.security import AuthUser, get_current_user
 from app.db.session import get_session
 from app.models.chat import ChatMessage, ChatMessageCreate, ChatMessageRead, PaneType
 
@@ -16,6 +17,7 @@ async def list_messages(
     room_id: Optional[int] = Query(default=None),
     session_id: Optional[str] = Query(default=None),
     limit: int = Query(default=50, le=200),
+    _current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     stmt = select(ChatMessage).order_by(ChatMessage.created_at.asc()).limit(limit)
@@ -32,6 +34,7 @@ async def list_messages(
 @router.post("/messages", response_model=ChatMessageRead, status_code=201)
 async def create_message(
     payload: ChatMessageCreate,
+    _current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     msg = ChatMessage.model_validate(payload)

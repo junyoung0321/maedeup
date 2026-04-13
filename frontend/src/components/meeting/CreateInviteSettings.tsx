@@ -16,6 +16,7 @@ import {
 
 interface Member {
   name: string;
+  email: string;
   color: string;
 }
 
@@ -30,7 +31,7 @@ interface Props {
   invitedMembers: Set<string>;
   scheduleMethod: "ai" | "manual" | "vote";
   placeMethod: "ai" | "manual" | "vote";
-  onToggleMember: (name: string) => void;
+  onToggleMember: (email: string) => void;
   onScheduleMethodChange: (v: "ai" | "manual" | "vote") => void;
   onPlaceMethodChange: (v: "ai" | "manual" | "vote") => void;
   onCancel: () => void;
@@ -57,6 +58,7 @@ export default function CreateInviteSettings({
         setMembers(
           friends.map((f, i) => ({
             name: f.name,
+            email: f.email,
             color: AVATAR_PALETTE[i % AVATAR_PALETTE.length],
           }))
         );
@@ -148,11 +150,11 @@ export default function CreateInviteSettings({
               </span>
             ) : (
               members.map((member) => {
-                const isSelected = invitedMembers.has(member.name);
+                const isSelected = invitedMembers.has(member.email);
                 return (
                   <div
-                    key={member.name}
-                    onClick={() => onToggleMember(member.name)}
+                    key={member.email}
+                    onClick={() => onToggleMember(member.email)}
                     style={{
                       display: "flex",
                       alignItems: "center",

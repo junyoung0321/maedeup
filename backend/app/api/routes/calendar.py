@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 import logging
 
 import httpx
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 logger = logging.getLogger(__name__)
 from pydantic import BaseModel
@@ -15,6 +15,7 @@ from sqlmodel import select
 from app.core.config import settings
 from app.core.security import AuthUser, get_current_user
 from app.db.session import get_session
+from app.models.room import RoomMember
 from app.models.user import User
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
@@ -276,9 +277,17 @@ async def get_free_slots(
         time_max = time_min + timedelta(days=LOOKAHEAD_DAYS)
         lookahead = LOOKAHEAD_DAYS
 
-    # 전체 유저 조회
-    all_users_result = await session.execute(select(User))
-    all_users: list[User] = list(all_users_result.scalars().all())
+    try:
+        room_pk = int(room_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="유효하지 않은 채팅방 ID입니다.") from exc
+
+    member_result = await session.execute(
+        select(User)
+        .join(RoomMember, RoomMember.user_id == User.id)
+        .where(RoomMember.room_id == room_pk)
+    )
+    all_users: list[User] = list(member_result.scalars().all())
 
     consenting = [u for u in all_users if u.calendar_consent]
     unconnected_names = [u.name for u in all_users if not u.calendar_consent]

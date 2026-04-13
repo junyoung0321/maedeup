@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
-from sqlalchemy import JSON, Column
+from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -24,7 +24,7 @@ class MeetingSchedule(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     room_id: int = Field(foreign_key="rooms.id", index=True)
     title: str = Field(max_length=255)
-    scheduled_at: datetime
+    scheduled_at: datetime = Field(index=True)
     end_at: Optional[datetime] = None
     location_name: Optional[str] = Field(default=None, max_length=255)
     location_address: Optional[str] = Field(default=None, max_length=512)
@@ -41,6 +41,13 @@ class MeetingSchedule(SQLModel, table=True):
 
 class MeetingParticipant(SQLModel, table=True):
     __tablename__ = "meeting_participants"
+    __table_args__ = (
+        UniqueConstraint(
+            "meeting_id",
+            "user_id",
+            name="uq_meeting_participants_meeting_id_user_id",
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     meeting_id: int = Field(foreign_key="meeting_schedules.id", index=True)

@@ -17,5 +17,5 @@ class User(SQLModel, table=True):
     food_preference_note: Optional[str] = Field(default=None, max_length=255)
     google_access_token: Optional[str] = Field(default=None, sa_column=Column(Text(), nullable=True))
     google_refresh_token: Optional[str] = Field(default=None, sa_column=Column(Text(), nullable=True))
-    calendar_consent: bool = Field(default=False)
+    calendar_consent: bool = Field(default=False, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)

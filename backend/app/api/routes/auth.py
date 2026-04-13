@@ -1,11 +1,13 @@
+import secrets
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from jose import jwt
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import get_session
@@ -28,6 +30,7 @@ SCOPES = " ".join([
 
 @router.get("/google")
 async def google_login():
+    state = secrets.token_urlsafe(32)
     params = {
         "client_id": settings.GOOGLE_CLIENT_ID,
         "redirect_uri": settings.GOOGLE_REDIRECT_URI,
@@ -35,13 +38,29 @@ async def google_login():
         "scope": SCOPES,
         "access_type": "offline",
         "prompt": "consent",  # refresh_token을 항상 발급받기 위해
+        "state": state,
     }
-    query = "&".join(f"{k}={v}" for k, v in params.items())
-    return RedirectResponse(f"{GOOGLE_AUTH_URL}?{query}")
+    response = RedirectResponse(f"{GOOGLE_AUTH_URL}?{urlencode(params)}")
+    response.set_cookie(
+        key="oauth_state",
+        value=state,
+        httponly=True,
+        max_age=600,
+        samesite="lax",
+    )
+    return response
 
 
 @router.get("/google/callback")
-async def google_callback(code: str, session: AsyncSession = Depends(get_session)):
+async def google_callback(
+    code: str,
+    state: str = Query(...),
+    oauth_state: str | None = Cookie(default=None),
+    session: AsyncSession = Depends(get_session),
+):
+    if not oauth_state or oauth_state != state:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+
     async with httpx.AsyncClient() as client:
         token_resp = await client.post(
             GOOGLE_TOKEN_URL,
@@ -53,15 +72,24 @@ async def google_callback(code: str, session: AsyncSession = Depends(get_session
                 "grant_type": "authorization_code",
             },
         )
+        if token_resp.status_code != 200:
+            raise HTTPException(status_code=401, detail="Google token exchange failed")
         token_data = token_resp.json()
+        access_token = token_data.get("access_token")
+        if not access_token:
+            raise HTTPException(status_code=400, detail="Missing access token in OAuth response")
 
         userinfo_resp = await client.get(
             GOOGLE_USERINFO_URL,
-            headers={"Authorization": f"Bearer {token_data['access_token']}"},
+            headers={"Authorization": f"Bearer {access_token}"},
         )
+        if userinfo_resp.status_code != 200:
+            raise HTTPException(status_code=401, detail="Google userinfo request failed")
         userinfo = userinfo_resp.json()
 
-    email = userinfo["email"]
+    email = userinfo.get("email")
+    if not email:
+        raise HTTPException(status_code=400, detail="Missing email in Google user info")
     result = await session.execute(select(User).where(User.email == email))
     user = result.scalars().first()
 
@@ -70,13 +98,13 @@ async def google_callback(code: str, session: AsyncSession = Depends(get_session
             email=email,
             name=userinfo.get("name", email),
             picture=userinfo.get("picture"),
-            google_access_token=token_data.get("access_token"),
+            google_access_token=access_token,
             google_refresh_token=token_data.get("refresh_token"),
         )
         session.add(user)
     else:
         # 액세스 토큰은 항상 갱신, 리프레시 토큰은 새로 발급된 경우에만 갱신
-        user.google_access_token = token_data.get("access_token")
+        user.google_access_token = access_token
         if token_data.get("refresh_token"):
             user.google_refresh_token = token_data.get("refresh_token")
 
@@ -84,7 +112,9 @@ async def google_callback(code: str, session: AsyncSession = Depends(get_session
     await session.refresh(user)
 
     token = _issue_jwt(user)
-    return RedirectResponse(f"{settings.FRONTEND_URL}/auth/callback?token={token}")
+    response = RedirectResponse(f"{settings.FRONTEND_URL}/auth/callback?token={token}")
+    response.delete_cookie("oauth_state")
+    return response
 
 
 def _issue_jwt(user: User) -> str:

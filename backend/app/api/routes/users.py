@@ -50,6 +50,8 @@ async def update_consent(
     캘린더 수집 동의 여부를 업데이트하고 갱신된 JWT를 반환합니다.
     """
     user = await session.get(User, int(current_user.sub))
+    if user is None:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
     user.calendar_consent = body.calendar_consent
     session.add(user)
     await session.commit()

@@ -33,11 +33,11 @@ export default function CreateMeetingPage() {
     setForm((prev) => ({ ...prev, ...updates }));
   };
 
-  const toggleMember = (name: string) => {
+  const toggleMember = (email: string) => {
     setForm((prev) => {
       const next = new Set(prev.invitedMembers);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
+      if (next.has(email)) next.delete(email);
+      else next.add(email);
       return { ...prev, invitedMembers: next };
     });
   };
@@ -50,7 +50,7 @@ export default function CreateMeetingPage() {
           name: form.name,
           description: form.description,
           category: form.category,
-          member_names: Array.from(form.invitedMembers),
+          member_emails: Array.from(form.invitedMembers),
         }),
       });
       router.push(`/meeting/${data.id}`);

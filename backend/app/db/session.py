@@ -21,5 +21,4 @@ async def get_session() -> AsyncSession:
 
 
 async def init_db() -> None:
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+    pass  # 테이블 생성은 alembic upgrade head 로 처리

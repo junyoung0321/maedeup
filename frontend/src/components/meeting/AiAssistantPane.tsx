@@ -20,6 +20,11 @@ export default function AiAssistantPane() {
   const [isConfirmingSchedule, setIsConfirmingSchedule] = useState(false);
   const [isScheduleConfirmed, setIsScheduleConfirmed] = useState(false);
   const [scheduleConfirmError, setScheduleConfirmError] = useState<string | null>(null);
+  const [confirmedMeetingId, setConfirmedMeetingId] = useState<number | null>(null);
+  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [isConfirmingPlace, setIsConfirmingPlace] = useState(false);
+  const [isPlaceConfirmed, setIsPlaceConfirmed] = useState(false);
+  const [placeConfirmError, setPlaceConfirmError] = useState<string | null>(null);
   const { user } = useAuth();
   let setContextMode: ((mode: ContextMode) => void) | undefined;
   let aiTriggerIntent: string | null = null;
@@ -57,7 +62,15 @@ export default function AiAssistantPane() {
     setIsScheduleConfirmed(false);
     setScheduleConfirmError(null);
     setIsConfirmingSchedule(false);
+    setConfirmedMeetingId(null);
   }, [voteCard]);
+
+  useEffect(() => {
+    setSelectedPlaceId(null);
+    setIsPlaceConfirmed(false);
+    setPlaceConfirmError(null);
+    setIsConfirmingPlace(false);
+  }, [placeRecommendation]);
 
   // 소셜 채팅에서 의도 감지 → AI 파이프라인 자동 트리거
   useEffect(() => {
@@ -98,7 +111,7 @@ export default function AiAssistantPane() {
     setScheduleConfirmError(null);
 
     try {
-      await apiFetch<{ id: number }>("/api/v1/meetings/confirm", {
+      const result = await apiFetch<{ id: number }>("/api/v1/meetings/confirm", {
         method: "POST",
         body: JSON.stringify({
           room_id: parsedRoomId,
@@ -108,11 +121,39 @@ export default function AiAssistantPane() {
           location_name: null,
         }),
       });
+      setConfirmedMeetingId(result.id);
       setIsScheduleConfirmed(true);
     } catch {
       setScheduleConfirmError("일정 확정에 실패했습니다.");
     } finally {
       setIsConfirmingSchedule(false);
+    }
+  };
+
+  const handleConfirmPlace = async (placeId: string) => {
+    if (!placeRecommendation || !confirmedMeetingId) return;
+    const place = placeRecommendation.recommendations.find((p) => p.place_id === placeId);
+    if (!place) return;
+
+    setSelectedPlaceId(placeId);
+    setIsConfirmingPlace(true);
+    setPlaceConfirmError(null);
+    try {
+      await apiFetch<{ id: number }>(`/api/v1/meetings/${confirmedMeetingId}/place`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          place_id: place.place_id,
+          name: place.name,
+          address: place.address,
+          url: place.url,
+        }),
+      });
+      setIsPlaceConfirmed(true);
+    } catch {
+      setPlaceConfirmError("장소 확정에 실패했습니다.");
+      setSelectedPlaceId(null);
+    } finally {
+      setIsConfirmingPlace(false);
     }
   };
 
@@ -345,47 +386,89 @@ export default function AiAssistantPane() {
               </div>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {placeRecommendation.recommendations.map((place) => (
-                <div
-                  key={place.place_id}
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 8,
-                    padding: "14px 16px",
-                    borderRadius: 16,
-                    background: "#ffffff",
-                    border: "1px solid #e2e8f0",
-                    boxShadow: "0 4px 14px rgba(15, 23, 42, 0.05)",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                    <span style={{ fontSize: 17, fontWeight: 700, color: "#1e293b" }}>
-                      {place.name}
+              {placeRecommendation.recommendations.map((place) => {
+                const isSelected = selectedPlaceId === place.place_id;
+                return (
+                  <div
+                    key={place.place_id}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 8,
+                      padding: "14px 16px",
+                      borderRadius: 16,
+                      background: isSelected ? "#eef2ff" : "#ffffff",
+                      border: isSelected ? "1.5px solid #4f46e5" : "1px solid #e2e8f0",
+                      boxShadow: isSelected ? "0 6px 18px rgba(79, 70, 229, 0.12)" : "0 4px 14px rgba(15, 23, 42, 0.05)",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                      <span style={{ fontSize: 17, fontWeight: 700, color: "#1e293b" }}>
+                        {place.name}
+                      </span>
+                      <span
+                        style={{
+                          padding: "4px 10px",
+                          borderRadius: 999,
+                          background: "#eef2ff",
+                          color: "#4f46e5",
+                          fontSize: 13,
+                          fontWeight: 700,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {Math.round(place.score * 100)}%
+                      </span>
+                    </div>
+                    <span style={{ fontSize: 14, fontWeight: 500, color: "#475569" }}>
+                      {place.category}
                     </span>
-                    <span
-                      style={{
-                        padding: "4px 10px",
-                        borderRadius: 999,
-                        background: "#eef2ff",
-                        color: "#4f46e5",
-                        fontSize: 13,
-                        fontWeight: 700,
-                        flexShrink: 0,
-                      }}
-                    >
-                      {Math.round(place.score * 100)}%
+                    <span style={{ fontSize: 14, lineHeight: 1.5, color: "#1e293b" }}>
+                      {place.address}
                     </span>
+                    {isPlaceConfirmed && isSelected ? (
+                      <div
+                        style={{
+                          padding: "8px 12px",
+                          borderRadius: 10,
+                          background: "#ecfdf5",
+                          border: "1px solid #86efac",
+                          color: "#166534",
+                          fontSize: 13,
+                          fontWeight: 700,
+                        }}
+                      >
+                        ✓ 장소가 확정되었습니다
+                      </div>
+                    ) : !isPlaceConfirmed && confirmedMeetingId ? (
+                      <button
+                        onClick={() => handleConfirmPlace(place.place_id)}
+                        disabled={isConfirmingPlace}
+                        style={{
+                          padding: "8px 14px",
+                          borderRadius: 10,
+                          border: "none",
+                          background: isConfirmingPlace && isSelected ? "#cbd5e1" : "#4f46e5",
+                          color: "#ffffff",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          cursor: isConfirmingPlace ? "not-allowed" : "pointer",
+                          alignSelf: "flex-start",
+                          fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                        }}
+                      >
+                        {isConfirmingPlace && isSelected ? "확정 중..." : "이 장소로 확정"}
+                      </button>
+                    ) : null}
                   </div>
-                  <span style={{ fontSize: 14, fontWeight: 500, color: "#475569" }}>
-                    {place.category}
-                  </span>
-                  <span style={{ fontSize: 14, lineHeight: 1.5, color: "#1e293b" }}>
-                    {place.address}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
+            {placeConfirmError && (
+              <span style={{ fontSize: 13, fontWeight: 500, color: "#dc2626" }}>
+                {placeConfirmError}
+              </span>
+            )}
           </div>
         )}
 

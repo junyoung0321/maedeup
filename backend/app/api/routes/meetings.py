@@ -24,6 +24,13 @@ class ConfirmMeetingResponse(BaseModel):
     id: int
 
 
+class ConfirmPlaceRequest(BaseModel):
+    place_id: str
+    name: str
+    address: str
+    url: Optional[str] = None
+
+
 @router.post("/confirm", response_model=ConfirmMeetingResponse, status_code=201)
 async def confirm_meeting(
     body: ConfirmMeetingRequest,
@@ -40,6 +47,35 @@ async def confirm_meeting(
         location_name=body.location_name,
         created_by=int(current_user.sub),
     )
+    session.add(meeting)
+    await session.commit()
+    await session.refresh(meeting)
+    return ConfirmMeetingResponse(id=meeting.id)
+
+
+@router.patch("/{meeting_id}/place", response_model=ConfirmMeetingResponse)
+async def confirm_place(
+    meeting_id: int,
+    body: ConfirmPlaceRequest,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    from sqlmodel import select
+    result = await session.execute(
+        select(MeetingSchedule).where(MeetingSchedule.id == meeting_id)
+    )
+    meeting = result.scalar_one_or_none()
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    if meeting.created_by != int(current_user.sub):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    meeting.location_name = body.name
+    meeting.location_address = body.address
+    meeting.kakao_place_id = body.place_id
+    meeting.kakao_place_url = body.url
+    from datetime import datetime as _dt
+    meeting.updated_at = _dt.utcnow()
     session.add(meeting)
     await session.commit()
     await session.refresh(meeting)

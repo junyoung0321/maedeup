@@ -28,3 +28,17 @@ data/output/
 # OS
 .DS_Store
 Thumbs.db
+
+# Virtual envs (any name)
+aovenv/
+*env/
+
+# Aider
+.aider*
+
+# Claude local settings
+.claude/settings.local.json
+
+# Misc
+main.py
+temp_write_test.txt

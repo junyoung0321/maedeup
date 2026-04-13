@@ -5,13 +5,14 @@ from typing import Optional
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from sqlmodel import select
 
 from app.api.ws.manager import manager
 from app.core.config import settings
 from app.core.security import verify_token
 from app.db.session import AsyncSessionLocal
 from app.models.chat import ChatMessage, PaneType
-from app.services.gemini import call_gemini
+from app.services.langgraph_pipeline import run_pipeline
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -76,12 +77,18 @@ async def agent_ws(
             content = payload.get("content", "")
             sender = payload.get("sender")
 
+            try:
+                room_pk = int(room_id)
+            except (TypeError, ValueError):
+                room_pk = None
+
             async with AsyncSessionLocal() as session:
                 msg = ChatMessage(
                     pane_type=PaneType.agent,
                     role=role,
                     content=content,
                     sender=sender,
+                    room_id=room_pk,
                 )
                 session.add(msg)
                 await session.commit()
@@ -100,32 +107,54 @@ async def agent_ws(
             await r.publish(channel, out)
             await r.rpush(f"agent_queue:{room_id}", out)
 
-            logger.warning(f"[AGENT] role={role}, has_key={bool(settings.GEMINI_API_KEY)}")
-            if role == "user" and settings.GEMINI_API_KEY:
-                logger.warning(f"[AGENT] Calling Gemini for message: {content[:50]}")
-                ai_text = await call_gemini(content)
-                logger.warning(f"[AGENT] Gemini response: {ai_text[:50]}")
-
+            if role == "user":
                 async with AsyncSessionLocal() as session:
-                    ai_msg = ChatMessage(
-                        pane_type=PaneType.agent,
-                        role="assistant",
-                        content=ai_text,
-                        sender="AI 어시스턴트",
+                    recent_messages_result = await session.execute(
+                        select(ChatMessage)
+                        .where(ChatMessage.room_id == room_pk)
+                        .where(ChatMessage.pane_type == PaneType.agent)
+                        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+                        .limit(20)
                     )
-                    session.add(ai_msg)
-                    await session.commit()
-                    await session.refresh(ai_msg)
+                    recent_messages = list(reversed(recent_messages_result.scalars().all()))
 
-                ai_out = json.dumps({
-                    "id": ai_msg.id,
-                    "pane_type": ai_msg.pane_type.value,
-                    "role": ai_msg.role,
-                    "content": ai_msg.content,
-                    "sender": ai_msg.sender,
-                    "created_at": ai_msg.created_at.isoformat(),
-                })
-                await r.publish(channel, ai_out)
+                    result = await run_pipeline(room_id, recent_messages, session)
+
+                vote_card_payload = result.get("vote_card_payload")
+                if vote_card_payload:
+                    await r.publish(
+                        channel,
+                        json.dumps(
+                            {"type": "vote_card", **vote_card_payload},
+                            ensure_ascii=False,
+                        ),
+                    )
+
+                place_recommendation_payload = result.get("place_recommendation_payload")
+                if place_recommendation_payload:
+                    await r.publish(
+                        channel,
+                        json.dumps(
+                            {
+                                "type": "place_recommendation",
+                                **place_recommendation_payload,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    )
+
+                maedeup_card_payload = result.get("maedeup_card_payload")
+                if maedeup_card_payload:
+                    await r.publish(
+                        channel,
+                        json.dumps(
+                            {"type": "maedeup_card", **maedeup_card_payload},
+                            ensure_ascii=False,
+                        ),
+                    )
+
+                if result.get("awaiting_user_reply") is True:
+                    continue
 
     except WebSocketDisconnect:
         pass

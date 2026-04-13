@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Sparkles, Send, MessageCircle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Sparkles, Send, MessageCircle, CalendarDays, MapPin, Users, CheckCircle2 } from "lucide-react";
 import { useAgentWebSocket } from "@/hooks/useAgentWebSocket";
 import { useAuth } from "@/hooks/useAuth";
 import { useMeeting } from "@/contexts/MeetingContext";
@@ -15,14 +15,29 @@ const PANE_TYPE_MAP: Record<string, ContextMode> = {
 
 export default function AiAssistantPane() {
   const [input, setInput] = useState("");
+  const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   const { user } = useAuth();
   let setContextMode: ((mode: ContextMode) => void) | undefined;
-  try { setContextMode = useMeeting().setContextMode; } catch { /* not in provider */ }
+  let aiTriggerIntent: string | null = null;
+  let setAiTriggerIntent: ((intent: string | null) => void) | undefined;
+  try {
+    const ctx = useMeeting();
+    setContextMode = ctx.setContextMode;
+    aiTriggerIntent = ctx.aiTriggerIntent;
+    setAiTriggerIntent = ctx.setAiTriggerIntent;
+  } catch { /* not in provider */ }
 
   let roomId = "room-1";
   try { roomId = useMeeting().roomId || "room-1"; } catch { /* already tried above */ }
 
-  const { messages, sendMessage, status } = useAgentWebSocket(
+  const {
+    messages,
+    sendMessage,
+    status,
+    voteCard,
+    placeRecommendation,
+    maedeupCard,
+  } = useAgentWebSocket(
     roomId,
     user?.name ?? "나",
     {
@@ -32,6 +47,19 @@ export default function AiAssistantPane() {
       },
     },
   );
+
+  useEffect(() => {
+    setSelectedSlotId(voteCard?.time_options[0]?.slot_id ?? null);
+  }, [voteCard]);
+
+  // 소셜 채팅에서 의도 감지 → AI 파이프라인 자동 트리거
+  useEffect(() => {
+    if (!aiTriggerIntent) return;
+    const label =
+      aiTriggerIntent === "meeting_schedule" ? "모임 일정" : "장소 추천";
+    sendMessage(`${label} 조율을 시작해줘`);
+    setAiTriggerIntent?.(null);
+  }, [aiTriggerIntent]);
 
   const isAiLoading =
     status === "connecting" ||
@@ -109,6 +137,225 @@ export default function AiAssistantPane() {
             채팅방에서 회식 일정 대화가 감지되었습니다
           </span>
         </div>
+
+        {voteCard && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 14,
+              padding: 18,
+              borderRadius: 18,
+              background: "#f1f5f9",
+              border: "1px solid #cbd5e1",
+              color: "#1e293b",
+              fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 14,
+                  background: "#e0e7ff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <CalendarDays style={{ width: 20, height: 20, color: "#4f46e5" }} />
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "#4f46e5" }}>
+                  투표 카드
+                </span>
+                <span style={{ fontSize: 19, fontWeight: 700, color: "#1e293b" }}>
+                  {voteCard.title}
+                </span>
+              </div>
+            </div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "10px 12px",
+                borderRadius: 14,
+                background: "#ffffff",
+                border: "1px solid #e2e8f0",
+              }}
+            >
+              <Users style={{ width: 16, height: 16, color: "#4f46e5" }} />
+              <span style={{ fontSize: 14, fontWeight: 500, color: "#1e293b" }}>
+                총 {voteCard.headcount}명 기준으로 가능한 시간을 선택하세요
+              </span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {voteCard.time_options.map((option) => {
+                const isSelected = selectedSlotId === option.slot_id;
+                return (
+                  <button
+                    key={option.slot_id}
+                    onClick={() => setSelectedSlotId(option.slot_id)}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "14px 16px",
+                      borderRadius: 14,
+                      border: isSelected ? "1.5px solid #4f46e5" : "1px solid #cbd5e1",
+                      background: isSelected ? "#eef2ff" : "#ffffff",
+                      color: "#1e293b",
+                      cursor: "pointer",
+                      fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                      fontSize: 15,
+                      fontWeight: isSelected ? 600 : 500,
+                      boxShadow: isSelected ? "0 6px 18px rgba(79, 70, 229, 0.12)" : "none",
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {placeRecommendation && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 14,
+              padding: 18,
+              borderRadius: 18,
+              background: "#f1f5f9",
+              border: "1px solid #cbd5e1",
+              color: "#1e293b",
+              fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 14,
+                  background: "#e0e7ff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <MapPin style={{ width: 20, height: 20, color: "#4f46e5" }} />
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "#4f46e5" }}>
+                  장소 추천
+                </span>
+                <span style={{ fontSize: 19, fontWeight: 700, color: "#1e293b" }}>
+                  {placeRecommendation.place_hint} 추천 장소
+                </span>
+              </div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {placeRecommendation.recommendations.map((place) => (
+                <div
+                  key={place.place_id}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                    padding: "14px 16px",
+                    borderRadius: 16,
+                    background: "#ffffff",
+                    border: "1px solid #e2e8f0",
+                    boxShadow: "0 4px 14px rgba(15, 23, 42, 0.05)",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                    <span style={{ fontSize: 17, fontWeight: 700, color: "#1e293b" }}>
+                      {place.name}
+                    </span>
+                    <span
+                      style={{
+                        padding: "4px 10px",
+                        borderRadius: 999,
+                        background: "#eef2ff",
+                        color: "#4f46e5",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {Math.round(place.score * 100)}%
+                    </span>
+                  </div>
+                  <span style={{ fontSize: 14, fontWeight: 500, color: "#475569" }}>
+                    {place.category}
+                  </span>
+                  <span style={{ fontSize: 14, lineHeight: 1.5, color: "#1e293b" }}>
+                    {place.address}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {maedeupCard && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+              padding: 20,
+              borderRadius: 20,
+              background: "linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)",
+              color: "#ffffff",
+              fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+              boxShadow: "0 10px 24px rgba(79, 70, 229, 0.22)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <CheckCircle2 style={{ width: 24, height: 24, color: "#ffffff" }} />
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.82)" }}>
+                  최종 확정
+                </span>
+                <span style={{ fontSize: 21, fontWeight: 700, color: "#ffffff" }}>
+                  {maedeupCard.title}
+                </span>
+              </div>
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gap: 10,
+                padding: 16,
+                borderRadius: 16,
+                background: "rgba(255,255,255,0.14)",
+                border: "1px solid rgba(255,255,255,0.18)",
+              }}
+            >
+              <span style={{ fontSize: 15, lineHeight: 1.5 }}>
+                {maedeupCard.meeting_type} · {maedeupCard.date_hint}
+              </span>
+              <span style={{ fontSize: 15, lineHeight: 1.5 }}>
+                참석 인원 {maedeupCard.headcount}명
+              </span>
+              <span style={{ fontSize: 15, lineHeight: 1.5 }}>
+                시간 {maedeupCard.selected_time.label}
+              </span>
+              <span style={{ fontSize: 15, lineHeight: 1.5 }}>
+                장소 {maedeupCard.selected_place.name}
+              </span>
+              <span style={{ fontSize: 14, lineHeight: 1.5, color: "rgba(255,255,255,0.84)" }}>
+                {maedeupCard.selected_place.address}
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Messages */}
         {messages.map((msg, i) => {

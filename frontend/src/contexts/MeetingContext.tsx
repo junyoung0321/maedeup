@@ -8,12 +8,16 @@ interface MeetingState {
   roomName: string;
   contextMode: ContextMode;
   selectedPlace: PlaceResult | null;
+  aiTriggerIntent: string | null;
 }
 
 interface MeetingContextValue extends MeetingState {
   setContextMode: (mode: ContextMode) => void;
   setSelectedPlace: (place: PlaceResult | null) => void;
   setRoom: (id: string, name: string) => void;
+  /** 소셜 채팅에서 의도 감지 시 AI 파이프라인을 트리거하는 시그널 (intent 문자열, 없으면 null) */
+  aiTriggerIntent: string | null;
+  setAiTriggerIntent: (intent: string | null) => void;
 }
 
 const MeetingContext = createContext<MeetingContextValue | null>(null);
@@ -32,6 +36,7 @@ export function MeetingProvider({
     roomName: initialRoomName,
     contextMode: "schedule",
     selectedPlace: null,
+    aiTriggerIntent: null,
   });
 
   const setContextMode = useCallback((mode: ContextMode) => {
@@ -46,9 +51,13 @@ export function MeetingProvider({
     setState((prev) => ({ ...prev, roomId: id, roomName: name }));
   }, []);
 
+  const setAiTriggerIntent = useCallback((intent: string | null) => {
+    setState((prev) => ({ ...prev, aiTriggerIntent: intent, contextMode: intent ? "agent" : prev.contextMode }));
+  }, []);
+
   return (
     <MeetingContext.Provider
-      value={{ ...state, setContextMode, setSelectedPlace, setRoom }}
+      value={{ ...state, setContextMode, setSelectedPlace, setRoom, setAiTriggerIntent }}
     >
       {children}
     </MeetingContext.Provider>

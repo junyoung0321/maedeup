@@ -47,4 +47,4 @@ export interface MeetingItem {
 }
 
 // ─── Context Mode ───
-export type ContextMode = "schedule" | "place" | "done";
+export type ContextMode = "schedule" | "place" | "done" | "agent";

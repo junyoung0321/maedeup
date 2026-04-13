@@ -5,6 +5,63 @@ import type { ChatMessagePayload } from "@/types";
 
 export type { ChatMessagePayload };
 
+export interface VoteCardTimeOption {
+  slot_id: string;
+  label: string;
+  start_at: string;
+  end_at: string;
+}
+
+export interface VoteCardPayload {
+  type: "vote_card";
+  title: string;
+  room_id: string;
+  time_options: VoteCardTimeOption[];
+  headcount: number;
+}
+
+export interface PlaceRecommendationItem {
+  place_id: string;
+  name: string;
+  address: string;
+  category: string;
+  url: string;
+  score: number;
+}
+
+export interface PlaceRecommendationPayload {
+  type: "place_recommendation";
+  room_id: string;
+  place_hint: string;
+  recommendations: PlaceRecommendationItem[];
+}
+
+export interface MaedeupCardSelectionTime {
+  label: string;
+  start_at: string;
+  end_at: string;
+}
+
+export interface MaedeupCardSelectionPlace {
+  name: string;
+  address: string;
+}
+
+export interface MaedeupCardPayload {
+  type: "maedeup_card";
+  title: string;
+  meeting_type: string;
+  date_hint: string;
+  headcount: number;
+  selected_time: MaedeupCardSelectionTime;
+  selected_place: MaedeupCardSelectionPlace;
+}
+
+type AgentCardPayload =
+  | VoteCardPayload
+  | PlaceRecommendationPayload
+  | MaedeupCardPayload;
+
 type WsStatus = "connecting" | "open" | "closed" | "error";
 
 interface AgentOptions {
@@ -14,6 +71,10 @@ interface AgentOptions {
 
 export function useAgentWebSocket(roomId: string, sender: string, options?: AgentOptions) {
   const [messages, setMessages] = useState<ChatMessagePayload[]>([]);
+  const [voteCard, setVoteCard] = useState<VoteCardPayload | null>(null);
+  const [placeRecommendation, setPlaceRecommendation] =
+    useState<PlaceRecommendationPayload | null>(null);
+  const [maedeupCard, setMaedeupCard] = useState<MaedeupCardPayload | null>(null);
   const [status, setStatus] = useState<WsStatus>("connecting");
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -34,7 +95,20 @@ export function useAgentWebSocket(roomId: string, sender: string, options?: Agen
     ws.onopen = () => setStatus("open");
 
     ws.onmessage = (event) => {
-      const msg: ChatMessagePayload = JSON.parse(event.data as string);
+      const parsed = JSON.parse(event.data as string) as ChatMessagePayload | AgentCardPayload;
+
+      if ("type" in parsed) {
+        if (parsed.type === "vote_card") {
+          setVoteCard(parsed);
+        } else if (parsed.type === "place_recommendation") {
+          setPlaceRecommendation(parsed);
+        } else if (parsed.type === "maedeup_card") {
+          setMaedeupCard(parsed);
+        }
+        return;
+      }
+
+      const msg = parsed;
       setMessages((prev) => [...prev, msg]);
 
       // Auto-switch context panel based on AI pane_type
@@ -69,5 +143,12 @@ export function useAgentWebSocket(roomId: string, sender: string, options?: Agen
     [sender]
   );
 
-  return { messages, sendMessage, status };
+  return {
+    messages,
+    sendMessage,
+    status,
+    voteCard,
+    placeRecommendation,
+    maedeupCard,
+  };
 }

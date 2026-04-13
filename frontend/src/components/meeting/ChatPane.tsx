@@ -41,7 +41,13 @@ export default function ChatPane() {
   }, []);
 
   let roomId = "room-1";
-  try { roomId = useMeeting().roomId || "room-1"; } catch { /* not in provider */ }
+  let setAiTriggerIntent: ((intent: string | null) => void) | undefined;
+  try {
+    const ctx = useMeeting();
+    roomId = ctx.roomId || "room-1";
+    setAiTriggerIntent = ctx.setAiTriggerIntent;
+  } catch { /* not in provider */ }
+
   const { messages, sendMessage, detectedIntent, dismissIntent } =
     useSocialWebSocket(roomId, currentUserName);
 
@@ -110,12 +116,32 @@ export default function ChatPane() {
             gap: 8,
           }}
         >
-          <div
-            style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}
+          <button
+            onClick={() => {
+              if (detectedIntent && setAiTriggerIntent) {
+                setAiTriggerIntent(detectedIntent.intent);
+              }
+              dismissIntent();
+            }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              flex: 1,
+              background: "none",
+              border: "none",
+              color: "#fff",
+              cursor: "pointer",
+              padding: 0,
+              textAlign: "left",
+            }}
           >
             {banner.icon}
             <span>{banner.message}</span>
-          </div>
+            <span style={{ marginLeft: 4, fontWeight: 600, textDecoration: "underline" }}>
+              AI로 일정 잡기 →
+            </span>
+          </button>
           <button
             onClick={dismissIntent}
             style={{

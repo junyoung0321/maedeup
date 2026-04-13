@@ -12,6 +12,8 @@ from app.core.config import settings
 from app.core.security import verify_token
 from app.db.session import AsyncSessionLocal
 from app.models.chat import ChatMessage, PaneType
+from app.models.room import Room
+from app.models.user import User
 from app.services.langgraph_pipeline import run_pipeline
 
 logger = logging.getLogger(__name__)
@@ -76,7 +78,18 @@ async def agent_ws(
         "place_hint": None,
         "headcount": None,
         "meeting_type": None,
+        "default_place_hint": "서울 강남",
     }
+
+    if room_id.isdigit():
+        async with AsyncSessionLocal() as session:
+            room = await session.get(Room, int(room_id))
+            owner = await session.get(User, room.created_by) if room else None
+            slot_context["default_place_hint"] = (
+                owner.home_base.strip()
+                if owner and owner.home_base and owner.home_base.strip()
+                else "서울 강남"
+            )
 
     try:
         while True:
@@ -133,7 +146,14 @@ async def agent_ws(
                     )
 
                 # 슬롯 컨텍스트 업데이트 (다음 메시지에서 이어받기)
-                for key in ("slot_filling_turns", "date_hint", "place_hint", "headcount", "meeting_type"):
+                for key in (
+                    "slot_filling_turns",
+                    "date_hint",
+                    "place_hint",
+                    "headcount",
+                    "meeting_type",
+                    "default_place_hint",
+                ):
                     if result.get(key) is not None:
                         slot_context[key] = result[key]
 
@@ -145,6 +165,9 @@ async def agent_ws(
                 if result.get("awaiting_user_reply") is True:
                     continue
 
+                if result.get("is_location_first") and not result.get("date_hint"):
+                    continue
+
                 # 파이프라인 완료 시 슬롯 컨텍스트 초기화
                 slot_context.update({
                     "slot_filling_turns": 0,
@@ -152,6 +175,7 @@ async def agent_ws(
                     "place_hint": None,
                     "headcount": None,
                     "meeting_type": None,
+                    "default_place_hint": slot_context.get("default_place_hint") or "서울 강남",
                 })
 
                 vote_card_payload = result.get("vote_card_payload")

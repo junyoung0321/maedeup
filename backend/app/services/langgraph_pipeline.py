@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal, Optional, TypedDict
+from typing import Any, Literal, TypedDict
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -20,10 +20,11 @@ from app.services.intent_classifier import classify_intent
 
 KST = ZoneInfo("Asia/Seoul")
 KAKAO_KEYWORD_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
-GOOGLE_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+GOOGLE_FREEBUSY_URL = "https://www.googleapis.com/calendar/v3/freeBusy"
 WORK_HOUR_START = 9
 WORK_HOUR_END = 22
 SLOT_MINUTES = 60
+INTENT_CONFIDENCE_THRESHOLD = 0.7
 
 RECENT_MESSAGE_LIMIT = 12
 SLOT_KEYS = ("date_hint", "place_hint", "headcount", "meeting_type")
@@ -47,10 +48,13 @@ class GraphState(TypedDict, total=False):
     seen_message_ids: list[int]
     intent: str
     intent_confidence: float
+    confidence_score: float
     date_hint: str | None
     place_hint: str | None
+    default_place_hint: str | None
     headcount: int | None
     meeting_type: str | None
+    is_location_first: bool
     all_slots_filled: bool
     missing_slots: list[str]
     slot_filling_turns: int
@@ -91,10 +95,13 @@ def _default_state(
         "seen_message_ids": seen_ids,
         "intent": "general",
         "intent_confidence": 0.0,
+        "confidence_score": 0.0,
         "date_hint": ctx.get("date_hint"),
         "place_hint": ctx.get("place_hint"),
+        "default_place_hint": ctx.get("default_place_hint") or "서울 강남",
         "headcount": ctx.get("headcount"),
         "meeting_type": ctx.get("meeting_type"),
+        "is_location_first": False,
         "all_slots_filled": False,
         "missing_slots": list(SLOT_KEYS),
         "slot_filling_turns": int(ctx.get("slot_filling_turns") or 0),
@@ -227,6 +234,32 @@ def _update_slot_state(state: GraphState, extracted: dict[str, Any]) -> None:
 
     state["missing_slots"] = missing_slots
     state["all_slots_filled"] = not missing_slots
+
+
+def _resolve_place_hint(state: GraphState) -> str:
+    place_hint = state.get("place_hint")
+    if isinstance(place_hint, str) and place_hint.strip():
+        return place_hint.strip()
+
+    default_place_hint = state.get("default_place_hint")
+    if isinstance(default_place_hint, str) and default_place_hint.strip():
+        resolved = default_place_hint.strip()
+    else:
+        resolved = "서울 강남"
+
+    state["place_hint"] = resolved
+    return resolved
+
+
+def _format_slot_label(start_at: datetime, unavailable_names: list[str]) -> str:
+    weekday = ["월", "화", "수", "목", "금", "토", "일"][start_at.weekday()]
+    ampm = "오전" if start_at.hour < 12 else "오후"
+    hour = start_at.hour if start_at.hour <= 12 else start_at.hour - 12
+    suffix = " (전원 가능)"
+    if unavailable_names:
+        absent_users = ", ".join(f"@{name}" for name in unavailable_names)
+        suffix = f" (N-1명 가능, {absent_users} 불참)"
+    return f"{start_at.month}월 {start_at.day}일 ({weekday}) {ampm} {hour}:{start_at.minute:02d}{suffix}"
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
@@ -404,21 +437,20 @@ async def _get_user_busy_periods(
     time_max: datetime,
     db: AsyncSession,
 ) -> list[dict[str, Any]]:
-    """Google Calendar API로 특정 유저의 바쁜 시간대(시작/종료)만 조회합니다."""
+    """Google Calendar freeBusy API로 특정 유저의 바쁜 시간대(시작/종료)만 조회합니다."""
     if not user.google_access_token:
         return []
 
-    params = {
+    payload = {
         "timeMin": time_min.isoformat(),
         "timeMax": time_max.isoformat(),
-        "singleEvents": "true",
-        "orderBy": "startTime",
-        "fields": "items(start,end)",
+        "timeZone": "Asia/Seoul",
+        "items": [{"id": "primary"}],
     }
     headers = {"Authorization": f"Bearer {user.google_access_token}"}
 
     async with httpx.AsyncClient() as client:
-        resp = await client.get(GOOGLE_EVENTS_URL, params=params, headers=headers)
+        resp = await client.post(GOOGLE_FREEBUSY_URL, json=payload, headers=headers)
 
         # 토큰 만료 시 refresh
         if resp.status_code == 401 and user.google_refresh_token:
@@ -438,21 +470,16 @@ async def _get_user_busy_periods(
                     db.add(user)
                     await db.commit()
                     headers = {"Authorization": f"Bearer {new_token}"}
-                    resp = await client.get(GOOGLE_EVENTS_URL, params=params, headers=headers)
+                    resp = await client.post(GOOGLE_FREEBUSY_URL, json=payload, headers=headers)
 
         if resp.status_code != 200:
             return []
 
     result = []
-    for item in resp.json().get("items", []):
-        start_raw = item.get("start", {})
-        end_raw = item.get("end", {})
-        if "dateTime" in start_raw:
-            start = datetime.fromisoformat(start_raw["dateTime"].replace("Z", "+00:00"))
-            end = datetime.fromisoformat(end_raw["dateTime"].replace("Z", "+00:00"))
-        else:
-            start = datetime.fromisoformat(start_raw["date"]).replace(tzinfo=KST)
-            end = datetime.fromisoformat(end_raw["date"]).replace(tzinfo=KST)
+    busy_periods = resp.json().get("calendars", {}).get("primary", {}).get("busy", [])
+    for item in busy_periods:
+        start = datetime.fromisoformat(item["start"].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(item["end"].replace("Z", "+00:00"))
         result.append({"start": start, "end": end})
     return result
 
@@ -461,9 +488,10 @@ def _find_free_slots(
     busy_by_user: dict[str, list[dict[str, Any]]],
     time_min: datetime,
     time_max: datetime,
-    headcount: Optional[int],
+    minimum_available: int,
+    require_exact_absent_count: int,
 ) -> list[dict[str, Any]]:
-    """참여자 전원이 비어있는 시간대를 SLOT_MINUTES 단위로 탐색합니다."""
+    """참여자 가용성을 기준으로 시간대를 SLOT_MINUTES 단위로 탐색합니다."""
     total = len(busy_by_user)
     free_slots: list[dict[str, Any]] = []
     current = time_min
@@ -474,26 +502,24 @@ def _find_free_slots(
         current_kst = current.astimezone(KST)
 
         if WORK_HOUR_START <= current_kst.hour < WORK_HOUR_END:
-            available_count = sum(
-                1 for periods in busy_by_user.values()
-                if not any(bp["start"] < slot_end and bp["end"] > current for bp in periods)
-            )
-            min_needed = total if total > 0 else 1
-            if available_count >= min_needed:
+            unavailable_names = [
+                name
+                for name, periods in busy_by_user.items()
+                if any(bp["start"] < slot_end and bp["end"] > current for bp in periods)
+            ]
+            available_count = total - len(unavailable_names)
+
+            if available_count >= minimum_available and len(unavailable_names) == require_exact_absent_count:
                 s = current.astimezone(KST)
-                e = slot_end.astimezone(KST)
-                weekday = ["월", "화", "수", "목", "금", "토", "일"][s.weekday()]
-                ampm = "오전" if s.hour < 12 else "오후"
-                h = s.hour if s.hour <= 12 else s.hour - 12
-                label = f"{s.month}월 {s.day}일 ({weekday}) {ampm} {h}:{s.minute:02d}"
                 free_slots.append({
                     "slot_id": f"slot-{slot_idx}",
                     "start_at": current.isoformat(),
                     "end_at": slot_end.isoformat(),
-                    "label": label,
+                    "label": _format_slot_label(s, unavailable_names),
                     "available_count": available_count,
                     "total_count": total,
-                    "has_conflict": False,
+                    "has_conflict": bool(unavailable_names),
+                    "unavailable_users": unavailable_names,
                 })
                 slot_idx += 1
 
@@ -516,7 +542,7 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
                 "slot_id": f"slot-{i+1}",
                 "start_at": (base + timedelta(days=i)).isoformat(),
                 "end_at": (base + timedelta(days=i, hours=2)).isoformat(),
-                "label": (base + timedelta(days=i)).astimezone(KST).strftime("%m월 %d일 오후 %I:%M"),
+                "label": _format_slot_label((base + timedelta(days=i)).astimezone(KST), []),
                 "has_conflict": False,
             }
             for i in range(3)
@@ -545,12 +571,61 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
     for user in consenting_users:
         busy_by_user[user.name] = await _get_user_busy_periods(user, time_min, time_max, db)
 
-    return _find_free_slots(busy_by_user, time_min, time_max, state.get("headcount"))
+    if not busy_by_user:
+        return []
+
+    full_slots = _find_free_slots(
+        busy_by_user=busy_by_user,
+        time_min=time_min,
+        time_max=time_max,
+        minimum_available=len(busy_by_user),
+        require_exact_absent_count=0,
+    )
+    if full_slots:
+        return full_slots
+
+    n_minus_one_slots = _find_free_slots(
+        busy_by_user=busy_by_user,
+        time_min=time_min,
+        time_max=time_max,
+        minimum_available=max(len(busy_by_user) - 1, 1),
+        require_exact_absent_count=1 if len(busy_by_user) > 1 else 0,
+    )
+    if n_minus_one_slots:
+        return n_minus_one_slots
+
+    extended_time_max = time_max + timedelta(days=7)
+    refreshed_busy_by_user: dict[str, list[dict[str, Any]]] = {}
+    for user in consenting_users:
+        refreshed_busy_by_user[user.name] = await _get_user_busy_periods(
+            user,
+            time_min,
+            extended_time_max,
+            db,
+        )
+
+    extended_full_slots = _find_free_slots(
+        busy_by_user=refreshed_busy_by_user,
+        time_min=time_min,
+        time_max=extended_time_max,
+        minimum_available=len(refreshed_busy_by_user),
+        require_exact_absent_count=0,
+    )
+    if extended_full_slots:
+        return extended_full_slots
+
+    return _find_free_slots(
+        busy_by_user=refreshed_busy_by_user,
+        time_min=time_min,
+        time_max=extended_time_max,
+        minimum_available=max(len(refreshed_busy_by_user) - 1, 1),
+        require_exact_absent_count=1 if len(refreshed_busy_by_user) > 1 else 0,
+    )
 
 
 async def search_place(state: GraphState) -> list[dict[str, Any]]:
     """카카오맵 API로 장소 후보를 검색합니다."""
-    place_hint = state.get("place_hint") or "강남"
+    place_hint = _resolve_place_hint(state)
     meeting_type = state.get("meeting_type") or ""
     query = f"{place_hint} {meeting_type}".strip()
 
@@ -585,78 +660,12 @@ async def search_place(state: GraphState) -> list[dict[str, Any]]:
 
 
 async def _register_google_calendar(state: GraphState) -> dict[str, Any]:
-    """구글 캘린더에 모임 이벤트를 등록합니다."""
+    """최종 확정 전에는 캘린더 자동 등록을 보류합니다."""
     selected_slot = state["calendar_free_slots"][0] if state.get("calendar_free_slots") else {}
-    selected_place = state["place_search_results"][0] if state.get("place_search_results") else {}
-
-    db = state["db"]
-    room_pk = _room_id_as_int(state["room_id"])
-
-    # 룸 owner 조회
-    owner: Optional[User] = None
-    if room_pk is not None:
-        member_result = await db.execute(
-            select(RoomMember).where(RoomMember.room_id == room_pk)
-        )
-        members = member_result.scalars().all()
-        if members:
-            user_result = await db.execute(
-                select(User).where(User.id == members[0].user_id)
-            )
-            owner = user_result.scalars().first()
-
-    if not owner or not owner.google_access_token:
-        return {
-            "provider": "google_calendar",
-            "status": "skipped",
-            "reason": "no_token",
-            "scheduled_at": selected_slot.get("start_at"),
-        }
-
-    event_body = {
-        "summary": f"{state.get('meeting_type') or '모임'} — 매듭",
-        "location": selected_place.get("address", ""),
-        "start": {"dateTime": selected_slot.get("start_at"), "timeZone": "Asia/Seoul"},
-        "end": {"dateTime": selected_slot.get("end_at"), "timeZone": "Asia/Seoul"},
-    }
-
-    headers = {"Authorization": f"Bearer {owner.google_access_token}"}
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(GOOGLE_EVENTS_URL, json=event_body, headers=headers)
-
-        if resp.status_code == 401 and owner.google_refresh_token:
-            token_resp = await client.post(
-                "https://oauth2.googleapis.com/token",
-                data={
-                    "client_id": settings.GOOGLE_CLIENT_ID,
-                    "client_secret": settings.GOOGLE_CLIENT_SECRET,
-                    "refresh_token": owner.google_refresh_token,
-                    "grant_type": "refresh_token",
-                },
-            )
-            if token_resp.status_code == 200:
-                new_token = token_resp.json().get("access_token")
-                if new_token:
-                    owner.google_access_token = new_token
-                    db.add(owner)
-                    await db.commit()
-                    headers = {"Authorization": f"Bearer {new_token}"}
-                    resp = await client.post(GOOGLE_EVENTS_URL, json=event_body, headers=headers)
-
-    if resp.status_code in (200, 201):
-        event = resp.json()
-        return {
-            "provider": "google_calendar",
-            "status": "created",
-            "event_id": event.get("id"),
-            "html_link": event.get("htmlLink"),
-            "scheduled_at": selected_slot.get("start_at"),
-        }
-
     return {
         "provider": "google_calendar",
-        "status": "failed",
-        "http_status": resp.status_code,
+        "status": "skipped",
+        "reason": "pending_confirmation",
         "scheduled_at": selected_slot.get("start_at"),
     }
 
@@ -690,6 +699,7 @@ async def intent_detection(state: GraphState) -> GraphState:
     intent_result = await classify_intent(latest_user_message or _serialize_context(state))
     state["intent"] = str(intent_result.get("intent", "general"))
     state["intent_confidence"] = float(intent_result.get("confidence", 0.0))
+    state["confidence_score"] = state["intent_confidence"]
     state["status"] = "intent_detected"
     return state
 
@@ -698,12 +708,21 @@ async def entity_extraction(state: GraphState) -> GraphState:
     extracted = await _extract_entities_from_context(state)
     state["extracted_entities"] = extracted
     _update_slot_state(state, extracted)
+    state["is_location_first"] = bool(state.get("place_hint")) and not bool(state.get("date_hint"))
     state["status"] = "entities_extracted"
     return state
 
 
 async def slot_filling(state: GraphState) -> GraphState:
     _update_slot_state(state, state.get("extracted_entities", {}))
+    state["is_location_first"] = bool(state.get("place_hint")) and not bool(state.get("date_hint"))
+
+    if state.get("is_location_first"):
+        state["awaiting_user_reply"] = False
+        state["wait_timed_out"] = False
+        state["status"] = "location_first_ready"
+        return state
+
     if state["all_slots_filled"]:
         state["awaiting_user_reply"] = False
         state["wait_timed_out"] = False
@@ -742,11 +761,15 @@ async def slot_filling(state: GraphState) -> GraphState:
 
 
 async def function_calling(state: GraphState) -> GraphState:
-    free_slots, place_results = await asyncio.gather(
-        get_free_slots(state),
-        search_place(state),
-    )
-    state["calendar_free_slots"] = free_slots
+    if state.get("is_location_first") and not state.get("date_hint"):
+        state["calendar_free_slots"] = []
+        place_results = await search_place(state)
+    else:
+        free_slots, place_results = await asyncio.gather(
+            get_free_slots(state),
+            search_place(state),
+        )
+        state["calendar_free_slots"] = free_slots
     state["place_search_results"] = place_results
     state["status"] = "functions_called"
     return state
@@ -756,29 +779,28 @@ async def supervisor_validation(state: GraphState) -> GraphState:
     errors: list[str] = []
     now = datetime.now(timezone.utc)
     valid_slots: list[dict[str, Any]] = []
+    is_location_first = bool(state.get("is_location_first") and not state.get("date_hint"))
 
     headcount = state.get("headcount")
-    if headcount is None:
+    if headcount is None and not is_location_first:
         errors.append("headcount is required")
     elif headcount > 20:
         errors.append("headcount exceeds current recommendation constraints")
 
-    for slot in state.get("calendar_free_slots", []):
-        start_at = _parse_iso_datetime(slot.get("start_at"))
-        end_at = _parse_iso_datetime(slot.get("end_at"))
-        if start_at is None or end_at is None:
-            errors.append("calendar slot has invalid timestamps")
-            continue
-        if start_at < now:
-            errors.append("calendar slot is in the past")
-            continue
-        if end_at <= start_at:
-            errors.append("calendar slot duration is invalid")
-            continue
-        if bool(slot.get("has_conflict")):
-            errors.append("calendar slot conflicts with an existing event")
-            continue
-        valid_slots.append(slot)
+    if not is_location_first:
+        for slot in state.get("calendar_free_slots", []):
+            start_at = _parse_iso_datetime(slot.get("start_at"))
+            end_at = _parse_iso_datetime(slot.get("end_at"))
+            if start_at is None or end_at is None:
+                errors.append("calendar slot has invalid timestamps")
+                continue
+            if start_at < now:
+                errors.append("calendar slot is in the past")
+                continue
+            if end_at <= start_at:
+                errors.append("calendar slot duration is invalid")
+                continue
+            valid_slots.append(slot)
 
     valid_places: list[dict[str, Any]] = []
     for place in state.get("place_search_results", []):
@@ -787,7 +809,7 @@ async def supervisor_validation(state: GraphState) -> GraphState:
             continue
         valid_places.append(place)
 
-    if not valid_slots:
+    if not valid_slots and not is_location_first:
         errors.append("no valid free time slots available")
     if not valid_places:
         errors.append("no place recommendations satisfy the headcount")
@@ -833,6 +855,9 @@ async def vote_card_creation(state: GraphState) -> GraphState:
 
 
 async def place_recommendation(state: GraphState) -> GraphState:
+    if not state.get("place_hint"):
+        state["place_hint"] = _resolve_place_hint(state)
+
     place_results = list(state.get("place_search_results", []))
     ranked_places = place_results
 
@@ -918,12 +943,16 @@ async def maedeup_card_creation(state: GraphState) -> GraphState:
 
 def _route_after_intent(state: GraphState) -> Literal["entity_extraction", "general_response"]:
     """general 의도이고 슬롯 필링 진행 중이 아니면 일반 응답으로 분기."""
+    if float(state.get("confidence_score", 0.0)) < INTENT_CONFIDENCE_THRESHOLD:
+        return "general_response"
     if state.get("intent") == "general" and state.get("slot_filling_turns", 0) == 0:
         return "general_response"
     return "entity_extraction"
 
 
 def _route_after_slot_filling(state: GraphState) -> Literal["slot_filling", "function_calling", "__end__"]:
+    if state.get("is_location_first"):
+        return "function_calling"
     if state.get("all_slots_filled"):
         return "function_calling"
     if state.get("wait_timed_out") or state.get("awaiting_user_reply"):
@@ -931,8 +960,18 @@ def _route_after_slot_filling(state: GraphState) -> Literal["slot_filling", "fun
     return "slot_filling"
 
 
-def _route_after_validation(state: GraphState) -> Literal["vote_card_creation", "__end__"]:
-    return "vote_card_creation" if state.get("validation_passed") else END
+def _route_after_validation(state: GraphState) -> Literal["vote_card_creation", "place_recommendation", "__end__"]:
+    if not state.get("validation_passed"):
+        return END
+    if state.get("is_location_first") and not state.get("date_hint"):
+        return "place_recommendation"
+    return "vote_card_creation"
+
+
+def _route_after_place_recommendation(state: GraphState) -> Literal["maedeup_card_creation", "__end__"]:
+    if state.get("is_location_first") and not state.get("date_hint"):
+        return END
+    return "maedeup_card_creation"
 
 
 def _build_graph() -> Any:
@@ -973,11 +1012,19 @@ def _build_graph() -> Any:
         _route_after_validation,
         {
             "vote_card_creation": "vote_card_creation",
+            "place_recommendation": "place_recommendation",
             END: END,
         },
     )
     graph.add_edge("vote_card_creation", "place_recommendation")
-    graph.add_edge("place_recommendation", "maedeup_card_creation")
+    graph.add_conditional_edges(
+        "place_recommendation",
+        _route_after_place_recommendation,
+        {
+            "maedeup_card_creation": "maedeup_card_creation",
+            END: END,
+        },
+    )
     graph.add_edge("maedeup_card_creation", END)
     return graph.compile()
 
@@ -997,6 +1044,7 @@ async def run_pipeline(
         "status": final_state.get("status"),
         "intent": final_state.get("intent"),
         "intent_confidence": final_state.get("intent_confidence"),
+        "confidence_score": final_state.get("confidence_score"),
         "slots": _slot_snapshot(final_state),
         "missing_slots": final_state.get("missing_slots", []),
         "awaiting_user_reply": final_state.get("awaiting_user_reply", False),
@@ -1011,7 +1059,9 @@ async def run_pipeline(
         "slot_filling_turns": final_state.get("slot_filling_turns", 0),
         "date_hint": final_state.get("date_hint"),
         "place_hint": final_state.get("place_hint"),
+        "default_place_hint": final_state.get("default_place_hint"),
         "headcount": final_state.get("headcount"),
         "meeting_type": final_state.get("meeting_type"),
+        "is_location_first": final_state.get("is_location_first", False),
         "new_assistant_messages": final_state.get("new_assistant_messages", []),  # type: ignore[typeddict-item]
     }

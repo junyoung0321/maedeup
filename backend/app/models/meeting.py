@@ -24,6 +24,7 @@ class MeetingSchedule(SQLModel, table=True):
     room_id: int = Field(foreign_key="rooms.id", index=True)
     title: str = Field(max_length=255)
     scheduled_at: datetime
+    end_at: Optional[datetime] = None
     location_name: Optional[str] = Field(default=None, max_length=255)
     location_address: Optional[str] = Field(default=None, max_length=512)
     kakao_place_id: Optional[str] = Field(default=None, max_length=64)

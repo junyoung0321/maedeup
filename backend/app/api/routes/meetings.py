@@ -4,10 +4,14 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from app.core.security import AuthUser, get_current_user
 from app.db.session import get_session
 from app.models.meeting import MeetingSchedule
+from app.models.room import RoomMember
+from app.models.user import User
+from app.services.google_calendar import create_calendar_event
 
 router = APIRouter(tags=["meetings"])
 
@@ -44,6 +48,7 @@ async def confirm_meeting(
         room_id=body.room_id,
         title=body.title,
         scheduled_at=body.scheduled_at,
+        end_at=body.end_at,
         location_name=body.location_name,
         created_by=int(current_user.sub),
     )
@@ -60,7 +65,6 @@ async def confirm_place(
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    from sqlmodel import select
     result = await session.execute(
         select(MeetingSchedule).where(MeetingSchedule.id == meeting_id)
     )
@@ -79,4 +83,30 @@ async def confirm_place(
     session.add(meeting)
     await session.commit()
     await session.refresh(meeting)
+
+    if meeting.scheduled_at and meeting.location_name:
+        participant_result = await session.execute(
+            select(User)
+            .join(RoomMember, RoomMember.user_id == User.id)
+            .where(RoomMember.room_id == meeting.room_id)
+            .where(User.calendar_consent == True)  # noqa: E712
+        )
+        participants = participant_result.scalars().all()
+        event_end = meeting.end_at or meeting.scheduled_at
+        event_location = meeting.location_address or meeting.location_name
+
+        for participant in participants:
+            if not participant.google_access_token:
+                continue
+            try:
+                await create_calendar_event(
+                    token=participant.google_access_token,
+                    title=meeting.title,
+                    start_datetime=meeting.scheduled_at,
+                    end_datetime=event_end,
+                    location=event_location,
+                )
+            except Exception:
+                continue
+
     return ConfirmMeetingResponse(id=meeting.id)

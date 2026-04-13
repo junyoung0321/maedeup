@@ -721,6 +721,18 @@ async def supervisor_validation(state: GraphState) -> GraphState:
     state["validation_errors"] = errors
     state["validation_passed"] = not errors
     state["status"] = "validated" if not errors else "validation_failed"
+
+    if errors:
+        # 유저에게 실패 이유 알림
+        error_summary = "; ".join(errors)
+        await _emit_assistant_message(
+            state["room_id"],
+            state["db"],
+            f"죄송해요, 조건에 맞는 시간이나 장소를 찾지 못했어요. ({error_summary}) "
+            "날짜나 장소 조건을 조금 바꿔서 다시 시도해볼까요?",
+            state,
+        )
+
     return state
 
 

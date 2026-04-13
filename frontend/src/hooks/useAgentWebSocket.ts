@@ -85,6 +85,21 @@ export function useAgentWebSocket(roomId: string, sender: string, options?: Agen
       return;
     }
 
+    // 이전 에이전트 메시지 로드
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const roomPk = /^\d+$/.test(roomId) ? roomId : null;
+    if (roomPk) {
+      fetch(
+        `${apiBase}/api/v1/chat/messages?pane_type=agent&room_id=${roomPk}&limit=50`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+        .then((r) => r.json())
+        .then((data) => {
+          if (Array.isArray(data)) setMessages(data as ChatMessagePayload[]);
+        })
+        .catch(() => {/* ignore */});
+    }
+
     const wsBase = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
     const ws = new WebSocket(
       `${wsBase}/ws/agent/${roomId}?token=${encodeURIComponent(token)}`

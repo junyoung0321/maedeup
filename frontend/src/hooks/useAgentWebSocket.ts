@@ -124,7 +124,11 @@ export function useAgentWebSocket(roomId: string, sender: string, options?: Agen
       }
 
       const msg = parsed;
-      setMessages((prev) => [...prev, msg]);
+      setMessages((prev) => {
+        // 중복 방지 (REST 로드 후 WS에서 같은 메시지가 올 경우)
+        if (msg.id && prev.some((m) => m.id === msg.id)) return prev;
+        return [...prev, msg];
+      });
 
       // Auto-switch context panel based on AI pane_type
       if (msg.pane_type && options?.onPaneSwitch) {

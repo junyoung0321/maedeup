@@ -60,7 +60,12 @@ export function useSocialWebSocket(roomId: string, sender: string) {
       if (data.type === "intent_detected") {
         setDetectedIntent(data as IntentDetectedPayload);
       } else {
-        setMessages((prev) => [...prev, data as ChatMessagePayload]);
+        const msg = data as ChatMessagePayload;
+        setMessages((prev) => {
+          // 중복 방지 (REST 로드 후 WS에서 같은 메시지가 올 경우)
+          if (msg.id && prev.some((m) => m.id === msg.id)) return prev;
+          return [...prev, msg];
+        });
       }
     };
 

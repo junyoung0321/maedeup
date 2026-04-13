@@ -52,6 +52,9 @@ class GraphState(TypedDict, total=False):
     date_hint: str | None
     place_hint: str | None
     default_place_hint: str | None
+    confirmed_date: str | None
+    confirmed_time: str | None
+    confirmed_place: str | None
     headcount: int | None
     meeting_type: str | None
     is_location_first: bool
@@ -69,6 +72,7 @@ class GraphState(TypedDict, total=False):
     place_recommendation_payload: dict[str, Any] | None
     maedeup_card_payload: dict[str, Any] | None
     calendar_registration: dict[str, Any] | None
+    blocker_notification_payload: dict[str, Any] | None
     status: str
 
 
@@ -99,6 +103,9 @@ def _default_state(
         "date_hint": ctx.get("date_hint"),
         "place_hint": ctx.get("place_hint"),
         "default_place_hint": ctx.get("default_place_hint") or "서울 강남",
+        "confirmed_date": ctx.get("confirmed_date"),
+        "confirmed_time": ctx.get("confirmed_time"),
+        "confirmed_place": ctx.get("confirmed_place"),
         "headcount": ctx.get("headcount"),
         "meeting_type": ctx.get("meeting_type"),
         "is_location_first": False,
@@ -116,6 +123,7 @@ def _default_state(
         "place_recommendation_payload": None,
         "maedeup_card_payload": None,
         "calendar_registration": None,
+        "blocker_notification_payload": None,
         "status": "initialized",
     }
 
@@ -260,6 +268,15 @@ def _format_slot_label(start_at: datetime, unavailable_names: list[str]) -> str:
         absent_users = ", ".join(f"@{name}" for name in unavailable_names)
         suffix = f" (N-1명 가능, {absent_users} 불참)"
     return f"{start_at.month}월 {start_at.day}일 ({weekday}) {ampm} {hour}:{start_at.minute:02d}{suffix}"
+
+
+def _format_confirmed_time(start_at: datetime | None) -> str | None:
+    if start_at is None:
+        return None
+    start_kst = start_at.astimezone(KST)
+    ampm = "오전" if start_kst.hour < 12 else "오후"
+    hour = start_kst.hour % 12 or 12
+    return f"{ampm} {hour}:{start_kst.minute:02d}"
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
@@ -623,6 +640,32 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
     )
 
 
+async def _get_room_member_food_preferences(state: GraphState) -> list[str]:
+    db = state["db"]
+    room_pk = _room_id_as_int(state["room_id"])
+    if room_pk is None:
+        return []
+
+    member_result = await db.execute(select(RoomMember).where(RoomMember.room_id == room_pk))
+    members = member_result.scalars().all()
+    user_ids = [member.user_id for member in members]
+    if not user_ids:
+        return []
+
+    user_result = await db.execute(select(User).where(User.id.in_(user_ids)))
+    users = user_result.scalars().all()
+
+    disliked_foods: list[str] = []
+    seen: set[str] = set()
+    for user in users:
+        for item in user.food_preferences or []:
+            normalized = str(item).strip()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                disliked_foods.append(normalized)
+    return disliked_foods
+
+
 async def search_place(state: GraphState) -> list[dict[str, Any]]:
     """카카오맵 API로 장소 후보를 검색합니다."""
     place_hint = _resolve_place_hint(state)
@@ -770,6 +813,23 @@ async def function_calling(state: GraphState) -> GraphState:
             search_place(state),
         )
         state["calendar_free_slots"] = free_slots
+        blocker_counts: dict[str, int] = {}
+        if free_slots and any(slot.get("has_conflict") for slot in free_slots):
+            for slot in free_slots:
+                for unavailable_user in slot.get("unavailable_users", []):
+                    blocker_counts[unavailable_user] = blocker_counts.get(unavailable_user, 0) + 1
+            if blocker_counts:
+                blocker_name = max(
+                    blocker_counts.items(),
+                    key=lambda item: (item[1], item[0]),
+                )[0]
+                state["blocker_notification_payload"] = {
+                    "type": "social_system_message",
+                    "room_id": state["room_id"],
+                    "sender": "매듭이",
+                    "content": f"@{blocker_name}님, 혹시 일정 조정이 가능하신가요? 😊",
+                    "blocker_name": blocker_name,
+                }
     state["place_search_results"] = place_results
     state["status"] = "functions_called"
     return state
@@ -784,7 +844,7 @@ async def supervisor_validation(state: GraphState) -> GraphState:
     headcount = state.get("headcount")
     if headcount is None and not is_location_first:
         errors.append("headcount is required")
-    elif headcount > 20:
+    elif headcount is not None and headcount > 20:
         errors.append("headcount exceeds current recommendation constraints")
 
     if not is_location_first:
@@ -835,6 +895,12 @@ async def supervisor_validation(state: GraphState) -> GraphState:
 
 
 async def vote_card_creation(state: GraphState) -> GraphState:
+    selected_slot = state["calendar_free_slots"][0] if state.get("calendar_free_slots") else {}
+    start_at = _parse_iso_datetime(selected_slot.get("start_at")) if selected_slot else None
+    if state.get("date_hint"):
+        state["confirmed_date"] = state.get("date_hint")
+    if start_at is not None:
+        state["confirmed_time"] = _format_confirmed_time(start_at)
     state["vote_card_payload"] = {
         "type": "vote_card",
         "title": f"{state.get('meeting_type') or '모임'} 시간 투표",
@@ -849,12 +915,29 @@ async def vote_card_creation(state: GraphState) -> GraphState:
             for slot in state.get("calendar_free_slots", [])
         ],
         "headcount": state.get("headcount"),
+        "blocker_notification": state.get("blocker_notification_payload"),
     }
     state["status"] = "vote_card_created"
     return state
 
 
 async def place_recommendation(state: GraphState) -> GraphState:
+    if state.get("confirmed_place"):
+        state["place_recommendation_payload"] = {
+            "type": "place_recommendation",
+            "room_id": state["room_id"],
+            "place_hint": state.get("place_hint"),
+            "recommendations": [
+                {
+                    "name": state.get("confirmed_place"),
+                    "score": 1.0,
+                    "is_confirmed": True,
+                }
+            ],
+        }
+        state["status"] = "place_recommended"
+        return state
+
     if not state.get("place_hint"):
         state["place_hint"] = _resolve_place_hint(state)
 
@@ -865,6 +948,7 @@ async def place_recommendation(state: GraphState) -> GraphState:
         top_candidates = place_results[:10]
         headcount = state.get("headcount") or 0
         meeting_type = state.get("meeting_type") or "모임"
+        disliked_foods = await _get_room_member_food_preferences(state)
         scoring_payload = [
             {
                 "place_id": place.get("place_id", ""),
@@ -874,11 +958,30 @@ async def place_recommendation(state: GraphState) -> GraphState:
             }
             for place in top_candidates
         ]
+        time_context = ""
+        if state.get("confirmed_date") and state.get("confirmed_time"):
+            time_context = (
+                f"이 모임은 {state['confirmed_date']} {state['confirmed_time']}에 예정되어 있습니다. "
+                "해당 시간대에 영업하는 장소를 우선 추천해주세요.\n"
+            )
+        elif state.get("confirmed_date"):
+            time_context = (
+                f"이 모임은 {state['confirmed_date']}에 예정되어 있습니다. "
+                "해당 일정에 어울리는 장소를 우선 추천해주세요.\n"
+            )
+        dislike_context = ""
+        if disliked_foods:
+            dislike_context = (
+                f"멤버 중 {', '.join(disliked_foods)}을(를) 못 먹는 사람이 있으니 "
+                "해당 카테고리 장소 점수를 낮춰줘.\n"
+            )
         scoring_prompt = (
             "당신은 매듭 AI입니다. 한국인들의 모임 일정과 장소 조율을 돕는 "
             "어시스턴트입니다.\n"
             f"아래 장소 후보들을 {headcount}명 {meeting_type} 모임에 얼마나 적합한지 "
             "0부터 1 사이 점수로 평가하세요.\n"
+            f"{time_context}"
+            f"{dislike_context}"
             "반드시 JSON 배열만 반환하세요.\n"
             '형식: [{"place_id": "...", "score": 0.9}]\n'
             "place_id는 입력과 동일해야 하며, 모든 후보를 빠짐없이 포함하세요.\n\n"
@@ -920,7 +1023,16 @@ async def place_recommendation(state: GraphState) -> GraphState:
 
 async def maedeup_card_creation(state: GraphState) -> GraphState:
     selected_slot = state["calendar_free_slots"][0] if state.get("calendar_free_slots") else {}
-    selected_place = state["place_search_results"][0] if state.get("place_search_results") else {}
+    if state.get("confirmed_place"):
+        selected_place = {
+            "name": state.get("confirmed_place"),
+            "score": 1.0,
+            "is_confirmed": True,
+        }
+    else:
+        selected_place = state["place_search_results"][0] if state.get("place_search_results") else {}
+        if selected_place.get("name"):
+            state["confirmed_place"] = str(selected_place.get("name"))
     state["calendar_registration"] = await _register_google_calendar(state)
     state["maedeup_card_payload"] = {
         "type": "maedeup_card",
@@ -966,6 +1078,12 @@ def _route_after_validation(state: GraphState) -> Literal["vote_card_creation", 
     if state.get("is_location_first") and not state.get("date_hint"):
         return "place_recommendation"
     return "vote_card_creation"
+
+
+def _route_after_vote_card_creation(state: GraphState) -> Literal["place_recommendation", "maedeup_card_creation"]:
+    if state.get("confirmed_place"):
+        return "maedeup_card_creation"
+    return "place_recommendation"
 
 
 def _route_after_place_recommendation(state: GraphState) -> Literal["maedeup_card_creation", "__end__"]:
@@ -1016,7 +1134,14 @@ def _build_graph() -> Any:
             END: END,
         },
     )
-    graph.add_edge("vote_card_creation", "place_recommendation")
+    graph.add_conditional_edges(
+        "vote_card_creation",
+        _route_after_vote_card_creation,
+        {
+            "place_recommendation": "place_recommendation",
+            "maedeup_card_creation": "maedeup_card_creation",
+        },
+    )
     graph.add_conditional_edges(
         "place_recommendation",
         _route_after_place_recommendation,
@@ -1060,8 +1185,12 @@ async def run_pipeline(
         "date_hint": final_state.get("date_hint"),
         "place_hint": final_state.get("place_hint"),
         "default_place_hint": final_state.get("default_place_hint"),
+        "confirmed_date": final_state.get("confirmed_date"),
+        "confirmed_time": final_state.get("confirmed_time"),
+        "confirmed_place": final_state.get("confirmed_place"),
         "headcount": final_state.get("headcount"),
         "meeting_type": final_state.get("meeting_type"),
         "is_location_first": final_state.get("is_location_first", False),
+        "blocker_notification_payload": final_state.get("blocker_notification_payload"),
         "new_assistant_messages": final_state.get("new_assistant_messages", []),  # type: ignore[typeddict-item]
     }

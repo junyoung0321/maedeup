@@ -14,10 +14,12 @@ from app.db.session import AsyncSessionLocal
 from app.models.chat import ChatMessage, PaneType
 from app.models.room import Room
 from app.models.user import User
+from app.services.intent_classifier import classify_intent
 from app.services.langgraph_pipeline import run_pipeline
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+MEETING_RELATED_INTENTS = {"meeting_schedule", "place_suggestion"}
 
 
 async def _redis_subscriber(
@@ -76,9 +78,13 @@ async def agent_ws(
         "slot_filling_turns": 0,
         "date_hint": None,
         "place_hint": None,
+        "confirmed_date": None,
+        "confirmed_time": None,
+        "confirmed_place": None,
         "headcount": None,
         "meeting_type": None,
         "default_place_hint": "서울 강남",
+        "message_count_since_last_trigger": 0,
     }
 
     if room_id.isdigit():
@@ -131,6 +137,27 @@ async def agent_ws(
             await r.rpush(f"agent_queue:{room_id}", out)
 
             if role == "user":
+                slot_context["message_count_since_last_trigger"] = int(
+                    slot_context.get("message_count_since_last_trigger") or 0
+                ) + 1
+
+                should_run_pipeline = False
+                if int(slot_context.get("slot_filling_turns") or 0) > 0:
+                    should_run_pipeline = True
+                elif content.strip():
+                    intent_result = await classify_intent(content)
+                    is_meeting_related = (
+                        intent_result.get("intent") in MEETING_RELATED_INTENTS
+                        and float(intent_result.get("confidence", 0.0)) >= 0.7
+                    )
+                    should_run_pipeline = (
+                        is_meeting_related
+                        and int(slot_context.get("message_count_since_last_trigger") or 0) >= 3
+                    )
+
+                if not should_run_pipeline:
+                    continue
+
                 async with AsyncSessionLocal() as session:
                     recent_messages_result = await session.execute(
                         select(ChatMessage)
@@ -150,12 +177,17 @@ async def agent_ws(
                     "slot_filling_turns",
                     "date_hint",
                     "place_hint",
+                    "confirmed_date",
+                    "confirmed_time",
+                    "confirmed_place",
                     "headcount",
                     "meeting_type",
                     "default_place_hint",
                 ):
                     if result.get(key) is not None:
                         slot_context[key] = result[key]
+
+                slot_context["message_count_since_last_trigger"] = 0
 
                 # 파이프라인이 발행한 어시스턴트 메시지(슬롯 질문, 오류, 일반 응답 등) Redis 발행
                 for new_msg in result.get("new_assistant_messages", []):
@@ -173,9 +205,10 @@ async def agent_ws(
                     "slot_filling_turns": 0,
                     "date_hint": None,
                     "place_hint": None,
+                    "default_place_hint": slot_context.get("default_place_hint") or "서울 강남",
                     "headcount": None,
                     "meeting_type": None,
-                    "default_place_hint": slot_context.get("default_place_hint") or "서울 강남",
+                    "message_count_since_last_trigger": 0,
                 })
 
                 vote_card_payload = result.get("vote_card_payload")
@@ -187,6 +220,33 @@ async def agent_ws(
                             ensure_ascii=False,
                         ),
                     )
+                    blocker_notification_payload = result.get("blocker_notification_payload")
+                    if blocker_notification_payload:
+                        async with AsyncSessionLocal() as session:
+                            social_msg = ChatMessage(
+                                pane_type=PaneType.social,
+                                role="system",
+                                content=str(blocker_notification_payload.get("content", "")),
+                                sender=str(blocker_notification_payload.get("sender", "매듭이")),
+                                room_id=room_pk,
+                            )
+                            session.add(social_msg)
+                            await session.commit()
+                            await session.refresh(social_msg)
+                        await r.publish(
+                            f"social:{room_id}",
+                            json.dumps(
+                                {
+                                    "id": social_msg.id,
+                                    "pane_type": social_msg.pane_type.value,
+                                    "role": social_msg.role,
+                                    "content": social_msg.content,
+                                    "sender": social_msg.sender,
+                                    "created_at": social_msg.created_at.isoformat(),
+                                },
+                                ensure_ascii=False,
+                            ),
+                        )
 
                 place_recommendation_payload = result.get("place_recommendation_payload")
                 if place_recommendation_payload:

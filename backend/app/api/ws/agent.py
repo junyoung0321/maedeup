@@ -14,12 +14,29 @@ from app.db.session import AsyncSessionLocal
 from app.models.chat import ChatMessage, PaneType
 from app.models.room import Room
 from app.models.user import User
+from app.services.gemini import call_gemini
 from app.services.intent_classifier import classify_intent
 from app.services.langgraph_pipeline import run_pipeline
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 MEETING_RELATED_INTENTS = {"meeting_schedule", "place_suggestion"}
+
+
+async def _build_conversation_summary(messages: list[ChatMessage]) -> str:
+    recent_text = "\n".join(
+        f"{message.role}: {message.content.strip()}"
+        for message in messages
+        if message.content and message.content.strip()
+    )
+    if not recent_text:
+        return ""
+
+    prompt = (
+        "다음 대화에서 모임 관련 핵심 정보(결정사항, 장소, 일정, 인원)만 3문장으로 요약해줘: "
+        f"{recent_text}"
+    )
+    return (await call_gemini(prompt)).strip()
 
 
 async def _redis_subscriber(
@@ -78,6 +95,7 @@ async def agent_ws(
         "slot_filling_turns": 0,
         "date_hint": None,
         "place_hint": None,
+        "place_coord": None,
         "confirmed_date": None,
         "confirmed_time": None,
         "confirmed_place": None,
@@ -85,6 +103,8 @@ async def agent_ws(
         "meeting_type": None,
         "default_place_hint": "서울 강남",
         "message_count_since_last_trigger": 0,
+        "total_message_count": 0,
+        "conversation_summary": "",
     }
 
     if room_id.isdigit():
@@ -140,6 +160,28 @@ async def agent_ws(
                 slot_context["message_count_since_last_trigger"] = int(
                     slot_context.get("message_count_since_last_trigger") or 0
                 ) + 1
+                slot_context["total_message_count"] = int(
+                    slot_context.get("total_message_count") or 0
+                ) + 1
+
+                if (
+                    int(slot_context.get("total_message_count") or 0) > 10
+                    and int(slot_context.get("total_message_count") or 0) % 10 == 0
+                ):
+                    async with AsyncSessionLocal() as session:
+                        summary_messages_result = await session.execute(
+                            select(ChatMessage)
+                            .where(ChatMessage.room_id == room_pk)
+                            .where(ChatMessage.pane_type == PaneType.agent)
+                            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+                            .limit(10)
+                        )
+                        summary_messages = list(
+                            reversed(summary_messages_result.scalars().all())
+                        )
+                    summary = await _build_conversation_summary(summary_messages)
+                    if summary:
+                        slot_context["conversation_summary"] = summary
 
                 should_run_pipeline = False
                 if int(slot_context.get("slot_filling_turns") or 0) > 0:
@@ -177,12 +219,14 @@ async def agent_ws(
                     "slot_filling_turns",
                     "date_hint",
                     "place_hint",
+                    "place_coord",
                     "confirmed_date",
                     "confirmed_time",
                     "confirmed_place",
                     "headcount",
                     "meeting_type",
                     "default_place_hint",
+                    "conversation_summary",
                 ):
                     if result.get(key) is not None:
                         slot_context[key] = result[key]
@@ -205,6 +249,7 @@ async def agent_ws(
                     "slot_filling_turns": 0,
                     "date_hint": None,
                     "place_hint": None,
+                    "place_coord": None,
                     "default_place_hint": slot_context.get("default_place_hint") or "서울 강남",
                     "headcount": None,
                     "meeting_type": None,

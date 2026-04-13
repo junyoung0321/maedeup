@@ -1,15 +1,13 @@
 from typing import Optional
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.security import AuthUser, get_current_user
+from app.services.kakao_maps import search_keyword
 
 router = APIRouter(prefix="/places", tags=["places"])
-
-KAKAO_KEYWORD_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
 
 
 class PlaceSearchRequest(BaseModel):
@@ -34,24 +32,14 @@ async def search_places(
     payload: PlaceSearchRequest,
     _current_user: AuthUser = Depends(get_current_user),
 ):
-    if not settings.KAKAO_REST_API_KEY:
-        raise HTTPException(status_code=503, detail="KAKAO_REST_API_KEY not configured")
+    if not (settings.KAKAO_API_KEY or settings.KAKAO_REST_API_KEY):
+        raise HTTPException(status_code=503, detail="KAKAO_API_KEY not configured")
 
-    params: dict = {"query": payload.query, "size": 10}
-    if payload.x:
-        params["x"] = payload.x
-    if payload.y:
-        params["y"] = payload.y
+    documents = await search_keyword(payload.query, x=payload.x, y=payload.y)
+    if not documents and payload.query.strip():
+        # 키워드 검색 실패/빈결과를 기존 API 에러로 구분하지 않고 빈 배열로 반환
+        documents = []
 
-    headers = {"Authorization": f"KakaoAK {settings.KAKAO_REST_API_KEY}"}
-
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(KAKAO_KEYWORD_URL, params=params, headers=headers)
-
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail="Kakao API error")
-
-    documents = resp.json().get("documents", [])
     return [
         PlaceResult(
             id=doc["id"],

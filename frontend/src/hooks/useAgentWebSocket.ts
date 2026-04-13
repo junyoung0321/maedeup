@@ -20,6 +20,13 @@ export interface VoteCardPayload {
   headcount: number;
 }
 
+export interface VoteUpdatePayload {
+  type: "vote_update";
+  meeting_id: number;
+  votes: Record<string, number>;
+  total_voters: number;
+}
+
 export interface PlaceRecommendationItem {
   place_id: string;
   name: string;
@@ -59,6 +66,7 @@ export interface MaedeupCardPayload {
 
 type AgentCardPayload =
   | VoteCardPayload
+  | VoteUpdatePayload
   | PlaceRecommendationPayload
   | MaedeupCardPayload;
 
@@ -72,6 +80,7 @@ interface AgentOptions {
 export function useAgentWebSocket(roomId: string, sender: string, options?: AgentOptions) {
   const [messages, setMessages] = useState<ChatMessagePayload[]>([]);
   const [voteCard, setVoteCard] = useState<VoteCardPayload | null>(null);
+  const [voteUpdate, setVoteUpdate] = useState<VoteUpdatePayload | null>(null);
   const [placeRecommendation, setPlaceRecommendation] =
     useState<PlaceRecommendationPayload | null>(null);
   const [maedeupCard, setMaedeupCard] = useState<MaedeupCardPayload | null>(null);
@@ -115,6 +124,8 @@ export function useAgentWebSocket(roomId: string, sender: string, options?: Agen
       if ("type" in parsed) {
         if (parsed.type === "vote_card") {
           setVoteCard(parsed);
+        } else if (parsed.type === "vote_update") {
+          setVoteUpdate(parsed);
         } else if (parsed.type === "place_recommendation") {
           setPlaceRecommendation(parsed);
         } else if (parsed.type === "maedeup_card") {
@@ -167,6 +178,7 @@ export function useAgentWebSocket(roomId: string, sender: string, options?: Agen
     sendMessage,
     status,
     voteCard,
+    voteUpdate,
     placeRecommendation,
     maedeupCard,
   };

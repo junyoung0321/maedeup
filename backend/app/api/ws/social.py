@@ -32,7 +32,17 @@ async def _redis_subscriber(
                 ignore_subscribe_messages=True, timeout=0.01
             )
             if msg:
-                await websocket.send_text(msg["data"])
+                data = msg["data"]
+                try:
+                    parsed = json.loads(data)
+                except json.JSONDecodeError:
+                    await websocket.send_text(data)
+                    continue
+
+                if parsed.get("type") == "reminder":
+                    await websocket.send_text(json.dumps(parsed, ensure_ascii=False))
+                else:
+                    await websocket.send_text(data)
             else:
                 await asyncio.sleep(0.01)
     finally:

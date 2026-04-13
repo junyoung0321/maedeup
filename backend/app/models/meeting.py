@@ -1,7 +1,8 @@
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
+from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel
 
 
@@ -29,6 +30,9 @@ class MeetingSchedule(SQLModel, table=True):
     location_address: Optional[str] = Field(default=None, max_length=512)
     kakao_place_id: Optional[str] = Field(default=None, max_length=64)
     kakao_place_url: Optional[str] = Field(default=None, max_length=512)
+    reminder_sent: bool = Field(default=False)
+    vote_options: Optional[list[dict[str, Any]]] = Field(default=None, sa_column=Column(JSON(), nullable=True))
+    votes: Optional[dict[str, int]] = Field(default=None, sa_column=Column(JSON(), nullable=True))
     status: MeetingStatus = Field(default=MeetingStatus.pending)
     created_by: int = Field(foreign_key="users.id")
     created_at: datetime = Field(default_factory=datetime.utcnow)

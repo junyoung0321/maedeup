@@ -9,9 +9,7 @@ from alembic import context
 from sqlmodel import SQLModel
 
 # 모든 모델 import — autogenerate가 테이블 변경을 감지하려면 필수
-import app.models.chat  # noqa: F401
-import app.models.event  # noqa: F401
-import app.models.user  # noqa: F401
+import app.models  # noqa: F401
 
 from app.core.config import settings
 

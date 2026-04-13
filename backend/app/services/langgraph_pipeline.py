@@ -17,9 +17,9 @@ from app.models.room import RoomMember
 from app.models.user import User
 from app.services.gemini import call_gemini
 from app.services.intent_classifier import classify_intent
+from app.services.kakao_maps import search_address, search_keyword
 
 KST = ZoneInfo("Asia/Seoul")
-KAKAO_KEYWORD_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
 GOOGLE_FREEBUSY_URL = "https://www.googleapis.com/calendar/v3/freeBusy"
 WORK_HOUR_START = 9
 WORK_HOUR_END = 22
@@ -51,6 +51,7 @@ class GraphState(TypedDict, total=False):
     confidence_score: float
     date_hint: str | None
     place_hint: str | None
+    place_coord: dict[str, str] | None
     default_place_hint: str | None
     confirmed_date: str | None
     confirmed_time: str | None
@@ -83,13 +84,14 @@ def _default_state(
     slot_context: dict | None = None,
 ) -> GraphState:
     normalized_messages = [_normalize_message(message) for message in messages]
-    recent_messages, conversation_summary = _split_message_context(normalized_messages)
+    recent_messages, derived_summary = _split_message_context(normalized_messages)
     seen_ids = [
         message["id"]
         for message in normalized_messages
         if isinstance(message.get("id"), int)
     ]
     ctx = slot_context or {}
+    conversation_summary = str(ctx.get("conversation_summary") or derived_summary or "").strip()
     return {
         "room_id": room_id,
         "db": db,
@@ -102,6 +104,7 @@ def _default_state(
         "confidence_score": 0.0,
         "date_hint": ctx.get("date_hint"),
         "place_hint": ctx.get("place_hint"),
+        "place_coord": ctx.get("place_coord"),
         "default_place_hint": ctx.get("default_place_hint") or "서울 강남",
         "confirmed_date": ctx.get("confirmed_date"),
         "confirmed_time": ctx.get("confirmed_time"),
@@ -348,6 +351,17 @@ async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
         "모르면 null로 반환하세요."
     )
     return _extract_json_object(await call_gemini(prompt))
+
+
+async def _resolve_place_coord(keyword: str | None) -> dict[str, str] | None:
+    if not keyword:
+        return None
+    place_coord = await search_address(keyword)
+    if not place_coord:
+        return None
+    if not place_coord.get("x") or not place_coord.get("y"):
+        return None
+    return place_coord
 
 
 async def _emit_assistant_message(
@@ -666,27 +680,64 @@ async def _get_room_member_food_preferences(state: GraphState) -> list[str]:
     return disliked_foods
 
 
+def _contains_disliked_keyword(category: str, disliked_foods: list[str]) -> str | None:
+    normalized_category = str(category or "").strip().lower()
+    for keyword in disliked_foods:
+        normalized_keyword = str(keyword).strip().lower()
+        if normalized_keyword and normalized_keyword in normalized_category:
+            return str(keyword).strip()
+    return None
+
+
+async def _run_place_self_correction(
+    place_list: list[dict[str, Any]],
+    disliked_foods: list[str],
+) -> list[dict[str, Any]]:
+    if not place_list or not disliked_foods:
+        return place_list
+
+    prompt = (
+        "다음 장소 추천 목록에서 "
+        f"{json.dumps(disliked_foods, ensure_ascii=False)}"
+        "에 해당하는 항목이 있으면 제거하고, 제거된 경우 그 이유를 reason 필드에 추가해줘: "
+        f"{json.dumps(place_list, ensure_ascii=False)}\n"
+        "반드시 JSON 배열만 반환하세요."
+    )
+    try:
+        corrected_places = _extract_json_array(await call_gemini(prompt))
+    except Exception:
+        return place_list
+    if not corrected_places:
+        return place_list
+
+    original_by_id = {
+        str(place.get("place_id")): dict(place)
+        for place in place_list
+        if place.get("place_id") not in (None, "")
+    }
+    merged_places: list[dict[str, Any]] = []
+    for corrected_place in corrected_places:
+        place_id = str(corrected_place.get("place_id", ""))
+        base_place = original_by_id.get(place_id, {})
+        merged_places.append({**base_place, **corrected_place})
+    return merged_places
+
+
 async def search_place(state: GraphState) -> list[dict[str, Any]]:
     """카카오맵 API로 장소 후보를 검색합니다."""
     place_hint = _resolve_place_hint(state)
     meeting_type = state.get("meeting_type") or ""
     query = f"{place_hint} {meeting_type}".strip()
-
-    if not settings.KAKAO_REST_API_KEY:
-        return []
-
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            KAKAO_KEYWORD_URL,
-            params={"query": query, "size": 10},
-            headers={"Authorization": f"KakaoAK {settings.KAKAO_REST_API_KEY}"},
-        )
-
-    if resp.status_code != 200:
-        return []
+    place_coord = state.get("place_coord") or {}
+    documents = await search_keyword(
+        query,
+        x=place_coord.get("x"),
+        y=place_coord.get("y"),
+        radius=2000 if place_coord.get("x") and place_coord.get("y") else None,
+    )
 
     results = []
-    for doc in resp.json().get("documents", []):
+    for doc in documents:
         results.append({
             "place_id": doc.get("id", ""),
             "name": doc.get("place_name", ""),
@@ -739,7 +790,15 @@ async def intent_detection(state: GraphState) -> GraphState:
             latest_user_message = message["content"]
             break
 
-    intent_result = await classify_intent(latest_user_message or _serialize_context(state))
+    if state.get("conversation_summary"):
+        intent_input = (
+            f"[이전 대화 요약]: {state['conversation_summary']}\n"
+            f"[현재 메시지]: {latest_user_message or _serialize_context(state)}"
+        )
+    else:
+        intent_input = latest_user_message or _serialize_context(state)
+
+    intent_result = await classify_intent(intent_input)
     state["intent"] = str(intent_result.get("intent", "general"))
     state["intent_confidence"] = float(intent_result.get("confidence", 0.0))
     state["confidence_score"] = state["intent_confidence"]
@@ -751,6 +810,9 @@ async def entity_extraction(state: GraphState) -> GraphState:
     extracted = await _extract_entities_from_context(state)
     state["extracted_entities"] = extracted
     _update_slot_state(state, extracted)
+    place_coord = await _resolve_place_coord(state.get("place_hint"))
+    if place_coord:
+        state["place_coord"] = place_coord
     state["is_location_first"] = bool(state.get("place_hint")) and not bool(state.get("date_hint"))
     state["status"] = "entities_extracted"
     return state
@@ -943,12 +1005,12 @@ async def place_recommendation(state: GraphState) -> GraphState:
 
     place_results = list(state.get("place_search_results", []))
     ranked_places = place_results
+    disliked_foods = await _get_room_member_food_preferences(state)
 
     if place_results:
         top_candidates = place_results[:10]
         headcount = state.get("headcount") or 0
         meeting_type = state.get("meeting_type") or "모임"
-        disliked_foods = await _get_room_member_food_preferences(state)
         scoring_payload = [
             {
                 "place_id": place.get("place_id", ""),
@@ -998,6 +1060,15 @@ async def place_recommendation(state: GraphState) -> GraphState:
             for place in top_candidates:
                 place_copy = dict(place)
                 place_copy["score"] = score_map.get(str(place.get("place_id")), 1.0)
+                disliked_keyword = _contains_disliked_keyword(
+                    str(place_copy.get("category", "")),
+                    disliked_foods,
+                )
+                if disliked_keyword and float(place_copy.get("score", 0.0)) > 0.6:
+                    place_copy["score"] = 0.1
+                    place_copy["reason"] = (
+                        f"멤버 비선호 음식인 {disliked_keyword} 카테고리와 겹쳐 점수를 낮췄어요."
+                    )
                 reranked.append(place_copy)
             reranked.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
             ranked_places = reranked + place_results[10:]
@@ -1009,6 +1080,12 @@ async def place_recommendation(state: GraphState) -> GraphState:
             )
     else:
         ranked_places = []
+
+    if ranked_places:
+        top_ranked_places = [dict(place) for place in ranked_places[:5]]
+        corrected_places = await _run_place_self_correction(top_ranked_places, disliked_foods)
+        remaining_places = ranked_places[5:]
+        ranked_places = corrected_places + remaining_places
 
     state["place_search_results"] = ranked_places
     state["place_recommendation_payload"] = {
@@ -1184,6 +1261,7 @@ async def run_pipeline(
         "slot_filling_turns": final_state.get("slot_filling_turns", 0),
         "date_hint": final_state.get("date_hint"),
         "place_hint": final_state.get("place_hint"),
+        "place_coord": final_state.get("place_coord"),
         "default_place_hint": final_state.get("default_place_hint"),
         "confirmed_date": final_state.get("confirmed_date"),
         "confirmed_time": final_state.get("confirmed_time"),

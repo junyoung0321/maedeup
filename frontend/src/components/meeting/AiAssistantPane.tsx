@@ -17,6 +17,11 @@ const PANE_TYPE_MAP: Record<string, ContextMode> = {
 export default function AiAssistantPane() {
   const [input, setInput] = useState("");
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
+  const [votedOptionIndex, setVotedOptionIndex] = useState<number | null>(null);
+  const [voteCounts, setVoteCounts] = useState<Record<string, number>>({});
+  const [totalVoters, setTotalVoters] = useState(0);
+  const [isVoting, setIsVoting] = useState(false);
+  const [voteError, setVoteError] = useState<string | null>(null);
   const [isConfirmingSchedule, setIsConfirmingSchedule] = useState(false);
   const [isScheduleConfirmed, setIsScheduleConfirmed] = useState(false);
   const [scheduleConfirmError, setScheduleConfirmError] = useState<string | null>(null);
@@ -47,6 +52,7 @@ export default function AiAssistantPane() {
     sendMessage,
     status,
     voteCard,
+    voteUpdate,
     placeRecommendation,
     maedeupCard,
   } = useAgentWebSocket(
@@ -66,7 +72,18 @@ export default function AiAssistantPane() {
     setScheduleConfirmError(null);
     setIsConfirmingSchedule(false);
     setConfirmedMeetingId(null);
+    setVotedOptionIndex(null);
+    setVoteCounts({});
+    setTotalVoters(voteCard?.headcount ?? 0);
+    setIsVoting(false);
+    setVoteError(null);
   }, [voteCard]);
+
+  useEffect(() => {
+    if (!voteUpdate) return;
+    setVoteCounts(voteUpdate.votes);
+    setTotalVoters(voteUpdate.total_voters);
+  }, [voteUpdate]);
 
   useEffect(() => {
     setSelectedPlaceId(null);
@@ -127,6 +144,12 @@ export default function AiAssistantPane() {
           scheduled_at: selectedSlot.start_at,
           end_at: selectedSlot.end_at,
           location_name: null,
+          vote_options: voteCard.time_options.map((option) => ({
+            slot_id: option.slot_id,
+            label: option.label,
+            start_at: option.start_at,
+            end_at: option.end_at,
+          })),
         }),
       });
       setConfirmedMeetingId(result.id);
@@ -136,6 +159,31 @@ export default function AiAssistantPane() {
       setScheduleConfirmError("일정 확정에 실패했습니다.");
     } finally {
       setIsConfirmingSchedule(false);
+    }
+  };
+
+  const handleVote = async (optionIndex: number) => {
+    if (!confirmedMeetingId || votedOptionIndex !== null) return;
+
+    setIsVoting(true);
+    setVoteError(null);
+    try {
+      const result = await apiFetch<{
+        meeting_id: number;
+        votes: Record<string, number>;
+        total_voters: number;
+        selected_option_index: number;
+      }>(`/api/v1/meetings/${confirmedMeetingId}/vote`, {
+        method: "POST",
+        body: JSON.stringify({ option_index: optionIndex }),
+      });
+      setVotedOptionIndex(result.selected_option_index);
+      setVoteCounts(result.votes);
+      setTotalVoters(result.total_voters);
+    } catch {
+      setVoteError("투표에 실패했습니다.");
+    } finally {
+      setIsVoting(false);
     }
   };
 
@@ -293,27 +341,59 @@ export default function AiAssistantPane() {
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {voteCard.time_options.map((option) => {
                 const isSelected = selectedSlotId === option.slot_id;
+                const optionIndex = voteCard.time_options.findIndex((item) => item.slot_id === option.slot_id);
+                const optionVotes = voteCounts[String(optionIndex)] ?? 0;
+                const isVoteDisabled = !confirmedMeetingId || votedOptionIndex !== null || isVoting;
                 return (
-                  <button
+                  <div
                     key={option.slot_id}
-                    onClick={() => setSelectedSlotId(option.slot_id)}
                     style={{
-                      width: "100%",
-                      textAlign: "left",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 10,
                       padding: "14px 16px",
                       borderRadius: 14,
                       border: isSelected ? "1.5px solid #4f46e5" : "1px solid #cbd5e1",
                       background: isSelected ? "#eef2ff" : "#ffffff",
-                      color: "#1e293b",
-                      cursor: "pointer",
-                      fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                      fontSize: 15,
-                      fontWeight: isSelected ? 600 : 500,
                       boxShadow: isSelected ? "0 6px 18px rgba(79, 70, 229, 0.12)" : "none",
                     }}
                   >
-                    {option.label}
-                  </button>
+                    <button
+                      onClick={() => setSelectedSlotId(option.slot_id)}
+                      style={{
+                        width: "100%",
+                        textAlign: "left",
+                        border: "none",
+                        background: "transparent",
+                        color: "#1e293b",
+                        cursor: "pointer",
+                        fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                        fontSize: 15,
+                        fontWeight: isSelected ? 600 : 500,
+                        padding: 0,
+                      }}
+                    >
+                      {option.label} ({optionVotes}표 / {totalVoters}명)
+                    </button>
+                    <button
+                      onClick={() => handleVote(optionIndex)}
+                      disabled={isVoteDisabled}
+                      style={{
+                        padding: "8px 14px",
+                        borderRadius: 10,
+                        border: "none",
+                        background: isVoteDisabled ? "#cbd5e1" : "#4f46e5",
+                        color: "#ffffff",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        cursor: isVoteDisabled ? "not-allowed" : "pointer",
+                        alignSelf: "flex-start",
+                        fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                      }}
+                    >
+                      {votedOptionIndex === optionIndex ? "투표 완료" : "투표하기"}
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -355,6 +435,11 @@ export default function AiAssistantPane() {
               {scheduleConfirmError && (
                 <span style={{ fontSize: 13, fontWeight: 500, color: "#dc2626" }}>
                   {scheduleConfirmError}
+                </span>
+              )}
+              {voteError && (
+                <span style={{ fontSize: 13, fontWeight: 500, color: "#dc2626" }}>
+                  {voteError}
                 </span>
               )}
             </div>

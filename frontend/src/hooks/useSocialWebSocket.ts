@@ -13,6 +13,12 @@ export interface IntentDetectedPayload {
   trigger_message_id: number;
 }
 
+export interface ReminderPayload {
+  type: "reminder";
+  message: string;
+  meeting_id: number;
+}
+
 type WsStatus = "connecting" | "open" | "closed" | "error";
 
 export function useSocialWebSocket(roomId: string, sender: string) {
@@ -59,6 +65,19 @@ export function useSocialWebSocket(roomId: string, sender: string) {
       // intent_detected 이벤트와 일반 채팅 메시지 구분
       if (data.type === "intent_detected") {
         setDetectedIntent(data as IntentDetectedPayload);
+      } else if (data.type === "reminder") {
+        const reminder = data as ReminderPayload;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now(),
+            pane_type: "social",
+            role: "system",
+            content: reminder.message,
+            sender: "매듭이",
+            created_at: new Date().toISOString(),
+          },
+        ]);
       } else {
         const msg = data as ChatMessagePayload;
         setMessages((prev) => {

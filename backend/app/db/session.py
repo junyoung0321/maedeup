@@ -3,6 +3,9 @@ from sqlmodel import SQLModel
 
 from app.core.config import settings
 
+# 모든 테이블 모델을 여기서 import해야 SQLModel.metadata에 등록됩니다
+import app.models.intent  # noqa: F401
+
 engine = create_async_engine(settings.DATABASE_URL, echo=True)
 
 AsyncSessionLocal = async_sessionmaker(

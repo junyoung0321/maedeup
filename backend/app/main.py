@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import health, chat, events, auth, users, calendar, rooms, places
+from app.api.routes import health, chat, events, auth, users, calendar, rooms, places, intents
 from app.api.ws import social as social_ws, agent as agent_ws
 from app.db.session import init_db
 
@@ -36,5 +36,6 @@ app.include_router(users.router, prefix="/api/v1")
 app.include_router(calendar.router, prefix="/api/v1")
 app.include_router(rooms.router, prefix="/api/v1")
 app.include_router(places.router, prefix="/api/v1")
+app.include_router(intents.router, prefix="/api/v1")
 app.include_router(social_ws.router)
 app.include_router(agent_ws.router)

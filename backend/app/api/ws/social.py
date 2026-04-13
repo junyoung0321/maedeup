@@ -12,8 +12,12 @@ from app.core.config import settings
 from app.core.security import verify_token
 from app.db.session import AsyncSessionLocal
 from app.models.chat import ChatMessage, PaneType
+from app.services.intent_classifier import classify_intent
 
 router = APIRouter()
+
+# 의도 감지 알림을 트리거할 의도 목록
+_NOTIFIABLE_INTENTS = {"meeting_schedule", "place_suggestion"}
 
 
 async def _redis_subscriber(
@@ -98,6 +102,12 @@ async def social_ws(
             )
             await r.publish(channel, out)
 
+            # ── 의도 감지 (백그라운드로 실행해 응답 지연 최소화) ──────────
+            if settings.GEMINI_API_KEY and role == "user" and content.strip():
+                asyncio.create_task(
+                    _detect_and_notify_intent(r, channel, content, msg.id)
+                )
+
     except WebSocketDisconnect:
         pass
     finally:
@@ -105,3 +115,31 @@ async def social_ws(
         await subscriber_task
         manager.remove(room_id, websocket)
         await r.aclose()
+
+
+async def _detect_and_notify_intent(
+    r: aioredis.Redis,
+    channel: str,
+    content: str,
+    trigger_message_id: int,
+) -> None:
+    """
+    메시지 의도를 분류하고, 모임/장소 관련 의도가 감지되면
+    같은 채널에 intent_detected 이벤트를 발행합니다.
+    """
+    try:
+        result = await classify_intent(content)
+        if result["intent"] in _NOTIFIABLE_INTENTS:
+            event = json.dumps(
+                {
+                    "type": "intent_detected",
+                    "intent": result["intent"],
+                    "confidence": result["confidence"],
+                    "method": result["method"],
+                    "trigger_message_id": trigger_message_id,
+                }
+            )
+            await r.publish(channel, event)
+    except Exception:
+        # 의도 감지 실패는 채팅 흐름에 영향을 주지 않도록 무시
+        pass

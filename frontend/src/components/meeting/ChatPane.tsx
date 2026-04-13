@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { User, Send } from "lucide-react";
+import { User, Send, X, Calendar, MapPin } from "lucide-react";
 import { useSocialWebSocket } from "@/hooks/useSocialWebSocket";
 import { useMeeting } from "@/contexts/MeetingContext";
 
@@ -16,6 +16,22 @@ function getNameFromToken(): string {
   }
 }
 
+const INTENT_BANNER: Record<
+  string,
+  { icon: React.ReactNode; message: string; color: string }
+> = {
+  meeting_schedule: {
+    icon: <Calendar style={{ width: 14, height: 14 }} />,
+    message: "채팅방에서 모임 일정 대화가 감지되었습니다",
+    color: "#4f46e5",
+  },
+  place_suggestion: {
+    icon: <MapPin style={{ width: 14, height: 14 }} />,
+    message: "채팅방에서 장소 관련 대화가 감지되었습니다",
+    color: "#0891b2",
+  },
+};
+
 export default function ChatPane() {
   const [input, setInput] = useState("");
   const [currentUserName, setCurrentUserName] = useState<string>("익명");
@@ -26,13 +42,19 @@ export default function ChatPane() {
 
   let roomId = "room-1";
   try { roomId = useMeeting().roomId || "room-1"; } catch { /* not in provider */ }
-  const { messages, sendMessage } = useSocialWebSocket(roomId, currentUserName);
+  const { messages, sendMessage, detectedIntent, dismissIntent } =
+    useSocialWebSocket(roomId, currentUserName);
 
   const handleSend = () => {
     if (!input.trim()) return;
     sendMessage(input.trim());
     setInput("");
   };
+
+  const banner =
+    detectedIntent && INTENT_BANNER[detectedIntent.intent]
+      ? INTENT_BANNER[detectedIntent.intent]
+      : null;
 
   return (
     <div
@@ -72,6 +94,44 @@ export default function ChatPane() {
         </span>
         <User style={{ width: 20, height: 20, color: "#94a3b8" }} />
       </div>
+
+      {/* 의도 감지 배너 */}
+      {banner && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "8px 16px",
+            background: banner.color,
+            color: "#fff",
+            fontSize: 13,
+            fontWeight: 400,
+            gap: 8,
+          }}
+        >
+          <div
+            style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}
+          >
+            {banner.icon}
+            <span>{banner.message}</span>
+          </div>
+          <button
+            onClick={dismissIntent}
+            style={{
+              background: "none",
+              border: "none",
+              color: "#fff",
+              cursor: "pointer",
+              padding: 0,
+              display: "flex",
+              alignItems: "center",
+            }}
+          >
+            <X style={{ width: 14, height: 14 }} />
+          </button>
+        </div>
+      )}
 
       {/* Messages */}
       <div

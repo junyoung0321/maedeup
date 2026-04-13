@@ -5,10 +5,20 @@ import type { ChatMessagePayload } from "@/types";
 
 export type { ChatMessagePayload };
 
+export interface IntentDetectedPayload {
+  type: "intent_detected";
+  intent: "meeting_schedule" | "place_suggestion" | "general";
+  confidence: number;
+  method: "rag" | "gemini" | "default";
+  trigger_message_id: number;
+}
+
 type WsStatus = "connecting" | "open" | "closed" | "error";
 
 export function useSocialWebSocket(roomId: string, sender: string) {
   const [messages, setMessages] = useState<ChatMessagePayload[]>([]);
+  const [detectedIntent, setDetectedIntent] =
+    useState<IntentDetectedPayload | null>(null);
   const [status, setStatus] = useState<WsStatus>("connecting");
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -29,8 +39,14 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     ws.onopen = () => setStatus("open");
 
     ws.onmessage = (event) => {
-      const msg: ChatMessagePayload = JSON.parse(event.data as string);
-      setMessages((prev) => [...prev, msg]);
+      const data = JSON.parse(event.data as string);
+
+      // intent_detected 이벤트와 일반 채팅 메시지 구분
+      if (data.type === "intent_detected") {
+        setDetectedIntent(data as IntentDetectedPayload);
+      } else {
+        setMessages((prev) => [...prev, data as ChatMessagePayload]);
+      }
     };
 
     ws.onerror = () => setStatus("error");
@@ -59,5 +75,9 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     [sender]
   );
 
-  return { messages, sendMessage, status };
+  const dismissIntent = useCallback(() => {
+    setDetectedIntent(null);
+  }, []);
+
+  return { messages, sendMessage, status, detectedIntent, dismissIntent };
 }

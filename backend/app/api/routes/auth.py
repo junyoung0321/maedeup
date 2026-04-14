@@ -1,15 +1,14 @@
 import secrets
-from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
-from jose import jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.security import issue_jwt
 from app.db.session import get_session
 from app.models.user import User
 
@@ -30,6 +29,8 @@ SCOPES = " ".join([
 
 @router.get("/google")
 async def google_login():
+    if not settings.GOOGLE_CLIENT_ID.strip():
+        raise HTTPException(status_code=500, detail="GOOGLE_CLIENT_ID is not configured.")
     state = secrets.token_urlsafe(32)
     params = {
         "client_id": settings.GOOGLE_CLIENT_ID,
@@ -47,6 +48,7 @@ async def google_login():
         httponly=True,
         max_age=600,
         samesite="lax",
+        secure=settings.APP_ENV.lower() not in {"development", "dev"},
     )
     return response
 
@@ -58,34 +60,47 @@ async def google_callback(
     oauth_state: str | None = Cookie(default=None),
     session: AsyncSession = Depends(get_session),
 ):
-    if not oauth_state or oauth_state != state:
+    if not oauth_state or not secrets.compare_digest(oauth_state, state):
         raise HTTPException(status_code=400, detail="Invalid OAuth state")
 
-    async with httpx.AsyncClient() as client:
-        token_resp = await client.post(
-            GOOGLE_TOKEN_URL,
-            data={
-                "code": code,
-                "client_id": settings.GOOGLE_CLIENT_ID,
-                "client_secret": settings.GOOGLE_CLIENT_SECRET,
-                "redirect_uri": settings.GOOGLE_REDIRECT_URI,
-                "grant_type": "authorization_code",
-            },
-        )
-        if token_resp.status_code != 200:
-            raise HTTPException(status_code=401, detail="Google token exchange failed")
-        token_data = token_resp.json()
-        access_token = token_data.get("access_token")
-        if not access_token:
-            raise HTTPException(status_code=400, detail="Missing access token in OAuth response")
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            token_resp = await client.post(
+                GOOGLE_TOKEN_URL,
+                data={
+                    "code": code,
+                    "client_id": settings.GOOGLE_CLIENT_ID,
+                    "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                    "redirect_uri": settings.GOOGLE_REDIRECT_URI,
+                    "grant_type": "authorization_code",
+                },
+            )
+            try:
+                token_data = token_resp.json()
+            except ValueError as exc:
+                raise HTTPException(status_code=502, detail="Google token response was not valid JSON.") from exc
+            if token_resp.status_code != 200:
+                error_detail = token_data.get("error_description") or token_data.get("error") or "Google token exchange failed"
+                raise HTTPException(status_code=401, detail=error_detail)
+            access_token = token_data.get("access_token")
+            if not isinstance(access_token, str) or not access_token.strip():
+                raise HTTPException(status_code=400, detail="Missing access token in OAuth response")
 
-        userinfo_resp = await client.get(
-            GOOGLE_USERINFO_URL,
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-        if userinfo_resp.status_code != 200:
-            raise HTTPException(status_code=401, detail="Google userinfo request failed")
-        userinfo = userinfo_resp.json()
+            userinfo_resp = await client.get(
+                GOOGLE_USERINFO_URL,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            try:
+                userinfo = userinfo_resp.json()
+            except ValueError as exc:
+                raise HTTPException(status_code=502, detail="Google userinfo response was not valid JSON.") from exc
+            if userinfo_resp.status_code != 200:
+                error_detail = userinfo.get("error_description") or userinfo.get("error") or "Google userinfo request failed"
+                raise HTTPException(status_code=401, detail=error_detail)
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="Google OAuth request timed out.") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Google OAuth request failed.") from exc
 
     email = userinfo.get("email")
     if not email:
@@ -111,19 +126,13 @@ async def google_callback(
     await session.commit()
     await session.refresh(user)
 
-    token = _issue_jwt(user)
+    token = issue_jwt(
+        user_id=user.id,
+        email=user.email,
+        name=user.name,
+        picture=user.picture,
+        calendar_consent=user.calendar_consent,
+    )
     response = RedirectResponse(f"{settings.FRONTEND_URL}/auth/callback?token={token}")
     response.delete_cookie("oauth_state")
     return response
-
-
-def _issue_jwt(user: User) -> str:
-    payload = {
-        "sub": str(user.id),
-        "email": user.email,
-        "name": user.name,
-        "picture": user.picture,
-        "calendar_consent": user.calendar_consent,
-        "exp": datetime.utcnow() + timedelta(days=7),
-    }
-    return jwt.encode(payload, settings.JWT_SECRET, algorithm="HS256")

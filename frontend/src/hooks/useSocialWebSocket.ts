@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChatMessagePayload } from "@/types";
+import type { AiTriggerIntent, ChatMessagePayload } from "@/types";
 
 export type { ChatMessagePayload };
 
 export interface IntentDetectedPayload {
   type: "intent_detected";
-  intent: "meeting_schedule" | "place_suggestion" | "general";
+  intent: AiTriggerIntent;
   confidence: number;
   method: "rag" | "gemini" | "default";
   trigger_message_id: number;
@@ -19,12 +19,80 @@ export interface ReminderPayload {
   meeting_id: number;
 }
 
+export interface VoteReminderPayload {
+  type: "vote_reminder";
+  message: string;
+  meeting_id: number;
+}
+
 type WsStatus = "connecting" | "open" | "closed" | "error";
+
+const MAX_RECONNECT_ATTEMPTS = 5;
+const MAX_RECONNECT_DELAY_MS = 30_000;
+
+function isChatMessagePayload(data: unknown): data is ChatMessagePayload {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+
+  const candidate = data as Partial<ChatMessagePayload>;
+  return (
+    typeof candidate.id === "number" &&
+    typeof candidate.pane_type === "string" &&
+    typeof candidate.role === "string" &&
+    typeof candidate.content === "string" &&
+    typeof candidate.created_at === "string"
+  );
+}
+
+function isIntentDetectedPayload(data: unknown): data is IntentDetectedPayload {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+
+  const candidate = data as Partial<IntentDetectedPayload>;
+  return (
+    candidate.type === "intent_detected" &&
+    typeof candidate.intent === "string" &&
+    typeof candidate.confidence === "number" &&
+    typeof candidate.method === "string" &&
+    typeof candidate.trigger_message_id === "number"
+  );
+}
+
+function isReminderPayload(data: unknown): data is ReminderPayload {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+
+  const candidate = data as Partial<ReminderPayload>;
+  return (
+    candidate.type === "reminder" &&
+    typeof candidate.message === "string" &&
+    typeof candidate.meeting_id === "number"
+  );
+}
+
+function isVoteReminderPayload(data: unknown): data is VoteReminderPayload {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+
+  const candidate = data as Partial<VoteReminderPayload>;
+  return (
+    candidate.type === "vote_reminder" &&
+    typeof candidate.message === "string" &&
+    typeof candidate.meeting_id === "number"
+  );
+}
+
+function getReconnectDelay(attempt: number): number {
+  return Math.min(1000 * 2 ** attempt, MAX_RECONNECT_DELAY_MS);
+}
 
 export function useSocialWebSocket(roomId: string, sender: string) {
   const [messages, setMessages] = useState<ChatMessagePayload[]>([]);
-  const [detectedIntent, setDetectedIntent] =
-    useState<IntentDetectedPayload | null>(null);
+  const [detectedIntent, setDetectedIntent] = useState<IntentDetectedPayload | null>(null);
   const [status, setStatus] = useState<WsStatus>("connecting");
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -38,29 +106,69 @@ export function useSocialWebSocket(roomId: string, sender: string) {
       return;
     }
 
-    // 이전 메시지 로드
+    let isActive = true;
+
+    setMessages([]);
+    setDetectedIntent(null);
+
     const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const wsBase = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
     const roomPk = /^\d+$/.test(roomId) ? roomId : null;
+
     if (roomPk) {
-      fetch(
-        `${apiBase}/api/v1/chat/messages?pane_type=social&room_id=${roomPk}&limit=50`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      )
-        .then((r) => r.json())
-        .then((data) => {
-          if (Array.isArray(data)) setMessages(data as ChatMessagePayload[]);
+      fetch(`${apiBase}/api/v1/chat/messages?pane_type=social&room_id=${roomPk}&limit=50`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`Failed to load social messages: ${response.status}`);
+          }
+          return response.json();
         })
-        .catch(() => {/* ignore */});
+        .then((data: unknown) => {
+          if (!isActive || !Array.isArray(data)) {
+            return;
+          }
+          const nextMessages = data.filter(isChatMessagePayload);
+          setMessages(nextMessages);
+        })
+        .catch(() => {
+          if (!isActive) {
+            return;
+          }
+          setMessages([]);
+        });
     }
 
-    const wsBase = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
-    const scheduleReconnect = (code?: number) => {
-      if (!shouldReconnectRef.current) return;
-      if (code === 4001) return;
-      if (reconnectTimeoutRef.current !== null) return;
-      if (reconnectAttemptsRef.current >= 5) return;
+    const clearReconnectTimeout = () => {
+      if (reconnectTimeoutRef.current !== null) {
+        window.clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+    };
 
-      const delay = 1000 * (2 ** reconnectAttemptsRef.current);
+    const cleanupSocket = (socket: WebSocket) => {
+      socket.onopen = null;
+      socket.onmessage = null;
+      socket.onerror = null;
+      socket.onclose = null;
+    };
+
+    const scheduleReconnect = (socket: WebSocket, code?: number) => {
+      if (!isActive || !shouldReconnectRef.current || wsRef.current !== socket) {
+        return;
+      }
+      if (code === 4001 || code === 1008) {
+        return;
+      }
+      if (reconnectTimeoutRef.current !== null) {
+        return;
+      }
+      if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+        return;
+      }
+
+      const delay = getReconnectDelay(reconnectAttemptsRef.current);
       reconnectAttemptsRef.current += 1;
       reconnectTimeoutRef.current = window.setTimeout(() => {
         reconnectTimeoutRef.current = null;
@@ -69,22 +177,32 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     };
 
     const connect = () => {
-      setStatus("connecting");
-      const ws = new WebSocket(
-        `${wsBase}/ws/social/${roomId}?token=${encodeURIComponent(token)}`
-      );
-      wsRef.current = ws;
+      if (!isActive) {
+        return;
+      }
 
-      ws.onopen = () => {
-        if (reconnectTimeoutRef.current !== null) {
-          window.clearTimeout(reconnectTimeoutRef.current);
-          reconnectTimeoutRef.current = null;
+      clearReconnectTimeout();
+      setStatus("connecting");
+
+      const socket = new WebSocket(`${wsBase}/ws/social/${roomId}?token=${encodeURIComponent(token)}`);
+      wsRef.current = socket;
+
+      socket.onopen = () => {
+        if (!isActive || wsRef.current !== socket) {
+          socket.close();
+          return;
         }
+
+        clearReconnectTimeout();
         reconnectAttemptsRef.current = 0;
         setStatus("open");
       };
 
-      ws.onmessage = (event) => {
+      socket.onmessage = (event) => {
+        if (!isActive || wsRef.current !== socket) {
+          return;
+        }
+
         let data: unknown;
         try {
           data = JSON.parse(event.data as string);
@@ -92,63 +210,86 @@ export function useSocialWebSocket(roomId: string, sender: string) {
           return;
         }
 
-        // intent_detected 이벤트와 일반 채팅 메시지 구분
-        if (typeof data === "object" && data !== null && "type" in data && data.type === "intent_detected") {
-          setDetectedIntent(data as IntentDetectedPayload);
-        } else if (typeof data === "object" && data !== null && "type" in data && data.type === "reminder") {
-          const reminder = data as ReminderPayload;
+        if (isIntentDetectedPayload(data)) {
+          setDetectedIntent(data);
+          return;
+        }
+
+        if (isReminderPayload(data) || isVoteReminderPayload(data)) {
           setMessages((prev) => [
             ...prev,
             {
               id: Date.now(),
               pane_type: "social",
               role: "system",
-              content: reminder.message,
+              content: data.message,
               sender: "매듭이",
               created_at: new Date().toISOString(),
             },
           ]);
-        } else {
-          const msg = data as ChatMessagePayload;
-          setMessages((prev) => {
-            // 중복 방지 (REST 로드 후 WS에서 같은 메시지가 올 경우)
-            if (msg.id && prev.some((m) => m.id === msg.id)) return prev;
-            return [...prev, msg];
-          });
+          return;
         }
+
+        if (!isChatMessagePayload(data)) {
+          return;
+        }
+
+        setMessages((prev) => {
+          if (prev.some((message) => message.id === data.id)) {
+            return prev;
+          }
+          return [...prev, data];
+        });
       };
 
-      ws.onerror = () => {
+      socket.onerror = () => {
+        if (!isActive || wsRef.current !== socket) {
+          return;
+        }
+
         setStatus("error");
-        scheduleReconnect(0);
       };
 
-      ws.onclose = (event) => {
+      socket.onclose = (event) => {
+        if (wsRef.current === socket) {
+          wsRef.current = null;
+        }
+
+        cleanupSocket(socket);
+
+        if (!isActive) {
+          return;
+        }
+
         setStatus("closed");
-        // 1008: Policy Violation - 토큰 없음 또는 만료
         if (event.code === 1008) {
           shouldReconnectRef.current = false;
           localStorage.removeItem("auth_token");
           window.location.href = "/";
           return;
         }
-        scheduleReconnect(event.code);
+
+        scheduleReconnect(socket, event.code);
       };
     };
 
     shouldReconnectRef.current = true;
     reconnectAttemptsRef.current = 0;
+    clearReconnectTimeout();
     connect();
 
     return () => {
+      isActive = false;
       shouldReconnectRef.current = false;
-      if (reconnectTimeoutRef.current !== null) {
-        window.clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = null;
-      }
-      const ws = wsRef.current;
-      if (ws) {
-        ws.close();
+      clearReconnectTimeout();
+
+      const socket = wsRef.current;
+      if (socket) {
+        wsRef.current = null;
+        cleanupSocket(socket);
+        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+          socket.close();
+        }
       }
     };
   }, [roomId]);
@@ -156,11 +297,11 @@ export function useSocialWebSocket(roomId: string, sender: string) {
   const sendMessage = useCallback(
     (content: string) => {
       const ws = wsRef.current;
-      if (ws && ws.readyState === WebSocket.OPEN) {
+      if (ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ role: "user", content, sender }));
       }
     },
-    [sender]
+    [sender],
   );
 
   const dismissIntent = useCallback(() => {

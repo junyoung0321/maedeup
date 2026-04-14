@@ -8,6 +8,8 @@ export interface PlaceResult {
   x: string;
   y: string;
   category: string;
+  distance_m?: number;
+  score?: number;
 }
 
 // ─── Chat / WebSocket ───
@@ -28,6 +30,17 @@ export interface FriendInfo {
   picture?: string | null;
 }
 
+export interface UserProfile {
+  id: number;
+  email: string;
+  name: string;
+  picture?: string | null;
+  home_base?: string | null;
+  food_preferences?: string[] | null;
+  food_preference_note?: string | null;
+  calendar_consent: boolean;
+}
+
 // ─── Meeting / Room ───
 export interface Room {
   id: number;
@@ -46,5 +59,17 @@ export interface MeetingItem {
   badgeColor: string;
 }
 
+export interface UpcomingMeetingData {
+  id: number;
+  room_id: number;
+  title: string;
+  scheduled_at: string;
+  end_at: string | null;
+  location_name: string | null;
+  location_address: string | null;
+  status: string;
+}
+
 // ─── Context Mode ───
 export type ContextMode = "schedule" | "place" | "done" | "agent";
+export type AiTriggerIntent = "meeting_schedule" | "place_suggestion" | "general";

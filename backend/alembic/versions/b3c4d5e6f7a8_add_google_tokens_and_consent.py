@@ -20,6 +20,8 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
+    if not inspector.has_table("users"):
+        return
     cols = [c["name"] for c in inspector.get_columns("users")]
     if "google_access_token" not in cols:
         op.add_column("users", sa.Column("google_access_token", sa.Text(), nullable=True))
@@ -38,6 +40,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_column("users", "calendar_consent")
-    op.drop_column("users", "google_refresh_token")
-    op.drop_column("users", "google_access_token")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if not inspector.has_table("users"):
+        return
+    cols = [c["name"] for c in inspector.get_columns("users")]
+    if "calendar_consent" in cols:
+        op.drop_column("users", "calendar_consent")
+    if "google_refresh_token" in cols:
+        op.drop_column("users", "google_refresh_token")
+    if "google_access_token" in cols:
+        op.drop_column("users", "google_access_token")

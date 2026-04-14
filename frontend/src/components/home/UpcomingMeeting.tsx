@@ -2,33 +2,89 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { apiFetch } from "@/lib/api";
+import type { UpcomingMeetingData } from "@/types";
+
+function formatSchedule(scheduledAt: string): string {
+  const date = new Date(scheduledAt);
+  const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const weekday = weekdays[date.getDay()];
+  const hours = date.getHours();
+  const minutes = date.getMinutes();
+  const ampm = hours < 12 ? "오전" : "오후";
+  const displayHour = hours % 12 || 12;
+  const minuteStr = minutes > 0 ? `:${String(minutes).padStart(2, "0")}` : "";
+  return `${month}/${day} (${weekday}) ${ampm} ${displayHour}${minuteStr}`;
+}
+
+function getTimeLeft(scheduledAt: string): { h: number; m: number; s: number } | null {
+  const diff = new Date(scheduledAt).getTime() - Date.now();
+  if (diff <= 0) return null;
+  const totalSeconds = Math.floor(diff / 1000);
+  return {
+    h: Math.floor(totalSeconds / 3600),
+    m: Math.floor((totalSeconds % 3600) / 60),
+    s: totalSeconds % 60,
+  };
+}
 
 export default function UpcomingMeeting() {
   const router = useRouter();
-  const [timeLeft, setTimeLeft] = useState({ h: 1, m: 20, s: 0 });
+  const [meeting, setMeeting] = useState<UpcomingMeetingData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [timeLeft, setTimeLeft] = useState<{ h: number; m: number; s: number } | null>(null);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        let { h, m, s } = prev;
-        if (s > 0) {
-          s--;
-        } else if (m > 0) {
-          m--;
-          s = 59;
-        } else if (h > 0) {
-          h--;
-          m = 59;
-          s = 59;
-        }
-        return { h, m, s };
-      });
-    }, 1000);
-    return () => clearInterval(timer);
+    apiFetch<UpcomingMeetingData | null>("/api/v1/meetings/upcoming")
+      .then((data) => {
+        setMeeting(data);
+        if (data) setTimeLeft(getTimeLeft(data.scheduled_at));
+      })
+      .catch(() => setMeeting(null))
+      .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    if (!meeting) return;
+    const timer = setInterval(() => {
+      setTimeLeft(getTimeLeft(meeting.scheduled_at));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [meeting]);
+
   const pad = (n: number) => String(n).padStart(2, "0");
-  const timerStr = `${pad(timeLeft.h)}:${pad(timeLeft.m)}:${pad(timeLeft.s)}`;
+
+  if (loading) {
+    return (
+      <div className="relative" style={{ width: 569 }}>
+        <div className="border border-[#e5e7eb] rounded-[24px] p-6 flex items-center justify-center shadow-sm" style={{ height: 320, background: "#f9fafb" }}>
+          <span className="text-[#94a3b8] text-sm">불러오는 중...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!meeting) {
+    return (
+      <div className="relative" style={{ width: 569 }}>
+        <div className="border border-[#e5e7eb] rounded-[24px] p-6 flex flex-col items-center justify-center gap-3" style={{ height: 320, background: "linear-gradient(to bottom, #ffffff, #f5f3ff)" }}>
+          <span className="text-[22px] font-semibold text-[#94a3b8]">예정된 모임이 없어요</span>
+          <button
+            onClick={() => router.push("/meeting/new")}
+            className="px-6 py-2.5 rounded-full bg-[#4f46e5] text-white text-[14px] font-semibold hover:bg-[#4338ca] transition-colors"
+          >
+            모임 만들기
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const timerStr = timeLeft ? `${pad(timeLeft.h)}:${pad(timeLeft.m)}:${pad(timeLeft.s)}` : "00:00:00";
+  const isPast = !timeLeft;
+  const remainingTime = timeLeft ?? { h: 0, m: 0, s: 0 };
 
   return (
     <div className="relative" style={{ width: 569 }}>
@@ -50,54 +106,43 @@ export default function UpcomingMeeting() {
 
       {/* Card */}
       <div
-        className="border border-[#e5e7eb] rounded-[24px] p-6 flex overflow-hidden shadow-[0_4px_3px_rgba(79,70,229,0.25)]" style={{ height: 320, background: "linear-gradient(to bottom, #ffffff, #f5f3ff)" }}
+        className="border border-[#e5e7eb] rounded-[24px] p-6 flex overflow-hidden shadow-[0_4px_3px_rgba(79,70,229,0.25)]"
+        style={{ height: 320, background: "linear-gradient(to bottom, #ffffff, #f5f3ff)" }}
       >
         {/* Left info */}
         <div className="flex-1 flex flex-col justify-center pr-4">
-          <h3
-            className="text-[30px] font-semibold text-[#0f172a]"
-            style={{ lineHeight: 1.08 }}
-          >
-            카카오톡 기획 스터디
+          <h3 className="text-[30px] font-semibold text-[#0f172a]" style={{ lineHeight: 1.08 }}>
+            {meeting.title}
           </h3>
           <p className="text-[20px] font-semibold text-[#334155] mt-2">
-            오늘 20:00 · 온라인
+            {formatSchedule(meeting.scheduled_at)}
+            {meeting.location_name ? ` · ${meeting.location_name}` : ""}
           </p>
           <p className="text-[18px] text-[#64748b] mt-1">
-            참여 3/6명 · 시작까지 1시간 20분
+            {isPast ? "모임 시간이 지났어요" : `시작까지 ${remainingTime.h > 0 ? `${remainingTime.h}시간 ` : ""}${remainingTime.m}분`}
           </p>
-          <div className="flex gap-2 mt-4">
-            <span className="px-3 py-1 rounded-full text-[13px] font-medium bg-[#eef2ff] text-[#3730a3]">
-              응답률 82%
-            </span>
-            <span className="px-3 py-1 rounded-full text-[13px] font-medium bg-[#ecfeff] text-[#0f766e]">
-              추천 기반
-            </span>
-          </div>
+          {meeting.location_address && (
+            <p className="text-[14px] text-[#94a3b8] mt-2">{meeting.location_address}</p>
+          )}
         </div>
 
         {/* Right purple gradient column */}
         <div
           className="w-[176px] rounded-[16px] flex flex-col items-center justify-center gap-3 shrink-0 p-[14px]"
-          style={{
-            background: "linear-gradient(180deg, #6366f1 0%, #4f46e5 100%)",
-          }}
+          style={{ background: "linear-gradient(180deg, #6366f1 0%, #4f46e5 100%)" }}
         >
           <span className="text-[#ddd6fe] text-[11px] font-bold tracking-widest uppercase">
-            START IN
+            {isPast ? "STARTED" : "START IN"}
           </span>
           <span className="text-white text-[28px] font-extrabold tracking-wider">
             {timerStr}
           </span>
           <div className="flex flex-col gap-2 w-full mt-2">
             <button
-              onClick={() => router.push("/meeting/upcoming-1")}
+              onClick={() => router.push(`/meeting/${meeting.id}`)}
               className="w-full py-2 rounded-[10px] bg-white text-[#4f46e5] text-[14px] font-bold hover:bg-white/90 transition-colors"
             >
               바로 입장
-            </button>
-            <button className="w-full py-2 rounded-[10px] bg-white/30 text-white text-[13px] font-semibold hover:bg-white/40 transition-colors">
-              일정 보기
             </button>
           </div>
         </div>

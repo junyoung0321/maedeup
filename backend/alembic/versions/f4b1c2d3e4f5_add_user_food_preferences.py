@@ -20,6 +20,8 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
+    if not inspector.has_table("users"):
+        return
     cols = [c["name"] for c in inspector.get_columns("users")]
     if "food_preferences" not in cols:
         op.add_column("users", sa.Column("food_preferences", sa.JSON(), nullable=True))
@@ -28,5 +30,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_column("users", "food_preference_note")
-    op.drop_column("users", "food_preferences")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if not inspector.has_table("users"):
+        return
+    cols = [c["name"] for c in inspector.get_columns("users")]
+    if "food_preference_note" in cols:
+        op.drop_column("users", "food_preference_note")
+    if "food_preferences" in cols:
+        op.drop_column("users", "food_preferences")

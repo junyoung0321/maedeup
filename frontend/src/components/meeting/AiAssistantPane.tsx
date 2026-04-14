@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Sparkles, Send, MessageCircle, CalendarDays, MapPin, Users, CheckCircle2 } from "lucide-react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { Sparkles, Send, Square, MessageCircle, CalendarDays, MapPin, Users, CheckCircle2, ClipboardList } from "lucide-react";
 import { useAgentWebSocket } from "@/hooks/useAgentWebSocket";
 import { useAuth } from "@/hooks/useAuth";
-import { useMeeting } from "@/contexts/MeetingContext";
+import { MeetingContext } from "@/contexts/MeetingContext";
 import { apiFetch } from "@/lib/api";
 import type { ContextMode } from "@/types";
 
@@ -12,7 +12,12 @@ const PANE_TYPE_MAP: Record<string, ContextMode> = {
   schedule: "schedule",
   place: "place",
   done: "done",
+  agent: "agent",
 };
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
 
 export default function AiAssistantPane() {
   const [input, setInput] = useState("");
@@ -32,20 +37,33 @@ export default function AiAssistantPane() {
   const [isConfirmingPlace, setIsConfirmingPlace] = useState(false);
   const [isPlaceConfirmed, setIsPlaceConfirmed] = useState(false);
   const [placeConfirmError, setPlaceConfirmError] = useState<string | null>(null);
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const aiLoadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { user } = useAuth();
-  let setContextMode: ((mode: ContextMode) => void) | undefined;
-  let aiTriggerIntent: string | null = null;
-  let setAiTriggerIntent: ((intent: string | null) => void) | undefined;
-  try {
-    const ctx = useMeeting();
-    setContextMode = ctx.setContextMode;
-    aiTriggerIntent = ctx.aiTriggerIntent;
-    setAiTriggerIntent = ctx.setAiTriggerIntent;
-  } catch { /* not in provider */ }
+  const meetingContext = useContext(MeetingContext);
 
-  let roomId = "room-1";
-  try { roomId = useMeeting().roomId || "room-1"; } catch { /* already tried above */ }
+  const roomId = meetingContext?.roomId?.trim() || "1";
+  const setContextMode = meetingContext?.setContextMode;
+  const setSelectedPlace = meetingContext?.setSelectedPlace;
+  const aiTriggerIntent = meetingContext?.aiTriggerIntent ?? null;
+  const setAiTriggerIntent = meetingContext?.setAiTriggerIntent;
+  const refreshCalendar = meetingContext?.refreshCalendar;
+
+  const handlePaneSwitch = useCallback(
+    (paneType: string) => {
+      const mode = PANE_TYPE_MAP[paneType];
+      if (mode && setContextMode) {
+        setContextMode(mode);
+      }
+    },
+    [setContextMode],
+  );
+
+  const websocketOptions = useMemo(
+    () => ({ onPaneSwitch: handlePaneSwitch }),
+    [handlePaneSwitch],
+  );
 
   const {
     messages,
@@ -55,69 +73,137 @@ export default function AiAssistantPane() {
     voteUpdate,
     placeRecommendation,
     maedeupCard,
-  } = useAgentWebSocket(
-    roomId,
-    user?.name ?? "나",
-    {
-      onPaneSwitch: (paneType) => {
-        const mode = PANE_TYPE_MAP[paneType];
-        if (mode && setContextMode) setContextMode(mode);
-      },
-    },
-  );
+    autoTrigger,
+    dismissAutoTrigger,
+    meetingSummary,
+  } = useAgentWebSocket(roomId, user?.name ?? "나", websocketOptions);
+
+  const [autoTriggerBanner, setAutoTriggerBanner] = useState<string | null>(null);
+
+  const activeMeetingId = confirmedMeetingId ?? voteCard?.meeting_id ?? null;
 
   useEffect(() => {
+    if (voteCard) {
+      refreshCalendar?.();
+    }
+
     setSelectedSlotId(voteCard?.time_options[0]?.slot_id ?? null);
     setIsScheduleConfirmed(false);
     setScheduleConfirmError(null);
     setIsConfirmingSchedule(false);
-    setConfirmedMeetingId(null);
+    setConfirmedMeetingId(voteCard?.meeting_id ?? null);
+    setConfirmedSlot(null);
     setVotedOptionIndex(null);
     setVoteCounts({});
     setTotalVoters(0);
     setIsVoting(false);
     setVoteError(null);
-  }, [voteCard]);
+  }, [refreshCalendar, voteCard]);
 
   useEffect(() => {
-    if (!voteUpdate) return;
+    if (!voteUpdate) {
+      return;
+    }
+    if (activeMeetingId !== null && voteUpdate.meeting_id !== activeMeetingId) {
+      return;
+    }
+
     setVoteCounts(voteUpdate.votes);
     setTotalVoters(voteUpdate.total_voters);
-  }, [voteUpdate]);
+    setVoteError(null);
+  }, [activeMeetingId, voteUpdate]);
 
   useEffect(() => {
     setSelectedPlaceId(null);
+    setConfirmedPlace(null);
     setIsPlaceConfirmed(false);
     setPlaceConfirmError(null);
     setIsConfirmingPlace(false);
   }, [placeRecommendation]);
 
-  // 소셜 채팅에서 의도 감지 → AI 파이프라인 자동 트리거
+  // aiTriggerIntent는 더 이상 자동 메시지를 보내지 않음
+  // 채팅방 자체가 일정 조율 목적이므로 AI가 알아서 관찰하다 개입
   useEffect(() => {
-    if (!aiTriggerIntent) return;
-    const label =
-      aiTriggerIntent === "meeting_schedule" ? "모임 일정" : "장소 추천";
-    sendMessage(`${label} 조율을 시작해줘`);
-    setAiTriggerIntent?.(null);
-  }, [aiTriggerIntent]);
+    if (aiTriggerIntent) {
+      setAiTriggerIntent?.(null);
+    }
+  }, [aiTriggerIntent, setAiTriggerIntent]);
 
-  // 새 메시지나 카드 추가 시 스크롤 하단 이동
+  // 소셜 채팅에서 AI 자동 트리거가 감지되면 배너 표시
+  useEffect(() => {
+    if (!autoTrigger) {
+      return;
+    }
+    // 자동 트리거는 배너 없이 조용히 처리 (AI가 필요할 때만 응답)
+    dismissAutoTrigger();
+  }, [autoTrigger, dismissAutoTrigger]);
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, voteCard, placeRecommendation, maedeupCard]);
+  }, [messages, voteCard, placeRecommendation, maedeupCard, meetingSummary, isAiLoading]);
 
-  const isAiLoading =
-    status === "connecting" ||
-    (messages.length > 0 && messages[messages.length - 1].role === "user");
+  // Set isAiLoading to false when an assistant message arrives
+  useEffect(() => {
+    if (messages.length > 0 && messages[messages.length - 1]?.role === "assistant") {
+      setIsAiLoading(false);
+      if (aiLoadingTimeoutRef.current) {
+        clearTimeout(aiLoadingTimeoutRef.current);
+        aiLoadingTimeoutRef.current = null;
+      }
+    }
+  }, [messages]);
+
+  // Reset loading when WS reconnects (don't treat connecting as loading)
+  useEffect(() => {
+    if (status === "open") {
+      // WS 연결 완료 시, 메시지가 없으면 로딩 해제
+      if (messages.length === 0) {
+        setIsAiLoading(false);
+      }
+    }
+  }, [status, messages.length]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (aiLoadingTimeoutRef.current) {
+        clearTimeout(aiLoadingTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleStopAi = () => {
+    setIsAiLoading(false);
+    if (aiLoadingTimeoutRef.current) {
+      clearTimeout(aiLoadingTimeoutRef.current);
+      aiLoadingTimeoutRef.current = null;
+    }
+  };
 
   const handleSend = () => {
-    if (!input.trim()) return;
-    sendMessage(input.trim());
+    const nextInput = input.trim();
+    if (!nextInput) {
+      return;
+    }
+
+    sendMessage(nextInput);
     setInput("");
+    setIsAiLoading(true);
+
+    // Auto-cancel after 30 seconds
+    if (aiLoadingTimeoutRef.current) {
+      clearTimeout(aiLoadingTimeoutRef.current);
+    }
+    aiLoadingTimeoutRef.current = setTimeout(() => {
+      setIsAiLoading(false);
+      aiLoadingTimeoutRef.current = null;
+    }, 30_000);
   };
 
   const handleConfirmSchedule = async () => {
-    if (!voteCard || !selectedSlotId) return;
+    if (!voteCard || !selectedSlotId) {
+      return;
+    }
 
     const selectedSlot = voteCard.time_options.find((option) => option.slot_id === selectedSlotId);
     if (!selectedSlot) {
@@ -125,8 +211,7 @@ export default function AiAssistantPane() {
       return;
     }
 
-    const roomIdMatch = String(voteCard.room_id).match(/\d+/);
-    const parsedRoomId = roomIdMatch ? Number.parseInt(roomIdMatch[0], 10) : Number.NaN;
+    const parsedRoomId = Number.parseInt(roomId, 10);
     if (Number.isNaN(parsedRoomId)) {
       setScheduleConfirmError("방 정보를 확인할 수 없습니다.");
       return;
@@ -152,19 +237,26 @@ export default function AiAssistantPane() {
           })),
         }),
       });
+
       setConfirmedMeetingId(result.id);
-      setConfirmedSlot({ label: selectedSlot.label, start_at: selectedSlot.start_at, end_at: selectedSlot.end_at });
+      setConfirmedSlot({
+        label: selectedSlot.label,
+        start_at: selectedSlot.start_at,
+        end_at: selectedSlot.end_at,
+      });
       setIsScheduleConfirmed(true);
-    } catch {
-      setScheduleConfirmError("일정 확정에 실패했습니다.");
+      refreshCalendar?.();
+    } catch (error) {
+      setScheduleConfirmError(getErrorMessage(error, "일정 확정에 실패했습니다."));
     } finally {
       setIsConfirmingSchedule(false);
     }
   };
 
   const handleVote = async (optionIndex: number) => {
-    const meetingId = voteCard?.meeting_id ?? confirmedMeetingId;
-    if (!meetingId || votedOptionIndex !== null) return;
+    if (!activeMeetingId || votedOptionIndex !== null) {
+      return;
+    }
 
     setIsVoting(true);
     setVoteError(null);
@@ -174,28 +266,37 @@ export default function AiAssistantPane() {
         votes: Record<string, number>;
         total_voters: number;
         selected_option_index: number;
-      }>(`/api/v1/meetings/${meetingId}/vote`, {
+      }>(`/api/v1/meetings/${activeMeetingId}/vote`, {
         method: "POST",
         body: JSON.stringify({ option_index: optionIndex }),
       });
+
+      setConfirmedMeetingId(result.meeting_id);
       setVotedOptionIndex(result.selected_option_index);
       setVoteCounts(result.votes);
       setTotalVoters(result.total_voters);
-    } catch {
-      setVoteError("투표에 실패했습니다.");
+    } catch (error) {
+      setVoteError(getErrorMessage(error, "투표에 실패했습니다."));
     } finally {
       setIsVoting(false);
     }
   };
 
   const handleConfirmPlace = async (placeId: string) => {
-    if (!placeRecommendation || !confirmedMeetingId) return;
-    const place = placeRecommendation.recommendations.find((p) => p.place_id === placeId);
-    if (!place) return;
+    if (!placeRecommendation || !confirmedMeetingId) {
+      return;
+    }
+
+    const place = placeRecommendation.recommendations.find((item) => item.place_id === placeId);
+    if (!place) {
+      setPlaceConfirmError("선택한 장소 정보를 찾을 수 없습니다.");
+      return;
+    }
 
     setSelectedPlaceId(placeId);
     setIsConfirmingPlace(true);
     setPlaceConfirmError(null);
+
     try {
       await apiFetch<{ id: number }>(`/api/v1/meetings/${confirmedMeetingId}/place`, {
         method: "PATCH",
@@ -206,10 +307,11 @@ export default function AiAssistantPane() {
           url: place.url,
         }),
       });
+
       setConfirmedPlace({ name: place.name, address: place.address });
       setIsPlaceConfirmed(true);
-    } catch {
-      setPlaceConfirmError("장소 확정에 실패했습니다.");
+    } catch (error) {
+      setPlaceConfirmError(getErrorMessage(error, "장소 확정에 실패했습니다."));
       setSelectedPlaceId(null);
     } finally {
       setIsConfirmingPlace(false);
@@ -231,7 +333,6 @@ export default function AiAssistantPane() {
         fontFamily: "Pretendard Variable, Pretendard, sans-serif",
       }}
     >
-      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -255,7 +356,39 @@ export default function AiAssistantPane() {
         </span>
       </div>
 
-      {/* Content */}
+      {autoTriggerBanner && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "8px 16px",
+            background: "linear-gradient(135deg, #4f46e5, #0891b2)",
+            color: "#fff",
+            fontSize: 13,
+            fontWeight: 500,
+            animation: "fadeIn 0.3s ease-in",
+          }}
+        >
+          <Sparkles style={{ width: 14, height: 14 }} />
+          <span style={{ flex: 1 }}>{autoTriggerBanner}</span>
+          <button
+            onClick={() => setAutoTriggerBanner(null)}
+            style={{
+              background: "none",
+              border: "none",
+              color: "#fff",
+              cursor: "pointer",
+              padding: 0,
+              fontSize: 14,
+              lineHeight: 1,
+            }}
+          >
+            &times;
+          </button>
+        </div>
+      )}
+
       <div
         ref={scrollRef}
         style={{
@@ -267,7 +400,92 @@ export default function AiAssistantPane() {
           gap: 14,
         }}
       >
-        {/* Detect banner - 소셜 채팅에서 의도 트리거된 경우에만 표시 */}
+        {meetingSummary && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+              padding: 16,
+              borderRadius: 16,
+              background: "linear-gradient(135deg, #7c3aed 0%, #a855f7 50%, #c084fc 100%)",
+              color: "#ffffff",
+              fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+              boxShadow: "0 4px 14px rgba(124, 58, 237, 0.18)",
+              animation: "fadeIn 0.4s ease-out",
+            }}
+          >
+            <style>{`
+              @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(-8px); }
+                to { opacity: 1; transform: translateY(0); }
+              }
+              @keyframes summaryPulse {
+                0%, 100% { box-shadow: 0 4px 14px rgba(124, 58, 237, 0.18); }
+                50% { box-shadow: 0 6px 20px rgba(124, 58, 237, 0.3); }
+              }
+            `}</style>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <ClipboardList style={{ width: 18, height: 18, color: "#ffffff" }} />
+              <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.9)" }}>
+                현재 대화 정리
+              </span>
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gap: 8,
+                padding: 14,
+                borderRadius: 12,
+                background: "rgba(255,255,255,0.15)",
+                border: "1px solid rgba(255,255,255,0.2)",
+              }}
+            >
+              {meetingSummary.date && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <CalendarDays style={{ width: 14, height: 14, color: "#e9d5ff", flexShrink: 0 }} />
+                  <span style={{ fontSize: 14, fontWeight: 500 }}>
+                    날짜: {meetingSummary.date}
+                  </span>
+                </div>
+              )}
+              {meetingSummary.place && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <MapPin style={{ width: 14, height: 14, color: "#e9d5ff", flexShrink: 0 }} />
+                  <span style={{ fontSize: 14, fontWeight: 500 }}>
+                    장소: {meetingSummary.place}
+                  </span>
+                </div>
+              )}
+              {meetingSummary.headcount && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Users style={{ width: 14, height: 14, color: "#e9d5ff", flexShrink: 0 }} />
+                  <span style={{ fontSize: 14, fontWeight: 500 }}>
+                    인원: {meetingSummary.headcount}
+                  </span>
+                </div>
+              )}
+              {meetingSummary.meeting_type && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Sparkles style={{ width: 14, height: 14, color: "#e9d5ff", flexShrink: 0 }} />
+                  <span style={{ fontSize: 14, fontWeight: 500 }}>
+                    유형: {meetingSummary.meeting_type}
+                  </span>
+                </div>
+              )}
+              {meetingSummary.notes && meetingSummary.notes.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
+                  {meetingSummary.notes.map((note, i) => (
+                    <span key={i} style={{ fontSize: 13, fontWeight: 400, color: "rgba(255,255,255,0.85)" }}>
+                      · {note}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {messages.length === 0 && (
           <div
             style={{
@@ -340,11 +558,10 @@ export default function AiAssistantPane() {
               </span>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {voteCard.time_options.map((option) => {
+              {voteCard.time_options.map((option, optionIndex) => {
                 const isSelected = selectedSlotId === option.slot_id;
-                const optionIndex = voteCard.time_options.findIndex((item) => item.slot_id === option.slot_id);
                 const optionVotes = voteCounts[String(optionIndex)] ?? 0;
-                const isVoteDisabled = !confirmedMeetingId || votedOptionIndex !== null || isVoting;
+                const isVoteDisabled = !activeMeetingId || votedOptionIndex !== null || isVoting;
                 return (
                   <div
                     key={option.slot_id}
@@ -374,7 +591,20 @@ export default function AiAssistantPane() {
                         padding: 0,
                       }}
                     >
-                      {option.label} ({optionVotes}표 / {totalVoters > 0 ? `${totalVoters}명` : "투표 중"})
+                      <span>{option.label}</span>
+                      {option.is_holiday && (
+                        <span style={{ marginLeft: 6, padding: "2px 6px", borderRadius: 6, background: "#fef2f2", color: "#dc2626", fontSize: 11, fontWeight: 600 }}>
+                          {option.holiday_name || "공휴일"}
+                        </span>
+                      )}
+                      {option.is_weekend && !option.is_holiday && (
+                        <span style={{ marginLeft: 6, padding: "2px 6px", borderRadius: 6, background: "#eff6ff", color: "#2563eb", fontSize: 11, fontWeight: 600 }}>
+                          주말
+                        </span>
+                      )}
+                      <span style={{ marginLeft: 6, color: "#94a3b8", fontSize: 13 }}>
+                        ({optionVotes}표 / {totalVoters > 0 ? `${totalVoters}명` : "투표 중"})
+                      </span>
                     </button>
                     <button
                       onClick={() => handleVote(optionIndex)}
@@ -487,6 +717,7 @@ export default function AiAssistantPane() {
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {placeRecommendation.recommendations.map((place) => {
                 const isSelected = selectedPlaceId === place.place_id;
+                const distanceMeters = place.distance_m;
                 return (
                   <div
                     key={place.place_id}
@@ -502,7 +733,24 @@ export default function AiAssistantPane() {
                     }}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                      <span style={{ fontSize: 17, fontWeight: 700, color: "#1e293b" }}>
+                      <span
+                        onClick={() => {
+                          setSelectedPlace?.({
+                            id: place.place_id,
+                            name: place.name,
+                            address: place.address,
+                            phone: place.phone ?? "",
+                            url: place.url,
+                            x: place.x ?? "",
+                            y: place.y ?? "",
+                            category: place.category,
+                            distance_m: place.distance_m,
+                            score: place.score,
+                          });
+                          setContextMode?.("place");
+                        }}
+                        style={{ fontSize: 17, fontWeight: 700, color: "#1e293b", cursor: "pointer" }}
+                      >
                         {place.name}
                       </span>
                       <span
@@ -519,9 +767,18 @@ export default function AiAssistantPane() {
                         {Math.round(place.score * 100)}%
                       </span>
                     </div>
-                    <span style={{ fontSize: 14, fontWeight: 500, color: "#475569" }}>
-                      {place.category}
-                    </span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 14, fontWeight: 500, color: "#475569" }}>
+                        {place.category}
+                      </span>
+                      {typeof distanceMeters === "number" && distanceMeters > 0 && (
+                        <span style={{ fontSize: 12, color: "#94a3b8", fontWeight: 500 }}>
+                          {distanceMeters >= 1000
+                            ? `${(distanceMeters / 1000).toFixed(1)}km`
+                            : `${distanceMeters}m`}
+                        </span>
+                      )}
+                    </div>
                     <span style={{ fontSize: 14, lineHeight: 1.5, color: "#1e293b" }}>
                       {place.address}
                     </span>
@@ -572,10 +829,10 @@ export default function AiAssistantPane() {
         )}
 
         {(maedeupCard || (confirmedSlot && confirmedPlace)) && (() => {
-          // 사용자가 직접 확정한 값 우선, 없으면 파이프라인 값 사용
           const displayTime = confirmedSlot ?? maedeupCard?.selected_time;
           const displayPlace = confirmedPlace ?? maedeupCard?.selected_place;
           const title = maedeupCard?.title ?? `${maedeupCard?.meeting_type ?? "모임"} 매듭 카드`;
+
           return (
             <div
               style={{
@@ -641,15 +898,14 @@ export default function AiAssistantPane() {
           );
         })()}
 
-        {/* Messages */}
-        {messages.map((msg, i) => {
+        {messages.map((msg, index) => {
           const isMe = msg.role === "user";
-          const senderLabel = isMe
-            ? (msg.sender ?? user?.name ?? "나")
-            : (msg.sender ?? "AI 어시스턴트");
+          const rawSender = isMe ? (msg.sender ?? user?.name ?? "나") : (msg.sender ?? "AI 어시스턴트");
+          const senderLabel = rawSender === "LangGraph" ? "매듭 AI" : rawSender;
+
           return (
             <div
-              key={msg.id ?? i}
+              key={msg.id ?? index}
               style={{
                 display: "flex",
                 flexDirection: isMe ? "row-reverse" : "row",
@@ -717,8 +973,87 @@ export default function AiAssistantPane() {
           );
         })}
 
-        {/* AI Card — 메시지 없을 때 또는 AI 응답 대기 중 */}
-        {(messages.length === 0 || isAiLoading) && (
+        {isAiLoading && messages.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "row",
+              gap: 8,
+              alignItems: "flex-end",
+            }}
+          >
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: "50%",
+                background: "#818cf8",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#fff",
+                fontSize: 12,
+                fontWeight: 300,
+                flexShrink: 0,
+              }}
+            >
+              AI
+            </div>
+            <div
+              style={{
+                padding: "12px 18px",
+                borderRadius: 16,
+                borderBottomLeftRadius: 6,
+                background: "#f1f5f9",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <style>{`
+                @keyframes aiTypingDot {
+                  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+                  40% { opacity: 1; transform: scale(1); }
+                }
+              `}</style>
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: "#4f46e5",
+                  display: "inline-block",
+                  animation: "aiTypingDot 1.4s infinite ease-in-out",
+                  animationDelay: "0s",
+                }}
+              />
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: "#4f46e5",
+                  display: "inline-block",
+                  animation: "aiTypingDot 1.4s infinite ease-in-out",
+                  animationDelay: "0.2s",
+                }}
+              />
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: "#4f46e5",
+                  display: "inline-block",
+                  animation: "aiTypingDot 1.4s infinite ease-in-out",
+                  animationDelay: "0.4s",
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {messages.length === 0 && (
           <div
             style={{
               background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #a855f7 100%)",
@@ -731,7 +1066,6 @@ export default function AiAssistantPane() {
               boxShadow: "0 4px 14px rgba(79, 70, 229, 0.13)",
             }}
           >
-            {/* AI icon + label row */}
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <Sparkles style={{ width: 20, height: 20, color: "#ffffff" }} />
               <span style={{ fontSize: 12, fontWeight: 600, color: "#ffffff", fontFamily: "Inter, sans-serif" }}>
@@ -755,9 +1089,7 @@ export default function AiAssistantPane() {
                 ? "채팅 내용을 분석하여 모임원들의\n가능한 시간대를 정리하고 있어요."
                 : "메시지를 보내 일정 조율을 시작해보세요."}
             </span>
-            {/* Divider */}
             <div style={{ width: "100%", height: 1, background: "rgba(255,255,255,0.19)" }} />
-            {/* Status row */}
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div
                 style={{
@@ -772,15 +1104,14 @@ export default function AiAssistantPane() {
                 {status === "connecting"
                   ? "연결 중..."
                   : isAiLoading
-                  ? "AI가 응답 중..."
-                  : "연결됨 · 메시지를 기다리는 중"}
+                    ? "AI가 응답 중..."
+                    : "연결됨 · 메시지를 기다리는 중"}
               </span>
             </div>
           </div>
         )}
       </div>
 
-      {/* Input */}
       <div
         style={{
           display: "flex",
@@ -794,13 +1125,14 @@ export default function AiAssistantPane() {
         <input
           type="text"
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
-          placeholder="AI에게 질문하세요"
+          onChange={(event) => setInput(event.target.value)}
+          onKeyDown={(event) => event.key === "Enter" && !event.shiftKey && !isAiLoading && handleSend()}
+          disabled={isAiLoading}
+          placeholder={isAiLoading ? "AI가 응답 중..." : "AI에게 질문하세요"}
           style={{
             flex: 1,
             padding: "10px 16px",
-            background: "#ffffff",
+            background: isAiLoading ? "#f1f5f9" : "#ffffff",
             borderRadius: 60,
             border: "1.5px solid #a2f4fd",
             outline: "none",
@@ -808,15 +1140,18 @@ export default function AiAssistantPane() {
             color: "#1e293b",
             fontFamily: "Pretendard Variable, Pretendard, sans-serif",
             boxShadow: "0 2px 3.5px rgba(0,0,0,0.15)",
+            opacity: isAiLoading ? 0.7 : 1,
+            cursor: isAiLoading ? "not-allowed" : "text",
           }}
         />
         <button
-          onClick={handleSend}
+          onClick={isAiLoading ? handleStopAi : handleSend}
+          title={isAiLoading ? "응답 정지" : "메시지 보내기"}
           style={{
             width: 40,
             height: 40,
             borderRadius: "50%",
-            background: "#ffffff",
+            background: isAiLoading ? "#ef4444" : "#ffffff",
             border: "none",
             display: "flex",
             alignItems: "center",
@@ -824,9 +1159,14 @@ export default function AiAssistantPane() {
             cursor: "pointer",
             flexShrink: 0,
             boxShadow: "0 2px 3.5px rgba(0,0,0,0.15)",
+            transition: "background 0.2s ease",
           }}
         >
-          <Send style={{ width: 16, height: 16, color: "#837cff" }} />
+          {isAiLoading ? (
+            <Square style={{ width: 14, height: 14, color: "#ffffff", fill: "#ffffff" }} />
+          ) : (
+            <Send style={{ width: 16, height: 16, color: "#837cff" }} />
+          )}
         </button>
       </div>
     </div>

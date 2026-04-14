@@ -1,13 +1,12 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.api.routes.auth import _issue_jwt
-from app.core.security import AuthUser, get_current_user
+from app.core.security import AuthUser, get_current_user, issue_jwt
 from app.db.session import get_session
 from app.models.friendship import Friendship, FriendshipStatus
 from app.models.user import User
@@ -40,6 +39,25 @@ class FriendRequestResponse(BaseModel):
     status: str
 
 
+class UserProfileResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    name: str
+    picture: Optional[str]
+    home_base: Optional[str]
+    food_preferences: Optional[list[str]]
+    food_preference_note: Optional[str]
+    calendar_consent: bool
+
+
+class UserPreferencesUpdate(BaseModel):
+    home_base: Optional[str] = Field(default=None, max_length=128)
+    food_preferences: Optional[list[str]] = None
+    food_preference_note: Optional[str] = Field(default=None, max_length=255)
+
+
 @router.patch("/me/consent", response_model=ConsentResponse)
 async def update_consent(
     body: ConsentUpdate,
@@ -57,8 +75,45 @@ async def update_consent(
     await session.commit()
     await session.refresh(user)
 
-    new_token = _issue_jwt(user)
+    new_token = issue_jwt(
+        user_id=user.id,
+        email=user.email,
+        name=user.name,
+        picture=user.picture,
+        calendar_consent=user.calendar_consent,
+    )
     return ConsentResponse(token=new_token, calendar_consent=user.calendar_consent)
+
+
+@router.get("/me", response_model=UserProfileResponse)
+async def get_me(
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    user = await session.get(User, int(current_user.sub))
+    if user is None:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+    return user
+
+
+@router.patch("/me/preferences", response_model=UserProfileResponse)
+async def update_preferences(
+    body: UserPreferencesUpdate,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    user = await session.get(User, int(current_user.sub))
+    if user is None:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+
+    updates = body.model_dump(exclude_unset=True)
+    for field_name, value in updates.items():
+        setattr(user, field_name, value)
+
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return user
 
 
 @router.get("/friends", response_model=list[FriendInfo])
@@ -147,4 +202,4 @@ async def send_friend_request(
     await session.commit()
     await session.refresh(friendship)
 
-    return FriendRequestResponse(id=friendship.id, status=friendship.status.value)
+    return FriendRequestResponse(id=friendship.id, status=friendship.status)

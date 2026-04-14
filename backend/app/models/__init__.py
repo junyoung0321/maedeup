@@ -1,4 +1,5 @@
 from app.models.ai_memory import AIMemory, MemoryType
+from app.models import intent  # noqa
 from app.models.chat import ChatMessage, PaneType
 from app.models.event import Event
 from app.models.friendship import Friendship, FriendshipStatus

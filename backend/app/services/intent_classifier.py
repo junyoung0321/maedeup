@@ -108,6 +108,19 @@ async def classify_intent(text_input: str) -> dict:
 답변:"""
         gemini_response = await call_gemini(prompt)
         if not gemini_response or not gemini_response.strip():
+            # Gemini 실패 시에도 패턴 매칭 시도
+            if _contains_korean_place(text_input):
+                return {
+                    "intent": "place_suggestion",
+                    "confidence": round(max(top_similarity, 0.7), 4),
+                    "method": "pattern",
+                }
+            if _contains_schedule_keyword(text_input):
+                return {
+                    "intent": "meeting_schedule",
+                    "confidence": round(max(top_similarity, 0.7), 4),
+                    "method": "pattern",
+                }
             return {
                 "intent": "general",
                 "confidence": round(top_similarity, 4),
@@ -116,15 +129,54 @@ async def classify_intent(text_input: str) -> dict:
         intent = gemini_response.strip().lower().split()[0]
         if intent not in VALID_INTENTS:
             intent = "general"
+
+        # Gemini가 general로 판단했지만 패턴 매칭으로 override
+        if intent == "general":
+            if _contains_korean_place(text_input):
+                intent = "place_suggestion"
+            elif _contains_schedule_keyword(text_input):
+                intent = "meeting_schedule"
+
         return {
             "intent": intent,
             "confidence": round(top_similarity, 4),
-            "method": "gemini",
+            "method": "gemini" if intent != "general" else "pattern",
         }
 
-    # 유사도 너무 낮음 → 일반 대화로 처리
+    # 유사도 너무 낮음 → 한국 지명 패턴 체크 후 일반 대화로 처리
+    if _contains_korean_place(text_input):
+        return {
+            "intent": "place_suggestion",
+            "confidence": round(max(top_similarity, 0.7), 4),
+            "method": "pattern",
+        }
+
+    # 날짜/시간 관련 키워드 체크
+    if _contains_schedule_keyword(text_input):
+        return {
+            "intent": "meeting_schedule",
+            "confidence": round(max(top_similarity, 0.7), 4),
+            "method": "pattern",
+        }
+
     return {
         "intent": "general",
         "confidence": round(top_similarity, 4),
         "method": "default",
     }
+
+
+def _contains_korean_place(text: str) -> bool:
+    """한국 지명 패턴(XX동, XX역, XX구 등)이 포함되어 있는지 확인합니다."""
+    import re
+    place_pattern = re.compile(r'[가-힣]{1,10}(?:동|구|역|로|리|면|읍|시|군)')
+    meeting_keywords = ("만나", "보자", "가자", "갈까", "어때", "ㄱㄱ", "추천", "맛집", "카페", "식당", "근처", "쪽")
+    has_place = bool(place_pattern.search(text))
+    has_meeting = any(kw in text for kw in meeting_keywords)
+    return has_place and has_meeting
+
+
+def _contains_schedule_keyword(text: str) -> bool:
+    """날짜/시간 관련 키워드가 포함되어 있는지 확인합니다."""
+    schedule_keywords = ("만나자", "보자", "모이자", "언제", "시간", "날짜", "주말", "평일", "다음주", "이번주", "내일", "모레", "월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일")
+    return any(kw in text for kw in schedule_keywords)

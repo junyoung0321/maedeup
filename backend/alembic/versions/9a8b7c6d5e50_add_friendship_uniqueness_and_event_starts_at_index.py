@@ -27,6 +27,9 @@ def _index_names(table_name: str) -> set[str]:
 
 
 def upgrade() -> None:
+    inspector = sa.inspect(op.get_bind())
+    if not inspector.has_table("friendships"):
+        return
     friendship_constraints = _unique_constraint_names("friendships")
     if "uq_friendships_requester_id_addressee_id" not in friendship_constraints:
         op.create_unique_constraint(
@@ -35,20 +38,24 @@ def upgrade() -> None:
             ["requester_id", "addressee_id"],
         )
 
-    event_indexes = _index_names("events")
-    if "ix_events_starts_at" not in event_indexes:
-        op.create_index("ix_events_starts_at", "events", ["starts_at"])
+    if inspector.has_table("events"):
+        event_indexes = _index_names("events")
+        if "ix_events_starts_at" not in event_indexes:
+            op.create_index("ix_events_starts_at", "events", ["starts_at"])
 
 
 def downgrade() -> None:
-    event_indexes = _index_names("events")
-    if "ix_events_starts_at" in event_indexes:
-        op.drop_index("ix_events_starts_at", table_name="events")
+    inspector = sa.inspect(op.get_bind())
+    if inspector.has_table("events"):
+        event_indexes = _index_names("events")
+        if "ix_events_starts_at" in event_indexes:
+            op.drop_index("ix_events_starts_at", table_name="events")
 
-    friendship_constraints = _unique_constraint_names("friendships")
-    if "uq_friendships_requester_id_addressee_id" in friendship_constraints:
-        op.drop_constraint(
-            "uq_friendships_requester_id_addressee_id",
-            "friendships",
-            type_="unique",
-        )
+    if inspector.has_table("friendships"):
+        friendship_constraints = _unique_constraint_names("friendships")
+        if "uq_friendships_requester_id_addressee_id" in friendship_constraints:
+            op.drop_constraint(
+                "uq_friendships_requester_id_addressee_id",
+                "friendships",
+                type_="unique",
+            )

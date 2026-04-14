@@ -27,6 +27,9 @@ def _index_names(table_name: str) -> set[str]:
 
 
 def upgrade() -> None:
+    inspector = sa.inspect(op.get_bind())
+    if not inspector.has_table("meeting_participants"):
+        return
     meeting_participant_constraints = _unique_constraint_names("meeting_participants")
     if "uq_meeting_participants_meeting_id_user_id" not in meeting_participant_constraints:
         op.create_unique_constraint(
@@ -35,20 +38,24 @@ def upgrade() -> None:
             ["meeting_id", "user_id"],
         )
 
-    meeting_indexes = _index_names("meeting_schedules")
-    if "ix_meeting_schedules_scheduled_at" not in meeting_indexes:
-        op.create_index("ix_meeting_schedules_scheduled_at", "meeting_schedules", ["scheduled_at"])
+    if inspector.has_table("meeting_schedules"):
+        meeting_indexes = _index_names("meeting_schedules")
+        if "ix_meeting_schedules_scheduled_at" not in meeting_indexes:
+            op.create_index("ix_meeting_schedules_scheduled_at", "meeting_schedules", ["scheduled_at"])
 
 
 def downgrade() -> None:
-    meeting_indexes = _index_names("meeting_schedules")
-    if "ix_meeting_schedules_scheduled_at" in meeting_indexes:
-        op.drop_index("ix_meeting_schedules_scheduled_at", table_name="meeting_schedules")
+    inspector = sa.inspect(op.get_bind())
+    if inspector.has_table("meeting_schedules"):
+        meeting_indexes = _index_names("meeting_schedules")
+        if "ix_meeting_schedules_scheduled_at" in meeting_indexes:
+            op.drop_index("ix_meeting_schedules_scheduled_at", table_name="meeting_schedules")
 
-    meeting_participant_constraints = _unique_constraint_names("meeting_participants")
-    if "uq_meeting_participants_meeting_id_user_id" in meeting_participant_constraints:
-        op.drop_constraint(
-            "uq_meeting_participants_meeting_id_user_id",
-            "meeting_participants",
-            type_="unique",
-        )
+    if inspector.has_table("meeting_participants"):
+        meeting_participant_constraints = _unique_constraint_names("meeting_participants")
+        if "uq_meeting_participants_meeting_id_user_id" in meeting_participant_constraints:
+            op.drop_constraint(
+                "uq_meeting_participants_meeting_id_user_id",
+                "meeting_participants",
+                type_="unique",
+            )

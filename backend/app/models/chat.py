@@ -2,6 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
+import sqlalchemy as sa
 from sqlmodel import Field, SQLModel
 
 
@@ -14,7 +15,7 @@ class ChatMessage(SQLModel, table=True):
     __tablename__ = "chat_messages"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    pane_type: PaneType = Field(index=True)
+    pane_type: str = Field(sa_column=sa.Column(sa.String(32), index=True, nullable=False))
     role: str = Field(max_length=32)           # "user" | "assistant" | "system"
     content: str
     sender: Optional[str] = Field(default=None, max_length=64)

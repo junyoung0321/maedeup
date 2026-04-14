@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { User, Users, Settings, CreditCard, Clock, LogOut } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -18,8 +19,20 @@ const menuItems = [
 
 export default function ProfileDropdown({ open, onClose }: Props) {
   const { user, logout } = useAuth();
+  const router = useRouter();
 
   if (!open) return null;
+
+  const handleMenuClick = (label: string) => {
+    if (label === "로그아웃") {
+      logout();
+      return;
+    }
+    if (label === "설정" || label === "선호도 관리") {
+      onClose();
+      router.push("/settings");
+    }
+  };
 
   return (
     <div
@@ -65,7 +78,7 @@ export default function ProfileDropdown({ open, onClose }: Props) {
             return (
               <button
                 key={item.label}
-                onClick={item.label === "로그아웃" ? logout : undefined}
+                onClick={() => handleMenuClick(item.label)}
                 style={{
                   display: "flex",
                   alignItems: "center",

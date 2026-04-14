@@ -2,6 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
+import sqlalchemy as sa
 from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
@@ -31,9 +32,10 @@ class MeetingSchedule(SQLModel, table=True):
     kakao_place_id: Optional[str] = Field(default=None, max_length=64)
     kakao_place_url: Optional[str] = Field(default=None, max_length=512)
     reminder_sent: bool = Field(default=False)
+    vote_reminder_sent: bool = Field(default=False)
     vote_options: Optional[list[dict[str, Any]]] = Field(default=None, sa_column=Column(JSON(), nullable=True))
     votes: Optional[dict[str, int]] = Field(default=None, sa_column=Column(JSON(), nullable=True))
-    status: MeetingStatus = Field(default=MeetingStatus.pending)
+    status: str = Field(sa_column=sa.Column(sa.String(32), nullable=False, server_default="pending"))
     created_by: int = Field(foreign_key="users.id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -52,5 +54,5 @@ class MeetingParticipant(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     meeting_id: int = Field(foreign_key="meeting_schedules.id", index=True)
     user_id: int = Field(foreign_key="users.id", index=True)
-    status: ParticipantStatus = Field(default=ParticipantStatus.invited)
+    status: str = Field(sa_column=sa.Column(sa.String(32), nullable=False, server_default="invited"))
     responded_at: Optional[datetime] = None

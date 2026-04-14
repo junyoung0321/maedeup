@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Check, Vote } from "lucide-react";
-import { apiFetchWithFallback } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { useMeeting } from "@/contexts/MeetingContext";
 
 /* ── Types ─────────────────────────────────────────────── */
@@ -61,7 +61,14 @@ function mapFreeSlot(slot: ApiFreeSlot): TimeSlot {
 /* ── Component ──────────────────────────────────────────── */
 export default function CalendarPane() {
   let roomId = "room-1";
-  try { roomId = useMeeting().roomId || "room-1"; } catch { /* not in provider */ }
+  let calendarRefreshTrigger = 0;
+  try {
+    const meeting = useMeeting();
+    roomId = meeting.roomId || "room-1";
+    calendarRefreshTrigger = meeting.calendarRefreshTrigger;
+  } catch {
+    /* not in provider */
+  }
   const [selected, setSelected] = useState<Set<number>>(new Set([0, 1]));
   const [availabilityData, setAvailabilityData] = useState<Record<number, DayAvail>>({});
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
@@ -100,9 +107,8 @@ export default function CalendarPane() {
     setAvailabilityData({});
     setTimeSlots([]);
 
-    apiFetchWithFallback<CalendarApiResponse>(
+    apiFetch<CalendarApiResponse>(
       `/api/v1/calendar/free-slots?room_id=${roomId}&year=${year}&month=${month}`,
-      { dates: {}, free_slots: [] },
     )
       .then((data) => {
         const dayMap: Record<number, DayAvail> = {};
@@ -132,12 +138,13 @@ export default function CalendarPane() {
 
         setLoading(false);
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error("캘린더 데이터 로드 실패:", err);
         setError(true);
         setDateRangeLabel(`${month}월 기준`);
         setLoading(false);
       });
-  }, [year, month]);
+  }, [calendarRefreshTrigger, month, roomId, year]);
 
   const toggleSlot = (idx: number) => {
     setSelected((prev) => {

@@ -21,7 +21,7 @@ async def health_check(session: AsyncSession = Depends(get_session)):
         db_status = f"error: {e}"
 
     try:
-        r = aioredis.from_url(settings.REDIS_URL)
+        r = aioredis.from_url(settings.REDIS_URL, socket_connect_timeout=1, socket_timeout=1)
         await r.ping()
         await r.aclose()
     except Exception as e:

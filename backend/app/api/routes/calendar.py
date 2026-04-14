@@ -1,10 +1,9 @@
 from datetime import date, datetime, timedelta, timezone
-from typing import Optional
 from zoneinfo import ZoneInfo
 
 import logging
-
 import httpx
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 logger = logging.getLogger(__name__)
@@ -12,11 +11,11 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.core.config import settings
 from app.core.security import AuthUser, get_current_user
 from app.db.session import get_session
 from app.models.room import RoomMember
 from app.models.user import User
+from app.services.google_calendar import GoogleCalendarAuthError, get_google_access_token
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
 
@@ -26,6 +25,15 @@ SLOT_MINUTES = 30
 WORK_HOUR_START = 9
 WORK_HOUR_END = 22
 LOOKAHEAD_DAYS = 90
+
+
+def _calendar_user_key(user: User) -> str:
+    return f"{user.id}:{user.name}"
+
+
+def _calendar_display_name(user_key: str) -> str:
+    _, _, name = user_key.partition(":")
+    return name or user_key
 
 
 # ── 응답 모델 ──────────────────────────────────────────────
@@ -54,22 +62,6 @@ class FreeSlotsResponse(BaseModel):
 # ── Google API 헬퍼 ────────────────────────────────────────
 
 
-async def _refresh_access_token(refresh_token: str) -> Optional[str]:
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            "https://oauth2.googleapis.com/token",
-            data={
-                "client_id": settings.GOOGLE_CLIENT_ID,
-                "client_secret": settings.GOOGLE_CLIENT_SECRET,
-                "refresh_token": refresh_token,
-                "grant_type": "refresh_token",
-            },
-        )
-    if resp.status_code == 200:
-        return resp.json().get("access_token")
-    return None
-
-
 async def _get_busy_periods(
     user: User,
     time_min: datetime,
@@ -80,8 +72,10 @@ async def _get_busy_periods(
     Google Calendar API로 바쁜 시간대(시작/종료)만 조회합니다.
     일정 제목·내용은 수집하지 않습니다.
     """
-    logger.warning(f"[CALENDAR] _get_busy_periods called for {user.name}, has_token={bool(user.google_access_token)}")
-    if not user.google_access_token:
+    logger.warning("[CALENDAR] _get_busy_periods called for user_id=%s has_token=%s", user.id, bool(user.google_access_token))
+    try:
+        access_token = await get_google_access_token(user, session)
+    except GoogleCalendarAuthError:
         return []
 
     params = {
@@ -91,30 +85,32 @@ async def _get_busy_periods(
         "orderBy": "startTime",
         "fields": "items(start,end)",
     }
-    headers = {"Authorization": f"Bearer {user.google_access_token}"}
+    headers = {"Authorization": f"Bearer {access_token}"}
 
-    logger.warning(f"[CALENDAR] Calling Google Events API for {user.name}")
-    async with httpx.AsyncClient() as client:
+    logger.warning("[CALENDAR] Calling Google Events API for user_id=%s", user.id)
+    async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.get(EVENTS_URL, params=params, headers=headers)
-        logger.warning(f"[CALENDAR] Events API status: {resp.status_code}")
-        logger.warning(f"[CALENDAR] Events API response: {resp.text[:500]}")
+        logger.warning("[CALENDAR] Events API status: %s", resp.status_code)
 
-        if resp.status_code == 401 and user.google_refresh_token:
-            logger.debug("Refreshing token for %s", user.name)
-            new_token = await _refresh_access_token(user.google_refresh_token)
-            if new_token:
-                user.google_access_token = new_token
-                session.add(user)
-                await session.commit()
-                headers = {"Authorization": f"Bearer {new_token}"}
-                resp = await client.get(EVENTS_URL, params=params, headers=headers)
-                logger.debug("Google API response: %s", resp.status_code)
+        if resp.status_code == 401:
+            try:
+                refreshed_token = await get_google_access_token(user, session, force_refresh=True)
+            except GoogleCalendarAuthError:
+                return []
+            headers = {"Authorization": f"Bearer {refreshed_token}"}
+            resp = await client.get(EVENTS_URL, params=params, headers=headers)
+            logger.debug("Google API retry response: %s", resp.status_code)
 
         if resp.status_code != 200:
+            logger.warning("[CALENDAR] Google API failed for user_id=%s status=%s", user.id, resp.status_code)
             return []
 
-    items = resp.json().get("items", [])
-    logger.warning(f"[CALENDAR] Google API status: {resp.status_code}, busy count: {len(items)}")
+    try:
+        items = resp.json().get("items", [])
+    except ValueError:
+        logger.warning("[CALENDAR] Invalid Google API JSON for user_id=%s", user.id)
+        return []
+    logger.warning("[CALENDAR] Google API status: %s, busy count: %s", resp.status_code, len(items))
 
     result = []
     for item in items:
@@ -174,11 +170,11 @@ def _compute_dates(
     for offset in range(lookahead_days):
         kst_date = start_date + timedelta(days=offset)
         available_names = [
-            name for name, periods in busy_by_user.items()
+            _calendar_display_name(name) for name, periods in busy_by_user.items()
             if not _has_event_on_day(periods, kst_date)
         ]
         busy_names = [
-            name for name, periods in busy_by_user.items()
+            _calendar_display_name(name) for name, periods in busy_by_user.items()
             if _has_event_on_day(periods, kst_date)
         ]
         result[kst_date.isoformat()] = DayInfo(
@@ -282,6 +278,15 @@ async def get_free_slots(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="유효하지 않은 채팅방 ID입니다.") from exc
 
+    membership_result = await session.execute(
+        select(RoomMember).where(
+            RoomMember.room_id == room_pk,
+            RoomMember.user_id == int(_current_user.sub),
+        )
+    )
+    if membership_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
     member_result = await session.execute(
         select(User)
         .join(RoomMember, RoomMember.user_id == User.id)
@@ -289,13 +294,21 @@ async def get_free_slots(
     )
     all_users: list[User] = list(member_result.scalars().all())
 
-    consenting = [u for u in all_users if u.calendar_consent]
-    unconnected_names = [u.name for u in all_users if not u.calendar_consent]
+    consenting = [
+        user for user in all_users
+        if user.calendar_consent and (user.google_access_token or user.google_refresh_token)
+    ]
+    consenting_ids = {user.id for user in consenting}
+    unconnected_names = list({
+        user.name
+        for user in all_users
+        if user.id not in consenting_ids
+    })
 
     # 동의 유저별 바쁜 시간대 수집 (제목/내용 없이 시간만)
     busy_by_user: dict[str, list[dict]] = {}
     for user in consenting:
-        busy_by_user[user.name] = await _get_busy_periods(user, time_min, time_max, session)
+        busy_by_user[_calendar_user_key(user)] = await _get_busy_periods(user, time_min, time_max, session)
 
     dates = _compute_dates(busy_by_user, start_date, lookahead, unconnected_names)
     free_slots = _compute_free_slots(busy_by_user, time_min, time_max)

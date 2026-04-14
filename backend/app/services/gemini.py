@@ -1,12 +1,15 @@
 import asyncio
 
 import google.generativeai as genai
+from google.api_core.exceptions import GoogleAPICallError, ResourceExhausted
 
 from app.core.config import settings
 
 
 async def call_gemini(content: str) -> str:
     """Gemini API를 호출하고 응답 텍스트를 반환합니다."""
+    if not settings.GEMINI_API_KEY.strip():
+        return ""
     genai.configure(api_key=settings.GEMINI_API_KEY)
     model = genai.GenerativeModel(
         "gemini-2.5-flash",
@@ -16,5 +19,26 @@ async def call_gemini(content: str) -> str:
             "간결하고 자연스럽게 답변하세요."
         ),
     )
-    response = await asyncio.to_thread(model.generate_content, content)
-    return response.text
+    try:
+        response = await asyncio.to_thread(model.generate_content, content)
+    except (ResourceExhausted, GoogleAPICallError):
+        return ""
+    except Exception:
+        return ""
+
+    if response is None:
+        return ""
+
+    text = getattr(response, "text", None)
+    if isinstance(text, str) and text.strip():
+        return text
+
+    candidates = getattr(response, "candidates", None) or []
+    parts: list[str] = []
+    for candidate in candidates:
+        content_obj = getattr(candidate, "content", None)
+        for part in getattr(content_obj, "parts", None) or []:
+            part_text = getattr(part, "text", None)
+            if isinstance(part_text, str) and part_text.strip():
+                parts.append(part_text)
+    return "\n".join(parts).strip()

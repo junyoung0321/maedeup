@@ -1,8 +1,8 @@
-"""add_meeting_reminder_sent
+"""add_vote_reminder_sent
 
-Revision ID: a1b2c3d4e5f6
-Revises: f4b1c2d3e4f5
-Create Date: 2026-04-13 20:30:00.000000
+Revision ID: a2b3c4d5e6f7
+Revises: 9a8b7c6d5e51
+Create Date: 2026-04-14 12:00:00.000000
 
 """
 from typing import Sequence, Union
@@ -10,8 +10,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "a1b2c3d4e5f6"
-down_revision: Union[str, None] = "f4b1c2d3e4f5"
+revision: str = "a2b3c4d5e6f7"
+down_revision: Union[str, None] = "9a8b7c6d5e51"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -22,10 +22,10 @@ def upgrade() -> None:
     if not inspector.has_table("meeting_schedules"):
         return
     cols = [c["name"] for c in inspector.get_columns("meeting_schedules")]
-    if "reminder_sent" not in cols:
+    if "vote_reminder_sent" not in cols:
         op.add_column(
             "meeting_schedules",
-            sa.Column("reminder_sent", sa.Boolean(), nullable=False, server_default=sa.false()),
+            sa.Column("vote_reminder_sent", sa.Boolean(), nullable=False, server_default=sa.false()),
         )
 
 
@@ -35,5 +35,5 @@ def downgrade() -> None:
     if not inspector.has_table("meeting_schedules"):
         return
     cols = [c["name"] for c in inspector.get_columns("meeting_schedules")]
-    if "reminder_sent" in cols:
-        op.drop_column("meeting_schedules", "reminder_sent")
+    if "vote_reminder_sent" in cols:
+        op.drop_column("meeting_schedules", "vote_reminder_sent")

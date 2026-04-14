@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
@@ -37,8 +37,8 @@ class MeetingSchedule(SQLModel, table=True):
     votes: Optional[dict[str, int]] = Field(default=None, sa_column=Column(JSON(), nullable=True))
     status: str = Field(sa_column=sa.Column(sa.String(32), nullable=False, server_default="pending"))
     created_by: int = Field(foreign_key="users.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class MeetingParticipant(SQLModel, table=True):

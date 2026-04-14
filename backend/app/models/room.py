@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -26,8 +26,8 @@ class Room(SQLModel, table=True):
     category: Optional[str] = Field(default=None, max_length=64)
     created_by: int = Field(foreign_key="users.id")
     status: str = Field(sa_column=sa.Column(sa.String(32), nullable=False, server_default="active"))
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class RoomMember(SQLModel, table=True):
@@ -40,4 +40,4 @@ class RoomMember(SQLModel, table=True):
     room_id: int = Field(foreign_key="rooms.id", index=True)
     user_id: int = Field(foreign_key="users.id", index=True)
     role: str = Field(sa_column=sa.Column(sa.String(32), nullable=False, server_default="member"))
-    joined_at: datetime = Field(default_factory=datetime.utcnow)
+    joined_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))

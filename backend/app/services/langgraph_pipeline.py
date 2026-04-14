@@ -1440,6 +1440,12 @@ def _try_template_response(user_msg: str, state: GraphState) -> str | None:
         if known_place:
             return f"{known_place} 좋아요! 🔍 맛집 찾아볼게요~"
 
+    # "아무데나", "상관없어" 등 모호한 장소 → 기본 위치 사용 안내
+    _VAGUE_PLACE_PATTERNS = ("아무데나", "상관없", "어디든", "아무곳", "아무거나", "알아서")
+    if any(p in lower for p in _VAGUE_PLACE_PATTERNS):
+        default_place = state.get("default_place_hint") or "서울 강남"
+        return f"알겠어요! 기본 위치({default_place}) 기준으로 추천해드릴게요 📍"
+
     # 짧은 단순 메시지 (10자 이하, 한글+이모지+ㅋㅎ만)
     if len(lower) <= 10 and re.fullmatch(r"[가-힣ㄱ-ㅎㅏ-ㅣ\s!?.~😊👍🎉🔥💪]+", lower):
         # 이미 위에서 안 잡힌 짧은 감탄사/반응

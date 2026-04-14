@@ -11,6 +11,7 @@ RAG 기반 의도 분류기 (2단계)
 """
 
 import math
+import re
 from typing import Optional
 
 from sqlmodel import select
@@ -24,6 +25,8 @@ HIGH_THRESHOLD = 0.85   # RAG로 바로 확정
 LOW_THRESHOLD = 0.60    # Gemini 폴백 구간
 
 VALID_INTENTS = {"meeting_schedule", "place_suggestion", "general"}
+
+_KOREAN_PLACE_PATTERN = re.compile(r'[가-힣]{1,10}(?:동|구|역|로|리|면|읍|시|군)')
 
 INTENT_DESCRIPTIONS = {
     "meeting_schedule": "모임/만남 일정을 잡거나 제안하는 내용",
@@ -168,10 +171,8 @@ async def classify_intent(text_input: str) -> dict:
 
 def _contains_korean_place(text: str) -> bool:
     """한국 지명 패턴(XX동, XX역, XX구 등)이 포함되어 있는지 확인합니다."""
-    import re
-    place_pattern = re.compile(r'[가-힣]{1,10}(?:동|구|역|로|리|면|읍|시|군)')
     meeting_keywords = ("만나", "보자", "가자", "갈까", "어때", "ㄱㄱ", "추천", "맛집", "카페", "식당", "근처", "쪽")
-    has_place = bool(place_pattern.search(text))
+    has_place = bool(_KOREAN_PLACE_PATTERN.search(text))
     has_meeting = any(kw in text for kw in meeting_keywords)
     return has_place and has_meeting
 

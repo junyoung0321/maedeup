@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Check, Vote } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import { useMeeting } from "@/contexts/MeetingContext";
+import { useMeetingOptional } from "@/contexts/MeetingContext";
 
 /* ── Types ─────────────────────────────────────────────── */
 interface DayAvail {
@@ -60,15 +60,9 @@ function mapFreeSlot(slot: ApiFreeSlot): TimeSlot {
 
 /* ── Component ──────────────────────────────────────────── */
 export default function CalendarPane() {
-  let roomId = "room-1";
-  let calendarRefreshTrigger = 0;
-  try {
-    const meeting = useMeeting();
-    roomId = meeting.roomId || "room-1";
-    calendarRefreshTrigger = meeting.calendarRefreshTrigger;
-  } catch {
-    /* not in provider */
-  }
+  const meeting = useMeetingOptional();
+  const roomId = meeting?.roomId || "room-1";
+  const calendarRefreshTrigger = meeting?.calendarRefreshTrigger ?? 0;
   const [selected, setSelected] = useState<Set<number>>(new Set([0, 1]));
   const [availabilityData, setAvailabilityData] = useState<Record<number, DayAvail>>({});
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
@@ -102,6 +96,7 @@ export default function CalendarPane() {
   };
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError(false);
     setAvailabilityData({});
@@ -111,6 +106,7 @@ export default function CalendarPane() {
       `/api/v1/calendar/free-slots?room_id=${roomId}&year=${year}&month=${month}`,
     )
       .then((data) => {
+        if (cancelled) return;
         const dayMap: Record<number, DayAvail> = {};
         for (const [dateStr, avail] of Object.entries(data.dates)) {
           const day = parseInt(dateStr.split("-")[2], 10);
@@ -139,11 +135,14 @@ export default function CalendarPane() {
         setLoading(false);
       })
       .catch((err) => {
+        if (cancelled) return;
         console.error("캘린더 데이터 로드 실패:", err);
         setError(true);
         setDateRangeLabel(`${month}월 기준`);
         setLoading(false);
       });
+
+    return () => { cancelled = true; };
   }, [calendarRefreshTrigger, month, roomId, year]);
 
   const toggleSlot = (idx: number) => {

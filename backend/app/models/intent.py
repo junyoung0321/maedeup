@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy import Column, JSON
@@ -21,4 +21,4 @@ class IntentExample(SQLModel, table=True):
         sa_column=Column(JSON, nullable=True),
         description="text-embedding-004 벡터 (768차원 float 리스트)",
     )
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))

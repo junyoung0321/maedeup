@@ -76,6 +76,7 @@ export default function UserPreferencesForm() {
   };
 
   const handleSave = async () => {
+    if (saving) return;
     try {
       setSaving(true);
       setSaveError(null);

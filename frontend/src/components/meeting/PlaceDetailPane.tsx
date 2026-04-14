@@ -15,12 +15,14 @@ declare global {
 
 interface Props {
   place: PlaceResult | null;
+  roomId?: string;
 }
 
-export default function PlaceDetailPane({ place }: Props) {
+export default function PlaceDetailPane({ place, roomId }: Props) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
   const markerRef = useRef<any>(null);
+  const relayoutTimerRef = useRef<number | null>(null);
   const [confirmed, setConfirmed] = useState(false);
 
   /* ── Kakao Map ───────────────────────────────────────── */
@@ -56,9 +58,10 @@ export default function PlaceDetailPane({ place }: Props) {
       });
 
       // Resize map after render
-      setTimeout(() => {
+      relayoutTimerRef.current = window.setTimeout(() => {
         mapInstanceRef.current?.relayout();
         mapInstanceRef.current?.setCenter(center);
+        relayoutTimerRef.current = null;
       }, 100);
     };
 
@@ -68,6 +71,13 @@ export default function PlaceDetailPane({ place }: Props) {
     } else if (kakao?.maps) {
       kakao.maps.load(loadMap);
     }
+
+    return () => {
+      if (relayoutTimerRef.current !== null) {
+        window.clearTimeout(relayoutTimerRef.current);
+        relayoutTimerRef.current = null;
+      }
+    };
   }, [place?.x, place?.y]);
 
   // Reset confirmed state when place changes
@@ -76,8 +86,11 @@ export default function PlaceDetailPane({ place }: Props) {
   }, [place?.id]);
 
   /* ── Confirm handler ─────────────────────────────────── */
+  const parsedRoomId = Number.parseInt(roomId ?? "", 10);
+  const hasValidRoom = Number.isFinite(parsedRoomId);
+
   const handleSelect = async () => {
-    if (!place) return;
+    if (!place || !hasValidRoom) return;
     const now = new Date().toISOString();
     try {
       await apiFetch("/api/v1/events/", {
@@ -90,6 +103,7 @@ export default function PlaceDetailPane({ place }: Props) {
           starts_at: now,
           kakao_place_id: place.id,
           kakao_place_url: place.url || null,
+          room_id: parsedRoomId,
         }),
       });
       setConfirmed(true);
@@ -389,11 +403,11 @@ export default function PlaceDetailPane({ place }: Props) {
         ) : (
           <button
             onClick={handleSelect}
-            disabled={!place}
+            disabled={!place || !hasValidRoom}
             style={{
               width: "100%",
               height: 44,
-              background: place ? "#4f46e5" : "#cbd5e1",
+              background: place && hasValidRoom ? "#4f46e5" : "#cbd5e1",
               color: "#ffffff",
               fontSize: 14,
               fontWeight: 500,

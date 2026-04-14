@@ -50,16 +50,19 @@ async def send_today_meeting_reminders() -> None:
                     "message": f"오늘 [{place_name}]에서 모임이 있습니다! 잊지 마세요 😊",
                     "meeting_id": meeting.id,
                 }
+                published = False
                 try:
                     await redis_client.publish(
                         f"social:{meeting.room_id}",
                         json.dumps(payload, ensure_ascii=False),
                     )
+                    published = True
                 except Exception:
                     logger.warning("Redis publish failed for reminder meeting_id=%s", meeting.id, exc_info=True)
-                meeting.reminder_sent = True
-                meeting.updated_at = datetime.now(timezone.utc)
-                session.add(meeting)
+                if published:
+                    meeting.reminder_sent = True
+                    meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    session.add(meeting)
 
             if meetings:
                 await session.commit()
@@ -119,7 +122,7 @@ async def check_pending_votes() -> None:
                 if not non_voters:
                     # 모두 투표 완료 → 플래그만 설정
                     meeting.vote_reminder_sent = True
-                    meeting.updated_at = datetime.now(timezone.utc)
+                    meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                     session.add(meeting)
                     continue
 
@@ -132,7 +135,7 @@ async def check_pending_votes() -> None:
 
                 if not non_voter_names:
                     meeting.vote_reminder_sent = True
-                    meeting.updated_at = datetime.now(timezone.utc)
+                    meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                     session.add(meeting)
                     continue
 
@@ -148,11 +151,13 @@ async def check_pending_votes() -> None:
                     "meeting_id": meeting.id,
                     "non_voters": non_voter_names,
                 }
+                published = False
                 try:
                     await redis_client.publish(
                         f"social:{meeting.room_id}",
                         json.dumps(payload, ensure_ascii=False),
                     )
+                    published = True
                 except Exception:
                     logger.warning(
                         "Redis publish failed for vote reminder meeting_id=%s",
@@ -160,9 +165,10 @@ async def check_pending_votes() -> None:
                         exc_info=True,
                     )
 
-                meeting.vote_reminder_sent = True
-                meeting.updated_at = datetime.now(timezone.utc)
-                session.add(meeting)
+                if published:
+                    meeting.vote_reminder_sent = True
+                    meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    session.add(meeting)
 
             if meetings:
                 await session.commit()

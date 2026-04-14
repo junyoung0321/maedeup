@@ -239,6 +239,7 @@ export default function ChatPane() {
         <input
           type="text"
           value={input}
+          maxLength={2000}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => event.key === "Enter" && !event.shiftKey && handleSend()}
           placeholder={status === "open" ? "메세지를 입력하세요" : "연결 중입니다"}

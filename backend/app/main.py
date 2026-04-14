@@ -1,5 +1,6 @@
 import logging
 import sys
+import time
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -45,9 +46,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_cors_origins = [settings.FRONTEND_URL]
+if settings.APP_ENV.lower() in {"development", "dev"}:
+    _cors_origins.extend(["http://localhost:3000", "http://127.0.0.1:3000"])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,7 +62,6 @@ app.add_middleware(
 @app.middleware("http")
 async def log_requests(request, call_next):
     """요청/응답 로깅 미들웨어."""
-    import time
     start = time.perf_counter()
     response = await call_next(request)
     elapsed_ms = (time.perf_counter() - start) * 1000

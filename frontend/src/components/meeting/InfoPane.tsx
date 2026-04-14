@@ -10,7 +10,7 @@ const COLLAPSED_CALENDAR_HEIGHT = 200;
 const SECTION_GAP = 12;
 
 export default function InfoPane() {
-  const { selectedPlace } = useMeeting();
+  const { selectedPlace, roomId } = useMeeting();
   const hasSelectedPlace = selectedPlace !== null;
   const placeDetailAvailableHeight = PANE_HEIGHT - COLLAPSED_CALENDAR_HEIGHT - SECTION_GAP;
   const placeDetailScale = placeDetailAvailableHeight / PANE_HEIGHT;
@@ -53,7 +53,7 @@ export default function InfoPane() {
               transformOrigin: "top left",
             }}
           >
-            <PlaceDetailPane place={selectedPlace} />
+            <PlaceDetailPane place={selectedPlace} roomId={roomId} />
           </div>
         </div>
       )}

@@ -2,6 +2,7 @@ import asyncio
 from contextlib import suppress
 import json
 import logging
+import re
 from typing import Optional
 
 import redis.asyncio as aioredis
@@ -163,6 +164,10 @@ async def social_ws(
             content = payload.get("content", "")
             sender = payload.get("sender")
 
+            # 메시지 길이 제한 (2000자)
+            if len(content) > 2000:
+                content = content[:2000]
+
             async with AsyncSessionLocal() as session:
                 msg = ChatMessage(
                     pane_type=PaneType.social,
@@ -203,8 +208,6 @@ async def social_ws(
         if r is not None:
             await r.aclose()
 
-
-import re
 
 # ── 합의/결론 감지 패턴 ──────────────────────────────────────────────
 _CONCLUSION_PATTERNS = re.compile(
@@ -316,4 +319,4 @@ async def _detect_and_notify_intent(
             )
     except Exception:
         # 의도 감지 실패는 채팅 흐름에 영향을 주지 않도록 무시
-        pass
+        logger.debug("Intent detection failed for channel %s", channel, exc_info=True)

@@ -38,7 +38,9 @@ export default function AiAssistantPane() {
   const [isPlaceConfirmed, setIsPlaceConfirmed] = useState(false);
   const [placeConfirmError, setPlaceConfirmError] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
+  const [aiTimeoutMessage, setAiTimeoutMessage] = useState<string | null>(null);
   const aiLoadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const aiWarningTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { user } = useAuth();
   const meetingContext = useContext(MeetingContext);
@@ -140,15 +142,20 @@ export default function AiAssistantPane() {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, voteCard, placeRecommendation, maedeupCard, meetingSummary, isAiLoading]);
+  }, [messages, voteCard, placeRecommendation, maedeupCard, meetingSummary, isAiLoading, aiTimeoutMessage]);
 
   // Set isAiLoading to false when an assistant message arrives
   useEffect(() => {
     if (messages.length > 0 && messages[messages.length - 1]?.role === "assistant") {
       setIsAiLoading(false);
+      setAiTimeoutMessage(null);
       if (aiLoadingTimeoutRef.current) {
         clearTimeout(aiLoadingTimeoutRef.current);
         aiLoadingTimeoutRef.current = null;
+      }
+      if (aiWarningTimeoutRef.current) {
+        clearTimeout(aiWarningTimeoutRef.current);
+        aiWarningTimeoutRef.current = null;
       }
     }
   }, [messages]);
@@ -163,32 +170,65 @@ export default function AiAssistantPane() {
     }
   }, [status, messages.length]);
 
-  // Cleanup timeout on unmount
+  // Cleanup timeouts on unmount
   useEffect(() => {
     return () => {
-      if (aiLoadingTimeoutRef.current) {
-        clearTimeout(aiLoadingTimeoutRef.current);
-      }
+      if (aiLoadingTimeoutRef.current) clearTimeout(aiLoadingTimeoutRef.current);
+      if (aiWarningTimeoutRef.current) clearTimeout(aiWarningTimeoutRef.current);
     };
   }, []);
 
+  // 에러 메시지 5초 후 자동 해제
+  useEffect(() => {
+    if (!scheduleConfirmError) return;
+    const timer = window.setTimeout(() => setScheduleConfirmError(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [scheduleConfirmError]);
+
+  useEffect(() => {
+    if (!voteError) return;
+    const timer = window.setTimeout(() => setVoteError(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [voteError]);
+
+  useEffect(() => {
+    if (!placeConfirmError) return;
+    const timer = window.setTimeout(() => setPlaceConfirmError(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [placeConfirmError]);
+
   const handleStopAi = () => {
     setIsAiLoading(false);
+    setAiTimeoutMessage(null);
     if (aiLoadingTimeoutRef.current) {
       clearTimeout(aiLoadingTimeoutRef.current);
       aiLoadingTimeoutRef.current = null;
+    }
+    if (aiWarningTimeoutRef.current) {
+      clearTimeout(aiWarningTimeoutRef.current);
+      aiWarningTimeoutRef.current = null;
     }
   };
 
   const handleSend = () => {
     const nextInput = input.trim();
-    if (!nextInput) {
+    if (!nextInput || status !== "open") {
       return;
     }
 
     sendMessage(nextInput);
     setInput("");
     setIsAiLoading(true);
+    setAiTimeoutMessage(null);
+
+    // Warning after 10 seconds
+    if (aiWarningTimeoutRef.current) {
+      clearTimeout(aiWarningTimeoutRef.current);
+    }
+    aiWarningTimeoutRef.current = setTimeout(() => {
+      setAiTimeoutMessage("응답이 지연되고 있어요. 잠시만 기다려주세요...");
+      aiWarningTimeoutRef.current = null;
+    }, 10_000);
 
     // Auto-cancel after 30 seconds
     if (aiLoadingTimeoutRef.current) {
@@ -196,6 +236,7 @@ export default function AiAssistantPane() {
     }
     aiLoadingTimeoutRef.current = setTimeout(() => {
       setIsAiLoading(false);
+      setAiTimeoutMessage("응답 시간이 초과되었어요. 다시 시도해주세요.");
       aiLoadingTimeoutRef.current = null;
     }, 30_000);
   };
@@ -355,6 +396,32 @@ export default function AiAssistantPane() {
           AI 어시스턴트
         </span>
       </div>
+
+      {status !== "open" && messages.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "8px 16px",
+            background: status === "connecting" ? "#fef3c7" : "#fee2e2",
+            color: status === "connecting" ? "#92400e" : "#991b1b",
+            fontSize: 13,
+            fontWeight: 500,
+          }}
+        >
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: status === "connecting" ? "#f59e0b" : "#ef4444",
+              flexShrink: 0,
+            }}
+          />
+          <span>{status === "connecting" ? "재연결 중..." : "연결이 끊어졌습니다. 자동으로 재연결합니다."}</span>
+        </div>
+      )}
 
       {autoTriggerBanner && (
         <div
@@ -815,6 +882,10 @@ export default function AiAssistantPane() {
                       >
                         {isConfirmingPlace && isSelected ? "확정 중..." : "이 장소로 확정"}
                       </button>
+                    ) : !isPlaceConfirmed && !confirmedMeetingId ? (
+                      <span style={{ fontSize: 12, color: "#94a3b8", fontStyle: "italic" }}>
+                        일정을 먼저 확정하면 장소를 선택할 수 있어요
+                      </span>
                     ) : null}
                   </div>
                 );
@@ -973,6 +1044,24 @@ export default function AiAssistantPane() {
           );
         })}
 
+        {aiTimeoutMessage && !isAiLoading && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 14px",
+              background: "#fef3c7",
+              borderRadius: 12,
+              fontSize: 13,
+              color: "#92400e",
+              fontWeight: 500,
+            }}
+          >
+            {aiTimeoutMessage}
+          </div>
+        )}
+
         {isAiLoading && messages.length > 0 && (
           <div
             style={{
@@ -1050,6 +1139,11 @@ export default function AiAssistantPane() {
                 }}
               />
             </div>
+            {aiTimeoutMessage && (
+              <span style={{ fontSize: 12, color: "#92400e", marginLeft: 40 }}>
+                {aiTimeoutMessage}
+              </span>
+            )}
           </div>
         )}
 
@@ -1125,14 +1219,19 @@ export default function AiAssistantPane() {
         <input
           type="text"
           value={input}
+          maxLength={2000}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => event.key === "Enter" && !event.shiftKey && !isAiLoading && handleSend()}
-          disabled={isAiLoading}
-          placeholder={isAiLoading ? "AI가 응답 중..." : "AI에게 질문하세요"}
+          disabled={isAiLoading || status !== "open"}
+          placeholder={
+            status !== "open"
+              ? status === "connecting" ? "연결 중..." : "연결이 끊어졌습니다"
+              : isAiLoading ? "AI가 응답 중..." : "AI에게 질문하세요"
+          }
           style={{
             flex: 1,
             padding: "10px 16px",
-            background: isAiLoading ? "#f1f5f9" : "#ffffff",
+            background: isAiLoading || status !== "open" ? "#f1f5f9" : "#ffffff",
             borderRadius: 60,
             border: "1.5px solid #a2f4fd",
             outline: "none",
@@ -1140,8 +1239,8 @@ export default function AiAssistantPane() {
             color: "#1e293b",
             fontFamily: "Pretendard Variable, Pretendard, sans-serif",
             boxShadow: "0 2px 3.5px rgba(0,0,0,0.15)",
-            opacity: isAiLoading ? 0.7 : 1,
-            cursor: isAiLoading ? "not-allowed" : "text",
+            opacity: isAiLoading || status !== "open" ? 0.7 : 1,
+            cursor: isAiLoading || status !== "open" ? "not-allowed" : "text",
           }}
         />
         <button

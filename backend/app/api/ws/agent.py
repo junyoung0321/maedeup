@@ -369,6 +369,10 @@ async def agent_ws(
             content = payload.get("content", "")
             sender = payload.get("sender")
 
+            # 메시지 길이 제한 (2000자)
+            if len(content) > 2000:
+                content = content[:2000]
+
             try:
                 room_pk = int(room_id)
             except (TypeError, ValueError):
@@ -434,6 +438,23 @@ async def agent_ws(
                 # (사용자가 명시적으로 AI에게 말한 것이므로 debounce 없음)
                 if not content.strip():
                     continue
+
+                # "취소", "다시", "리셋" 키워드 감지 → 슬롯 컨텍스트 초기화
+                _reset_keywords = ("취소", "다시 해", "다시해", "처음부터", "리셋", "초기화")
+                if any(kw in content for kw in _reset_keywords):
+                    slot_context.update({
+                        "slot_filling_turns": 0,
+                        "date_hint": None,
+                        "place_hint": None,
+                        "place_coord": None,
+                        "confirmed_date": None,
+                        "confirmed_time": None,
+                        "confirmed_place": None,
+                        "headcount": None,
+                        "meeting_type": None,
+                        "message_count_since_last_trigger": 0,
+                        "default_place_hint": slot_context.get("default_place_hint") or "서울 강남",
+                    })
 
                 async with AsyncSessionLocal() as session:
                     recent_messages_result = await session.execute(

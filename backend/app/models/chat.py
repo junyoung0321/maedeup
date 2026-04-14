@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -21,7 +21,7 @@ class ChatMessage(SQLModel, table=True):
     sender: Optional[str] = Field(default=None, max_length=64)
     session_id: Optional[str] = Field(default=None, index=True, max_length=64)
     room_id: Optional[int] = Field(default=None, foreign_key="rooms.id", index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class ChatMessageCreate(SQLModel):

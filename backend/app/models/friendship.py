@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -27,5 +27,5 @@ class Friendship(SQLModel, table=True):
     requester_id: int = Field(foreign_key="users.id", index=True)
     addressee_id: int = Field(foreign_key="users.id", index=True)
     status: str = Field(sa_column=sa.Column(sa.String(32), nullable=False, server_default="pending"))
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 from typing import Optional
@@ -120,7 +120,7 @@ async def get_upcoming_meeting(
     if not room_ids:
         return None
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     result = await session.execute(
         select(MeetingSchedule)
         .where(
@@ -218,7 +218,7 @@ async def vote_meeting(
     votes = dict(meeting.votes or {})
     votes[str(current_user.sub)] = body.option_index
     meeting.votes = votes
-    meeting.updated_at = datetime.utcnow()
+    meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.add(meeting)
     await session.commit()
     await session.refresh(meeting)
@@ -359,8 +359,7 @@ async def confirm_place(
     meeting.location_address = body.address
     meeting.kakao_place_id = body.place_id
     meeting.kakao_place_url = body.url
-    from datetime import datetime as _dt
-    meeting.updated_at = _dt.utcnow()
+    meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.add(meeting)
 
     # Calendar registration BEFORE commit so we can rollback on failure

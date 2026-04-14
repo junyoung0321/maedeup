@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -50,7 +50,7 @@ async def save_meeting_record(meeting_id: int, db: AsyncSession) -> None:
         "location_address": meeting.location_address,
         "kakao_place_url": meeting.kakao_place_url,
         "participants": participant_names,
-        "recorded_at": datetime.utcnow().isoformat(),
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
     }
 
     content_json = json.dumps(record, ensure_ascii=False)

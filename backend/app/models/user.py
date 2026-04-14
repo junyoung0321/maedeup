@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import JSON, Column, Text
@@ -18,4 +18,4 @@ class User(SQLModel, table=True):
     google_access_token: Optional[str] = Field(default=None, sa_column=Column(Text(), nullable=True))
     google_refresh_token: Optional[str] = Field(default=None, sa_column=Column(Text(), nullable=True))
     calendar_consent: bool = Field(default=False, index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))

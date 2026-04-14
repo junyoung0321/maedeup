@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -27,7 +27,7 @@ class Vote(SQLModel, table=True):
     status: str = Field(sa_column=sa.Column(sa.String(32), nullable=False, server_default="open"))
     created_by: int = Field(foreign_key="users.id")
     ends_at: Optional[datetime] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class VoteOption(SQLModel, table=True):
@@ -46,4 +46,4 @@ class VoteResponse(SQLModel, table=True):
     vote_id: int = Field(foreign_key="votes.id", index=True)
     option_id: int = Field(foreign_key="vote_options.id", index=True)
     user_id: int = Field(foreign_key="users.id", index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))

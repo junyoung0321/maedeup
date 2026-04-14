@@ -121,3 +121,7 @@ export function useMeeting() {
   }
   return ctx;
 }
+
+export function useMeetingOptional() {
+  return useContext(MeetingContext);
+}

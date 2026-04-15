@@ -3,8 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
-import { apiFetchWithFallback } from "@/lib/api";
-import { mockMeetings } from "@/mocks/meetings";
+import { apiFetch } from "@/lib/api";
 import type { Room, MeetingItem } from "@/types";
 
 const CATEGORY_MAP: Record<string, { badge: string; badgeColor: string }> = {
@@ -19,7 +18,7 @@ function mapRoom(room: Room): MeetingItem {
   return {
     id: String(room.id),
     name: room.name,
-    schedule: room.description ?? "일정 미정",
+    schedule: room.description ?? "일정 조율중",
     badge: cat?.badge ?? "진행중",
     badgeColor: cat?.badgeColor ?? "#4f46e5",
   };
@@ -32,10 +31,13 @@ export default function MeetingList() {
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    const fallback: MeetingItem[] = mockMeetings.map((m) => ({ id: m.id, name: m.name, schedule: m.schedule, badge: m.badge, badgeColor: m.badgeColor }));
-    apiFetchWithFallback<Room[]>("/api/v1/rooms/", [])
+    apiFetch<Room[]>("/api/v1/rooms/")
       .then((data) => {
-        setMeetings(data.length > 0 ? data.map(mapRoom) : fallback);
+        setMeetings(data.map(mapRoom));
+        setLoading(false);
+      })
+      .catch(() => {
+        setError(true);
         setLoading(false);
       });
   }, []);

@@ -59,6 +59,9 @@ DELETE FROM intent_examples;
 # 후 POST /api/v1/intents/seed
 ```
 
+## gstack
+Use /browse from gstack for all web browsing. Never use mcp__claude-in-chrome__* tools.
+
 ## 코딩 규칙
 - API 키/시크릿 전체 출력 절대 금지 (앞 4~5자만 마스킹)
 - 프론트엔드 변경은 Docker 리빌드 필요
@@ -67,3 +70,23 @@ DELETE FROM intent_examples;
 - 카카오 OPEN_MAP_AND_LOCAL 서비스 활성화 필요
 - Gemini rate limit 시 패턴 fallback으로 기본 동작 보장
 - 커밋/푸시는 유저 확인 후에만
+
+## Skill routing
+
+When the user's request matches an available skill, ALWAYS invoke it using the Skill
+tool as your FIRST action. Do NOT answer directly, do NOT use other tools first.
+The skill has specialized workflows that produce better results than ad-hoc answers.
+
+Key routing rules:
+- Product ideas, "is this worth building", brainstorming → invoke office-hours
+- Bugs, errors, "why is this broken", 500 errors → invoke investigate
+- Ship, deploy, push, create PR → invoke ship
+- QA, test the site, find bugs → invoke qa
+- Code review, check my diff → invoke review
+- Update docs after shipping → invoke document-release
+- Weekly retro → invoke retro
+- Design system, brand → invoke design-consultation
+- Visual audit, design polish → invoke design-review
+- Architecture review → invoke plan-eng-review
+- Save progress, checkpoint, resume → invoke checkpoint
+- Code quality, health check → invoke health

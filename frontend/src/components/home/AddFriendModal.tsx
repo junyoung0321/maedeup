@@ -1,24 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { UserPlus, Search, X, Check } from "lucide-react";
+import { apiFetch } from "@/lib/api";
+import type { FriendInfo } from "@/types";
 
-type FriendStatus = "add" | "already" | "requested";
+type RequestState = "idle" | "pending" | "sent" | "already" | "error";
 
-interface FriendResult {
-  name: string;
-  email: string;
+interface SearchResult extends FriendInfo {
+  state: RequestState;
   color: string;
-  status: FriendStatus;
 }
 
-const mockResults: FriendResult[] = [
-  { name: "한소희", email: "sohee.han@email.com", color: "#818cf8", status: "add" },
-  { name: "박지민", email: "jimin.park@email.com", color: "#f472b6", status: "already" },
-  { name: "윤도현", email: "dohyun.yoon@email.com", color: "#34d399", status: "add" },
-  { name: "이승우", email: "seungwoo.lee@email.com", color: "#fb923c", status: "requested" },
-  { name: "최유나", email: "yuna.choi@email.com", color: "#fbbf24", status: "add" },
+const AVATAR_PALETTE = [
+  "#c7d2fe", "#93c5fd", "#86efac", "#fca5a5",
+  "#fde68a", "#fbcfe8", "#a5f3fc", "#d9f99d",
 ];
+
+function colorFor(id: number): string {
+  return AVATAR_PALETTE[id % AVATAR_PALETTE.length];
+}
 
 type Tab = "search" | "recommend" | "code";
 
@@ -30,6 +31,48 @@ interface Props {
 export default function AddFriendModal({ open, onClose }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>("search");
   const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const trimmed = query.trim();
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    if (trimmed.length === 0) {
+      setResults([]);
+      setSearchError(null);
+      setSearching(false);
+      return;
+    }
+
+    setSearching(true);
+    setSearchError(null);
+    debounceRef.current = setTimeout(() => {
+      apiFetch<FriendInfo[]>(`/api/v1/users/search?q=${encodeURIComponent(trimmed)}`)
+        .then((data) => {
+          setResults(
+            data.map((u) => ({
+              ...u,
+              state: "idle" as RequestState,
+              color: colorFor(u.id),
+            }))
+          );
+          setSearching(false);
+        })
+        .catch(() => {
+          setSearchError("검색 중 오류가 발생했어요");
+          setResults([]);
+          setSearching(false);
+        });
+    }, 300);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [query, open]);
 
   if (!open) return null;
 
@@ -39,8 +82,33 @@ export default function AddFriendModal({ open, onClose }: Props) {
     { key: "code", label: "초대 코드" },
   ];
 
+  const sendRequest = async (addressee: SearchResult) => {
+    setResults((prev) =>
+      prev.map((r) => (r.id === addressee.id ? { ...r, state: "pending" } : r))
+    );
+    try {
+      await apiFetch<{ id: number; status: string }>("/api/v1/users/friends", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ addressee_id: addressee.id }),
+      });
+      setResults((prev) =>
+        prev.map((r) => (r.id === addressee.id ? { ...r, state: "sent" } : r))
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      const already = msg.includes("409") || msg.includes("이미");
+      setResults((prev) =>
+        prev.map((r) =>
+          r.id === addressee.id
+            ? { ...r, state: already ? "already" : "error" }
+            : r
+        )
+      );
+    }
+  };
+
   return (
-    /* Backdrop */
     <div
       onClick={onClose}
       style={{
@@ -53,7 +121,6 @@ export default function AddFriendModal({ open, onClose }: Props) {
         justifyContent: "center",
       }}
     >
-      {/* Modal */}
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
@@ -67,7 +134,6 @@ export default function AddFriendModal({ open, onClose }: Props) {
           fontFamily: "Pretendard Variable, Pretendard, sans-serif",
         }}
       >
-        {/* Header */}
         <div
           style={{
             display: "flex",
@@ -100,7 +166,6 @@ export default function AddFriendModal({ open, onClose }: Props) {
           </button>
         </div>
 
-        {/* Search bar */}
         <div style={{ padding: "0 32px" }}>
           <div
             style={{
@@ -119,7 +184,7 @@ export default function AddFriendModal({ open, onClose }: Props) {
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="이름, 이메일 또는 코드로 검색"
+              placeholder="이름 또는 이메일로 검색"
               style={{
                 flex: 1,
                 border: "none",
@@ -131,25 +196,9 @@ export default function AddFriendModal({ open, onClose }: Props) {
                 background: "transparent",
               }}
             />
-            <button
-              style={{
-                width: 36,
-                height: 36,
-                borderRadius: 10,
-                border: "none",
-                background: "#4f46e5",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-              }}
-            >
-              <Search style={{ width: 16, height: 16, color: "#ffffff" }} />
-            </button>
           </div>
         </div>
 
-        {/* Tabs */}
         <div
           style={{
             display: "flex",
@@ -183,117 +232,232 @@ export default function AddFriendModal({ open, onClose }: Props) {
           })}
         </div>
 
-        {/* Results list */}
         <div
           style={{
             display: "flex",
             flexDirection: "column",
             padding: "8px 32px",
+            minHeight: 200,
             maxHeight: 400,
             overflowY: "auto",
           }}
         >
-          {mockResults.map((friend) => (
+          {activeTab !== "search" ? (
             <div
-              key={friend.email}
+              style={{
+                flex: 1,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "40px 0",
+                color: "#94a3b8",
+                fontSize: 14,
+              }}
+            >
+              준비 중인 기능이에요
+            </div>
+          ) : query.trim().length === 0 ? (
+            <div
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 14,
-                padding: "16px 6px",
-                borderBottom: "1px solid #f1f5f9",
+                justifyContent: "center",
+                padding: "40px 0",
+                color: "#94a3b8",
+                fontSize: 14,
               }}
             >
-              {/* Avatar */}
-              <div
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: "50%",
-                  background: friend.color,
-                  flexShrink: 0,
-                }}
-              />
-              {/* Info */}
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontSize: 15, fontWeight: 600, color: "#111827" }}>
-                  {friend.name}
-                </span>
-                <span style={{ fontSize: 12, fontWeight: 400, color: "#94a3b8" }}>
-                  {friend.email}
-                </span>
-              </div>
-              {/* Action button */}
-              {friend.status === "add" && (
-                <button
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 4,
-                    width: 90,
-                    padding: "8px 0",
-                    borderRadius: 10,
-                    border: "none",
-                    background: "#4f46e5",
-                    color: "#ffffff",
-                    fontSize: 13,
-                    fontWeight: 500,
-                    cursor: "pointer",
-                    fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                  }}
-                >
-                  <UserPlus style={{ width: 14, height: 14, color: "#ffffff" }} />
-                  추가
-                </button>
-              )}
-              {friend.status === "already" && (
-                <span
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    width: 90,
-                    padding: "8px 0",
-                    borderRadius: 10,
-                    border: "1px solid #e2e8f0",
-                    background: "#ffffff",
-                    color: "#94a3b8",
-                    fontSize: 13,
-                    fontWeight: 500,
-                  }}
-                >
-                  이미 친구
-                </span>
-              )}
-              {friend.status === "requested" && (
-                <button
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 4,
-                    width: 90,
-                    padding: "8px 0",
-                    borderRadius: 10,
-                    border: "none",
-                    background: "#22c55e",
-                    color: "#ffffff",
-                    fontSize: 13,
-                    fontWeight: 500,
-                    cursor: "pointer",
-                    fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                  }}
-                >
-                  <Check style={{ width: 14, height: 14, color: "#ffffff" }} />
-                  요청됨
-                </button>
-              )}
+              이름 또는 이메일을 입력해주세요
             </div>
-          ))}
+          ) : searching ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "40px 0",
+                color: "#94a3b8",
+                fontSize: 14,
+              }}
+            >
+              검색 중...
+            </div>
+          ) : searchError ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "40px 0",
+                color: "#ef4444",
+                fontSize: 14,
+              }}
+            >
+              {searchError}
+            </div>
+          ) : results.length === 0 ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "40px 0",
+                color: "#94a3b8",
+                fontSize: 14,
+              }}
+            >
+              일치하는 유저가 없어요
+            </div>
+          ) : (
+            results.map((friend) => (
+              <div
+                key={friend.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 14,
+                  padding: "16px 6px",
+                  borderBottom: "1px solid #f1f5f9",
+                }}
+              >
+                <div
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: "50%",
+                    background: friend.color,
+                    flexShrink: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#334155",
+                    fontSize: 15,
+                    fontWeight: 600,
+                  }}
+                >
+                  {friend.name.charAt(0)}
+                </div>
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+                  <span style={{ fontSize: 15, fontWeight: 600, color: "#111827" }}>
+                    {friend.name}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 400,
+                      color: "#94a3b8",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {friend.email}
+                  </span>
+                </div>
+
+                {friend.state === "idle" && (
+                  <button
+                    onClick={() => sendRequest(friend)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 4,
+                      width: 90,
+                      padding: "8px 0",
+                      borderRadius: 10,
+                      border: "none",
+                      background: "#4f46e5",
+                      color: "#ffffff",
+                      fontSize: 13,
+                      fontWeight: 500,
+                      cursor: "pointer",
+                      fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                    }}
+                  >
+                    <UserPlus style={{ width: 14, height: 14 }} />
+                    추가
+                  </button>
+                )}
+                {friend.state === "pending" && (
+                  <span
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 90,
+                      padding: "8px 0",
+                      borderRadius: 10,
+                      background: "#e0e7ff",
+                      color: "#4f46e5",
+                      fontSize: 13,
+                      fontWeight: 500,
+                    }}
+                  >
+                    전송 중...
+                  </span>
+                )}
+                {friend.state === "sent" && (
+                  <span
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 4,
+                      width: 90,
+                      padding: "8px 0",
+                      borderRadius: 10,
+                      background: "#22c55e",
+                      color: "#ffffff",
+                      fontSize: 13,
+                      fontWeight: 500,
+                    }}
+                  >
+                    <Check style={{ width: 14, height: 14 }} />
+                    요청됨
+                  </span>
+                )}
+                {friend.state === "already" && (
+                  <span
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 90,
+                      padding: "8px 0",
+                      borderRadius: 10,
+                      border: "1px solid #e2e8f0",
+                      color: "#94a3b8",
+                      fontSize: 13,
+                      fontWeight: 500,
+                    }}
+                  >
+                    이미 친구
+                  </span>
+                )}
+                {friend.state === "error" && (
+                  <button
+                    onClick={() => sendRequest(friend)}
+                    style={{
+                      width: 90,
+                      padding: "8px 0",
+                      borderRadius: 10,
+                      border: "1px solid #ef4444",
+                      background: "#ffffff",
+                      color: "#ef4444",
+                      fontSize: 13,
+                      fontWeight: 500,
+                      cursor: "pointer",
+                    }}
+                  >
+                    재시도
+                  </button>
+                )}
+              </div>
+            ))
+          )}
         </div>
 
-        {/* Footer */}
         <div
           style={{
             display: "flex",

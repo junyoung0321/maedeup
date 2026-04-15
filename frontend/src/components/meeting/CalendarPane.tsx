@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ChevronLeft, ChevronRight, Check, Vote } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useMeetingOptional } from "@/contexts/MeetingContext";
+import MiniTimeBar from "@/components/meeting/MiniTimeBar";
 
 /* ── Types ─────────────────────────────────────────────── */
 interface DayAvail {
@@ -14,31 +15,11 @@ interface DayAvail {
   unconnected: string[];
 }
 
-interface TimeSlot {
-  label: string;
-  count: string;
-  labelColor: string;
-  countColor: string;
-  avatarColors: string[];
-  selected?: boolean;
-}
-
-interface ApiFreeSlot {
-  label: string;
-  available_count: number;
-  total_count: number;
-  is_recommended?: boolean;
-}
-
 interface CalendarApiResponse {
-  dates: Record<string, DayAvail>; // key: "YYYY-MM-DD"
-  free_slots: ApiFreeSlot[];
+  dates: Record<string, DayAvail>;
 }
 
 /* ── Helpers ────────────────────────────────────────────── */
-const AVATAR_PALETTE = [
-  "#c7d2fe", "#93c5fd", "#86efac", "#fca5a5", "#fde68a", "#fbcfe8", "#a5f3fc",
-];
 
 function availColor(count: number, total: number): string {
   if (count === total) return "#22c55e";
@@ -46,31 +27,21 @@ function availColor(count: number, total: number): string {
   return "#ef4444";
 }
 
-function mapFreeSlot(slot: ApiFreeSlot): TimeSlot {
-  const isFull = slot.available_count === slot.total_count;
-  return {
-    label: slot.label,
-    count: `${slot.available_count}/${slot.total_count}`,
-    labelColor: isFull ? "#166534" : "#64748b",
-    countColor: isFull ? "#22c55e" : "#94a3b8",
-    avatarColors: AVATAR_PALETTE.slice(0, slot.available_count),
-    selected: slot.is_recommended,
-  };
-}
-
 /* ── Component ──────────────────────────────────────────── */
 export default function CalendarPane() {
   const meeting = useMeetingOptional();
   const roomId = meeting?.roomId || "room-1";
   const calendarRefreshTrigger = meeting?.calendarRefreshTrigger ?? 0;
-  const [selected, setSelected] = useState<Set<number>>(new Set([0, 1]));
+  const aiHighlightedDates = meeting?.highlightedDates ?? [];
+  const setInfoPanePhase = meeting?.setInfoPanePhase;
+  const confirmDate = meeting?.confirmDate;
+  const infoPanePhase = meeting?.infoPanePhase;
+  const candidateSlots = meeting?.candidateSlots ?? [];
   const [availabilityData, setAvailabilityData] = useState<Record<number, DayAvail>>({});
-  const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [year, setYear] = useState(new Date().getFullYear());
   const [month, setMonth] = useState(new Date().getMonth() + 1);
-  const [dateRangeLabel, setDateRangeLabel] = useState<string>("");
   const [clickedDay, setClickedDay] = useState<number | null>(null);
 
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -82,6 +53,16 @@ export default function CalendarPane() {
     Object.entries(availabilityData)
       .filter(([, avail]) => avail.count > 0)
       .map(([day]) => Number(day))
+  );
+
+  // AI candidate slot dates for this month (blue border overlay)
+  const aiHighlightedDaySet = new Set(
+    aiHighlightedDates
+      .filter((d) => {
+        const [y, m] = d.split("-").map(Number);
+        return y === year && m === month;
+      })
+      .map((d) => Number(d.split("-")[2])),
   );
 
   const goPrev = () => {
@@ -100,7 +81,6 @@ export default function CalendarPane() {
     setLoading(true);
     setError(false);
     setAvailabilityData({});
-    setTimeSlots([]);
 
     apiFetch<CalendarApiResponse>(
       `/api/v1/calendar/free-slots?room_id=${roomId}&year=${year}&month=${month}`,
@@ -119,46 +99,22 @@ export default function CalendarPane() {
           };
         }
         setAvailabilityData(dayMap);
-        setTimeSlots(data.free_slots.map(mapFreeSlot));
-
-        const dateKeys = Object.keys(data.dates).sort();
-        if (dateKeys.length >= 2) {
-          const d1 = parseInt(dateKeys[0].split("-")[2], 10);
-          const d2 = parseInt(dateKeys[dateKeys.length - 1].split("-")[2], 10);
-          setDateRangeLabel(`${month}월 ${d1}일 ~ ${d2}일 기준`);
-        } else if (dateKeys.length === 1) {
-          setDateRangeLabel(`${month}월 ${parseInt(dateKeys[0].split("-")[2], 10)}일 기준`);
-        } else {
-          setDateRangeLabel(`${month}월 기준`);
-        }
-
         setLoading(false);
       })
       .catch((err) => {
         if (cancelled) return;
         console.error("캘린더 데이터 로드 실패:", err);
         setError(true);
-        setDateRangeLabel(`${month}월 기준`);
         setLoading(false);
       });
 
     return () => { cancelled = true; };
   }, [calendarRefreshTrigger, month, roomId, year]);
 
-  const toggleSlot = (idx: number) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx);
-      else next.add(idx);
-      return next;
-    });
-  };
-
   return (
     <div
       style={{
-        width: 414,
-        minHeight: 733,
+        width: "100%",
         borderRadius: 20,
         border: "1px solid #e2e8f0",
         boxShadow: "0 4px 3.5px rgba(0,0,0,0.25)",
@@ -283,6 +239,7 @@ export default function CalendarPane() {
           ))}
           {days.map((day) => {
             const isHighlighted = highlightedDays.has(day);
+            const isAiHighlighted = aiHighlightedDaySet.has(day);
             const avail = availabilityData[day];
             const todayDate = new Date();
             const isToday =
@@ -290,10 +247,38 @@ export default function CalendarPane() {
               month === todayDate.getMonth() + 1 &&
               day === todayDate.getDate();
             const isClicked = day === clickedDay;
+            const isPast = new Date(year, month - 1, day) < new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate());
+
+            const handleDayClick = () => {
+              if (isPast) return; // 과거 날짜 클릭 무시
+              const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+              if (isClicked) {
+                setClickedDay(null);
+                if (setInfoPanePhase) setInfoPanePhase("idle");
+              } else {
+                setClickedDay(day);
+                if (setInfoPanePhase) setInfoPanePhase("dateSelected");
+              }
+            };
+
+            // AI highlight + availability cross-check
+            const aiButBusy = isAiHighlighted && avail && avail.count === 0;
+            const aiAndAvailable = isAiHighlighted && avail && avail.count > 0;
+
+            // Border priority: AI available (blue) > AI busy (red dashed) > today/clicked (indigo)
+            let borderStyle: string | undefined;
+            if (aiButBusy) {
+              borderStyle = "2px dashed #ef4444";
+            } else if (aiAndAvailable || isAiHighlighted) {
+              borderStyle = "2px solid #3B82F6";
+            } else if (isToday || isClicked) {
+              borderStyle = "2px solid #4f46e5";
+            }
+
             return (
               <div
                 key={day}
-                onClick={() => setClickedDay(isClicked ? null : day)}
+                onClick={handleDayClick}
                 style={{
                   display: "flex",
                   flexDirection: "column",
@@ -301,17 +286,18 @@ export default function CalendarPane() {
                   justifyContent: "center",
                   height: 52,
                   width: 50,
-                  borderRadius: isHighlighted || isToday || isClicked ? 8 : 0,
-                  cursor: "pointer",
-                  background: isHighlighted ? "#e0e7ff" : "transparent",
-                  border: isToday || isClicked ? "2px solid #4f46e5" : undefined,
+                  borderRadius: isHighlighted || isAiHighlighted || isToday || isClicked ? 8 : 0,
+                  cursor: isPast ? "default" : "pointer",
+                  background: isPast ? "transparent" : isHighlighted ? "#e0e7ff" : "transparent",
+                  border: isPast ? undefined : borderStyle,
+                  opacity: isPast ? 0.4 : 1,
                 }}
               >
                 <span
                   style={{
                     fontSize: 13,
                     fontWeight: "normal",
-                    color: "#334155",
+                    color: isPast ? "#cbd5e1" : "#334155",
                     lineHeight: 1.4,
                   }}
                 >
@@ -409,33 +395,70 @@ export default function CalendarPane() {
                 멤버 정보 없음
               </span>
             )}
+            {/* 가용 인원 요약 */}
+            {availabilityData[clickedDay] && (
+              <div style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: "#475569" }}>
+                가능 인원: {availabilityData[clickedDay]!.available?.length ?? 0}/{availabilityData[clickedDay]!.total ?? 0}명
+              </div>
+            )}
+            {/* 시간대별 가용성 미니바 (모든 날짜) */}
+            {(() => {
+              const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(clickedDay).padStart(2, "0")}`;
+              const isAiDate = aiHighlightedDates.includes(dateStr);
+              const slotsForDay = candidateSlots.filter((s) => s.start_at.startsWith(dateStr));
+              return (
+                <>
+                  {isAiDate && (
+                    <div style={{
+                      display: "inline-block",
+                      padding: "2px 8px",
+                      borderRadius: 6,
+                      background: "#dbeafe",
+                      color: "#1d4ed8",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      marginTop: 6,
+                    }}>
+                      AI 추천 날짜
+                    </div>
+                  )}
+                  <MiniTimeBar
+                    date={dateStr}
+                    roomId={roomId}
+                    aiSlots={slotsForDay.length > 0 ? slotsForDay.map((s) => ({ start_at: s.start_at, end_at: s.end_at })) : undefined}
+                  />
+                </>
+              );
+            })()}
+            {/* 날짜 확정 버튼 */}
+            {infoPanePhase === "dateSelected" && confirmDate && (
+              <button
+                onClick={() => {
+                  const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(clickedDay).padStart(2, "0")}`;
+                  confirmDate(dateStr);
+                }}
+                style={{
+                  marginTop: 8,
+                  width: "100%",
+                  padding: "10px 14px",
+                  borderRadius: 10,
+                  border: "none",
+                  background: "#4f46e5",
+                  color: "#ffffff",
+                  cursor: "pointer",
+                  fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                  fontSize: 13,
+                  fontWeight: 700,
+                }}
+              >
+                이 날짜로 확정
+              </button>
+            )}
           </div>
         )}
 
-        <span
-          style={{
-            fontSize: 15,
-            fontWeight: "normal",
-            color: "#1e293b",
-            fontFamily: "Inter, sans-serif",
-          }}
-        >
-          모두가 가능한 시간대
-        </span>
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: "normal",
-            color: "#94a3b8",
-            marginTop: 2,
-            marginBottom: 8,
-          }}
-        >
-          {dateRangeLabel}
-        </span>
-
-        {/* Loading / Error / Time slots */}
-        {loading ? (
+        {/* Loading / Error state for calendar data */}
+        {loading && (
           <div
             style={{
               flex: 1,
@@ -448,7 +471,8 @@ export default function CalendarPane() {
           >
             불러오는 중...
           </div>
-        ) : error ? (
+        )}
+        {error && !loading && (
           <div
             style={{
               flex: 1,
@@ -461,142 +485,7 @@ export default function CalendarPane() {
           >
             캘린더 데이터를 불러올 수 없습니다
           </div>
-        ) : (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 4,
-              overflowY: "auto",
-              maxHeight: 180,
-            }}
-          >
-            {timeSlots.map((slot, idx) => {
-              const isChecked = selected.has(idx);
-              const isActive = slot.selected;
-              return (
-                <div
-                  key={idx}
-                  onClick={() => toggleSlot(idx)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "0 12px",
-                    height: 38,
-                    borderRadius: 12,
-                    background: isActive ? "#f0fdf4" : "#f8fafc",
-                    border: isActive
-                      ? "1.5px solid #22c55e"
-                      : "1px solid #cbd5e1",
-                    cursor: "pointer",
-                    boxShadow: isActive
-                      ? "0 1px 3.5px rgba(79, 70, 229, 0.13)"
-                      : "none",
-                  }}
-                >
-                  {/* Checkbox */}
-                  <div
-                    style={{
-                      width: 20,
-                      height: 20,
-                      borderRadius: 4,
-                      background: isChecked ? "#4f46e5" : "#ffffff",
-                      border: isChecked ? "none" : "1.5px solid #cbd5e1",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    {isChecked && (
-                      <Check style={{ width: 14, height: 14, color: "#ffffff" }} />
-                    )}
-                  </div>
-                  {/* Label */}
-                  <span
-                    style={{
-                      fontSize: 12,
-                      fontWeight: "normal",
-                      color: slot.labelColor,
-                      fontFamily: "Inter, sans-serif",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {slot.label}
-                  </span>
-                  <div style={{ flex: 1 }} />
-                  {/* Count */}
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontWeight: "normal",
-                      color: slot.countColor,
-                      fontFamily: "Inter, sans-serif",
-                    }}
-                  >
-                    {slot.count}
-                  </span>
-                  {/* Avatar circles */}
-                  <div style={{ display: "flex", marginLeft: 4 }}>
-                    {slot.avatarColors.map((color, i) => (
-                      <div
-                        key={i}
-                        style={{
-                          width: 18,
-                          height: 18,
-                          borderRadius: "50%",
-                          background: color,
-                          marginLeft: i > 0 ? -6 : 0,
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
         )}
-
-        {/* Selection count */}
-        {!loading && !error && (
-          <div style={{ marginTop: 8 }}>
-            <span
-              style={{
-                fontSize: 12,
-                fontWeight: "normal",
-                color: "#4f46e5",
-              }}
-            >
-              {selected.size}개 선택됨
-            </span>
-          </div>
-        )}
-
-        {/* Submit button */}
-        <div style={{ marginTop: "auto" }}>
-          <button
-            style={{
-              width: "100%",
-              height: 40,
-              background: "#4f46e5",
-              color: "#ffffff",
-              fontSize: 14,
-              fontWeight: "normal",
-              borderRadius: 12,
-              border: "none",
-              cursor: "pointer",
-              fontFamily: "Inter, sans-serif",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-            }}
-          >
-            <Vote style={{ width: 18, height: 18, color: "#ffffff" }} />
-            투표 제출
-          </button>
-        </div>
       </div>
     </div>
   );

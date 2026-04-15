@@ -365,6 +365,93 @@ async def agent_ws(
             except json.JSONDecodeError:
                 continue
 
+            # ── slot_select 구조화 메시지 처리 (LLM 파이프라인 우회) ──
+            if payload.get("type") == "slot_select":
+                action = payload.get("action")
+                if action == "confirm_date":
+                    # 날짜 확정 → 슬롯 컨텍스트에 저장하고 확인 메시지 발행
+                    slot_context["confirmed_date"] = payload.get("date")
+                    ack_payload = {
+                        "type": "slot_select_ack",
+                        "action": "confirm_date",
+                        "date": payload.get("date"),
+                    }
+                    await _publish_agent_message(
+                        r, channel, json.dumps(ack_payload, ensure_ascii=False),
+                    )
+                elif action == "confirm_time":
+                    # 시간 확정 → 슬롯 컨텍스트 저장 후 장소 추천 파이프라인 실행
+                    slot_context["confirmed_time"] = payload.get("time")
+                    slot_context["confirmed_date"] = payload.get("date") or slot_context.get("confirmed_date")
+
+                    try:
+                        room_pk_val = int(room_id)
+                    except (TypeError, ValueError):
+                        room_pk_val = None
+
+                    synthetic_content = "일정이 확정되었습니다. 장소를 추천해주세요"
+                    async with AsyncSessionLocal() as session:
+                        synth_msg = ChatMessage(
+                            pane_type=PaneType.agent,
+                            role="user",
+                            content=synthetic_content,
+                            sender="system",
+                            room_id=room_pk_val,
+                        )
+                        session.add(synth_msg)
+                        await session.commit()
+                        await session.refresh(synth_msg)
+
+                    async with AsyncSessionLocal() as session:
+                        recent_messages_result = await session.execute(
+                            select(ChatMessage)
+                            .where(ChatMessage.room_id == room_pk_val)
+                            .where(ChatMessage.pane_type == PaneType.agent)
+                            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+                            .limit(20)
+                        )
+                        recent_messages = list(reversed(recent_messages_result.scalars().all()))
+
+                        result = await run_pipeline(
+                            room_id, recent_messages, session, slot_context=slot_context
+                        )
+
+                    # 슬롯 컨텍스트 업데이트
+                    for key in (
+                        "slot_filling_turns", "date_hint", "place_hint", "place_coord",
+                        "confirmed_date", "confirmed_time", "confirmed_place",
+                        "headcount", "meeting_type", "default_place_hint",
+                        "conversation_summary", "missing_slots",
+                    ):
+                        if result.get(key) is not None:
+                            slot_context[key] = result[key]
+
+                    for new_msg in result.get("new_assistant_messages", []):
+                        await _publish_agent_message(
+                            r, channel, json.dumps(new_msg, ensure_ascii=False),
+                        )
+
+                    place_recommendation_payload = result.get("place_recommendation_payload")
+                    if place_recommendation_payload:
+                        await _publish_agent_message(
+                            r, channel,
+                            json.dumps(
+                                {"type": "place_recommendation", **place_recommendation_payload},
+                                ensure_ascii=False,
+                            ),
+                        )
+
+                    maedeup_card_payload = result.get("maedeup_card_payload")
+                    if maedeup_card_payload:
+                        await _publish_agent_message(
+                            r, channel,
+                            json.dumps(
+                                {"type": "maedeup_card", **maedeup_card_payload},
+                                ensure_ascii=False,
+                            ),
+                        )
+                continue
+
             role = payload.get("role", "user")
             content = payload.get("content", "")
             sender = payload.get("sender")

@@ -4,8 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { UserPlus, Send } from "lucide-react";
 import AddFriendModal from "./AddFriendModal";
-import { apiFetchWithFallback } from "@/lib/api";
-import { mockFriends } from "@/mocks/friends";
+import { apiFetch } from "@/lib/api";
 import type { FriendInfo } from "@/types";
 
 const AVATAR_PALETTE = [
@@ -21,9 +20,15 @@ export default function FriendList() {
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    const fallback: FriendInfo[] = mockFriends.map((f, i) => ({ id: i + 1, name: f.name, email: "", picture: null }));
-    apiFetchWithFallback<FriendInfo[]>("/api/v1/users/friends", fallback)
-      .then((data) => { setFriends(data); setLoading(false); });
+    apiFetch<FriendInfo[]>("/api/v1/users/friends")
+      .then((data) => {
+        setFriends(data);
+        setLoading(false);
+      })
+      .catch(() => {
+        setError(true);
+        setLoading(false);
+      });
   }, []);
 
   return (

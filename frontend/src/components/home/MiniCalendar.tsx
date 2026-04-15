@@ -1,13 +1,64 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { mockCalendarEvents } from "@/mocks/calendar";
+import { apiFetch } from "@/lib/api";
+
+interface EventRead {
+  id: number;
+  title: string;
+  starts_at: string;
+}
+
+interface CalendarEvent {
+  id: string;
+  title: string;
+  date: string;
+  color: string;
+}
+
+const EVENT_COLOR_PALETTE = [
+  "#4f46e5", "#059669", "#ea580c", "#7c3aed",
+  "#dc2626", "#0891b2", "#16a34a", "#db2777",
+];
+
+function colorForTitle(title: string): string {
+  let hash = 0;
+  for (let i = 0; i < title.length; i++) {
+    hash = (hash * 31 + title.charCodeAt(i)) >>> 0;
+  }
+  return EVENT_COLOR_PALETTE[hash % EVENT_COLOR_PALETTE.length];
+}
+
+function toLocalDateString(iso: string): string {
+  const d = new Date(iso);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
 export default function MiniCalendar() {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
+
+  useEffect(() => {
+    apiFetch<EventRead[]>("/api/v1/events/")
+      .then((data) => {
+        const mapped: CalendarEvent[] = data.map((ev) => ({
+          id: String(ev.id),
+          title: ev.title,
+          date: toLocalDateString(ev.starts_at),
+          color: colorForTitle(ev.title),
+        }));
+        setEvents(mapped);
+      })
+      .catch(() => {
+        setEvents([]);
+      });
+  }, []);
 
   const daysInMonth = new Date(year, month, 0).getDate();
   const firstDay = new Date(year, month - 1, 1).getDay();
@@ -37,15 +88,18 @@ export default function MiniCalendar() {
   const nextDaysCount = totalCells % 7 === 0 ? 0 : 7 - (totalCells % 7);
   const nextDays = Array.from({ length: nextDaysCount }, (_, i) => i + 1);
 
-  const eventsByDay: Record<number, { title: string; color: string }[]> = {};
-  mockCalendarEvents.forEach((ev) => {
-    const [evYear, evMonth, evDayStr] = ev.date.split("-");
-    if (Number(evYear) === year && Number(evMonth) === month) {
-      const d = parseInt(evDayStr, 10);
-      if (!eventsByDay[d]) eventsByDay[d] = [];
-      eventsByDay[d].push({ title: ev.title, color: ev.color });
-    }
-  });
+  const eventsByDay = useMemo(() => {
+    const map: Record<number, { title: string; color: string }[]> = {};
+    events.forEach((ev) => {
+      const [evYear, evMonth, evDayStr] = ev.date.split("-");
+      if (Number(evYear) === year && Number(evMonth) === month) {
+        const d = parseInt(evDayStr, 10);
+        if (!map[d]) map[d] = [];
+        map[d].push({ title: ev.title, color: ev.color });
+      }
+    });
+    return map;
+  }, [events, year, month]);
 
   const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
 

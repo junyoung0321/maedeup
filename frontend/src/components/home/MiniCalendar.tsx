@@ -10,24 +10,40 @@ interface EventRead {
   starts_at: string;
 }
 
+interface MyCalendarEvent {
+  id: string;
+  title: string;
+  starts_at: string;
+  ends_at: string;
+  all_day: boolean;
+}
+
+interface MyCalendarResponse {
+  events: MyCalendarEvent[];
+  connected: boolean;
+}
+
+type EventSource = "app" | "google";
+
 interface CalendarEvent {
   id: string;
   title: string;
   date: string;
   color: string;
+  source: EventSource;
 }
 
-const EVENT_COLOR_PALETTE = [
-  "#4f46e5", "#059669", "#ea580c", "#7c3aed",
-  "#dc2626", "#0891b2", "#16a34a", "#db2777",
+const APP_EVENT_PALETTE = [
+  "#4f46e5", "#7c3aed", "#0891b2", "#059669",
 ];
+const GOOGLE_EVENT_COLOR = "#94a3b8";
 
-function colorForTitle(title: string): string {
+function colorForAppEvent(title: string): string {
   let hash = 0;
   for (let i = 0; i < title.length; i++) {
     hash = (hash * 31 + title.charCodeAt(i)) >>> 0;
   }
-  return EVENT_COLOR_PALETTE[hash % EVENT_COLOR_PALETTE.length];
+  return APP_EVENT_PALETTE[hash % APP_EVENT_PALETTE.length];
 }
 
 function toLocalDateString(iso: string): string {
@@ -42,23 +58,49 @@ export default function MiniCalendar() {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [appEvents, setAppEvents] = useState<CalendarEvent[]>([]);
+  const [gcalEvents, setGcalEvents] = useState<CalendarEvent[]>([]);
+  const [gcalConnected, setGcalConnected] = useState<boolean | null>(null);
 
+  // App events: fetched once
   useEffect(() => {
     apiFetch<EventRead[]>("/api/v1/events/")
       .then((data) => {
-        const mapped: CalendarEvent[] = data.map((ev) => ({
-          id: String(ev.id),
-          title: ev.title,
-          date: toLocalDateString(ev.starts_at),
-          color: colorForTitle(ev.title),
-        }));
-        setEvents(mapped);
+        setAppEvents(
+          data.map((ev) => ({
+            id: `app-${ev.id}`,
+            title: ev.title,
+            date: toLocalDateString(ev.starts_at),
+            color: colorForAppEvent(ev.title),
+            source: "app",
+          })),
+        );
+      })
+      .catch(() => setAppEvents([]));
+  }, []);
+
+  // Google Calendar events: refetch on month change
+  useEffect(() => {
+    apiFetch<MyCalendarResponse>(`/api/v1/calendar/my-events?year=${year}&month=${month}`)
+      .then((res) => {
+        setGcalConnected(res.connected);
+        setGcalEvents(
+          res.events.map((ev) => ({
+            id: `gcal-${ev.id}`,
+            title: ev.title,
+            date: toLocalDateString(ev.starts_at),
+            color: GOOGLE_EVENT_COLOR,
+            source: "google",
+          })),
+        );
       })
       .catch(() => {
-        setEvents([]);
+        setGcalConnected(false);
+        setGcalEvents([]);
       });
-  }, []);
+  }, [year, month]);
+
+  const events = useMemo(() => [...appEvents, ...gcalEvents], [appEvents, gcalEvents]);
 
   const daysInMonth = new Date(year, month, 0).getDate();
   const firstDay = new Date(year, month - 1, 1).getDay();

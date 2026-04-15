@@ -59,6 +59,21 @@ class FreeSlotsResponse(BaseModel):
     dates: dict[str, DayInfo]
 
 
+class MyCalendarEvent(BaseModel):
+    """현재 유저의 Google Calendar 이벤트 (메인 화면 미니 캘린더용)."""
+
+    id: str
+    title: str
+    starts_at: datetime
+    ends_at: datetime
+    all_day: bool
+
+
+class MyCalendarResponse(BaseModel):
+    events: list[MyCalendarEvent]
+    connected: bool  # google_refresh_token 이 없으면 False
+
+
 # ── Google API 헬퍼 ────────────────────────────────────────
 
 
@@ -314,3 +329,95 @@ async def get_free_slots(
     free_slots = _compute_free_slots(busy_by_user, time_min, time_max)
 
     return FreeSlotsResponse(free_slots=free_slots, dates=dates)
+
+
+@router.get("/my-events", response_model=MyCalendarResponse)
+async def get_my_calendar_events(
+    response: Response,
+    year: int = Query(..., description="조회 연도"),
+    month: int = Query(..., ge=1, le=12, description="조회 월"),
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """현재 로그인한 유저의 Google Calendar 이벤트(제목 포함)를 월 단위로 반환.
+
+    메인 화면 MiniCalendar 용. /free-slots 와 달리 제목까지 포함합니다.
+    """
+    response.headers["Cache-Control"] = "no-store"
+
+    user = await session.get(User, int(current_user.sub))
+    if user is None:
+        raise HTTPException(status_code=404, detail="유저를 찾을 수 없습니다.")
+
+    if not user.calendar_consent or not user.google_refresh_token:
+        return MyCalendarResponse(events=[], connected=False)
+
+    start_kst = datetime(year, month, 1, tzinfo=KST)
+    if month == 12:
+        end_kst = datetime(year + 1, 1, 1, tzinfo=KST)
+    else:
+        end_kst = datetime(year, month + 1, 1, tzinfo=KST)
+    time_min = start_kst.astimezone(timezone.utc)
+    time_max = end_kst.astimezone(timezone.utc)
+
+    try:
+        access_token = await get_google_access_token(user, session)
+    except GoogleCalendarAuthError:
+        return MyCalendarResponse(events=[], connected=False)
+
+    params = {
+        "timeMin": time_min.isoformat(),
+        "timeMax": time_max.isoformat(),
+        "singleEvents": "true",
+        "orderBy": "startTime",
+        "fields": "items(id,summary,start,end)",
+        "maxResults": "250",
+    }
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(EVENTS_URL, params=params, headers=headers)
+        if resp.status_code == 401:
+            try:
+                refreshed = await get_google_access_token(user, session, force_refresh=True)
+            except GoogleCalendarAuthError:
+                return MyCalendarResponse(events=[], connected=False)
+            headers = {"Authorization": f"Bearer {refreshed}"}
+            resp = await client.get(EVENTS_URL, params=params, headers=headers)
+        if resp.status_code != 200:
+            logger.warning("[CALENDAR] my-events Google API failed status=%s", resp.status_code)
+            return MyCalendarResponse(events=[], connected=True)
+
+    items = resp.json().get("items", [])
+    out: list[MyCalendarEvent] = []
+    for item in items:
+        start_raw = item.get("start", {})
+        end_raw = item.get("end", {})
+        if "dateTime" in start_raw:
+            try:
+                start = datetime.fromisoformat(start_raw["dateTime"].replace("Z", "+00:00"))
+                end = datetime.fromisoformat(end_raw["dateTime"].replace("Z", "+00:00"))
+                all_day = False
+            except ValueError:
+                continue
+        elif "date" in start_raw:
+            try:
+                start = datetime.fromisoformat(start_raw["date"]).replace(tzinfo=KST)
+                end = datetime.fromisoformat(end_raw["date"]).replace(tzinfo=KST)
+                all_day = True
+            except ValueError:
+                continue
+        else:
+            continue
+
+        out.append(
+            MyCalendarEvent(
+                id=str(item.get("id", "")),
+                title=item.get("summary") or "(제목 없음)",
+                starts_at=start,
+                ends_at=end,
+                all_day=all_day,
+            )
+        )
+
+    return MyCalendarResponse(events=out, connected=True)

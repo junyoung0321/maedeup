@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { UserPlus, Send, Check, X } from "lucide-react";
+import { UserPlus, Send, Check, X, Trash2 } from "lucide-react";
 import AddFriendModal from "./AddFriendModal";
 import { apiFetch } from "@/lib/api";
 import type { FriendInfo } from "@/types";
@@ -28,6 +28,8 @@ export default function FriendList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [processingIds, setProcessingIds] = useState<Set<number>>(new Set());
+  const [confirmingDelete, setConfirmingDelete] = useState<number | null>(null);
+  const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set());
 
   const loadFriends = useCallback(async () => {
     const [friendsRes, requestsRes] = await Promise.allSettled([
@@ -76,6 +78,24 @@ export default function FriendList() {
     setModalOpen(false);
     // requests list might have changed if user sent outgoing; refresh for safety
     loadFriends();
+  };
+
+  const handleUnfriend = async (friendId: number) => {
+    setDeletingIds((prev) => new Set(prev).add(friendId));
+    try {
+      await apiFetch(`/api/v1/users/friends/${friendId}`, { method: "DELETE" });
+      setFriends((prev) => prev.filter((f) => f.id !== friendId));
+      setConfirmingDelete(null);
+    } catch {
+      // 실패 시 상태 동기화
+      await loadFriends();
+    } finally {
+      setDeletingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(friendId);
+        return next;
+      });
+    }
   };
 
   return (
@@ -157,32 +177,71 @@ export default function FriendList() {
               아직 친구가 없어요
             </div>
           ) : (
-            friends.map((friend, idx) => (
-              <div key={friend.id}>
-                <div className="flex items-center gap-3" style={{ height: 72 }}>
-                  <div
-                    className="w-[44px] h-[44px] rounded-full flex items-center justify-center text-[#334155] text-[14px] font-semibold shrink-0"
-                    style={{ backgroundColor: AVATAR_PALETTE[friend.id % AVATAR_PALETTE.length] }}
-                  >
-                    {friend.name.charAt(0)}
+            friends.map((friend, idx) => {
+              const isConfirming = confirmingDelete === friend.id;
+              const isDeleting = deletingIds.has(friend.id);
+              return (
+                <div key={friend.id}>
+                  <div className="flex items-center gap-3" style={{ height: 72 }}>
+                    <div
+                      className="w-[44px] h-[44px] rounded-full flex items-center justify-center text-[#334155] text-[14px] font-semibold shrink-0"
+                      style={{ backgroundColor: AVATAR_PALETTE[friend.id % AVATAR_PALETTE.length] }}
+                    >
+                      {friend.name.charAt(0)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      {isConfirming ? (
+                        <span className="text-[15px] text-[#991b1b] font-medium">
+                          정말 {friend.name}님을 친구에서 삭제할까요?
+                        </span>
+                      ) : (
+                        <span className="text-[20px] font-medium text-[#111827] truncate">
+                          {friend.name}
+                        </span>
+                      )}
+                    </div>
+                    {isConfirming ? (
+                      <>
+                        <button
+                          onClick={() => handleUnfriend(friend.id)}
+                          disabled={isDeleting}
+                          className="px-3 py-1.5 rounded-md bg-[#ef4444] text-white text-[13px] font-semibold disabled:opacity-50"
+                        >
+                          {isDeleting ? "삭제 중..." : "삭제"}
+                        </button>
+                        <button
+                          onClick={() => setConfirmingDelete(null)}
+                          disabled={isDeleting}
+                          className="px-3 py-1.5 rounded-md bg-white border border-[#e2e8f0] text-[#64748b] text-[13px] font-semibold disabled:opacity-50"
+                        >
+                          취소
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => router.push(`/meeting/dm-${friend.id}`)}
+                          className="w-[42px] h-[37px] rounded-full bg-[#4f46e5] flex items-center justify-center shrink-0 hover:bg-[#4338ca] transition-colors"
+                          title="메시지 보내기"
+                        >
+                          <Send className="w-[18px] h-[18px] text-white" />
+                        </button>
+                        <button
+                          onClick={() => setConfirmingDelete(friend.id)}
+                          className="w-[37px] h-[37px] rounded-full flex items-center justify-center shrink-0 hover:bg-[#fef2f2] transition-colors text-[#94a3b8] hover:text-[#ef4444]"
+                          title="친구 삭제"
+                        >
+                          <Trash2 className="w-[16px] h-[16px]" />
+                        </button>
+                      </>
+                    )}
                   </div>
-                  <div className="flex-1">
-                    <span className="text-[20px] font-medium text-[#111827]">
-                      {friend.name}
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => router.push(`/meeting/dm-${friend.id}`)}
-                    className="w-[42px] h-[37px] rounded-full bg-[#4f46e5] flex items-center justify-center shrink-0 hover:bg-[#4338ca] transition-colors"
-                  >
-                    <Send className="w-[18px] h-[18px] text-white" />
-                  </button>
+                  {idx < friends.length - 1 && (
+                    <div className="h-px bg-[#f0f0f2]" />
+                  )}
                 </div>
-                {idx < friends.length - 1 && (
-                  <div className="h-px bg-[#f0f0f2]" />
-                )}
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 

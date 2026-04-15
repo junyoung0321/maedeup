@@ -33,17 +33,17 @@ interface CalendarEvent {
   source: EventSource;
 }
 
-const APP_EVENT_PALETTE = [
+const EVENT_PALETTE = [
   "#4f46e5", "#7c3aed", "#0891b2", "#059669",
+  "#ea580c", "#dc2626", "#16a34a", "#db2777",
 ];
-const GOOGLE_EVENT_COLOR = "#94a3b8";
 
-function colorForAppEvent(title: string): string {
+function colorForTitle(title: string): string {
   let hash = 0;
   for (let i = 0; i < title.length; i++) {
     hash = (hash * 31 + title.charCodeAt(i)) >>> 0;
   }
-  return APP_EVENT_PALETTE[hash % APP_EVENT_PALETTE.length];
+  return EVENT_PALETTE[hash % EVENT_PALETTE.length];
 }
 
 function toLocalDateString(iso: string): string {
@@ -71,7 +71,7 @@ export default function MiniCalendar() {
             id: `app-${ev.id}`,
             title: ev.title,
             date: toLocalDateString(ev.starts_at),
-            color: colorForAppEvent(ev.title),
+            color: colorForTitle(ev.title),
             source: "app",
           })),
         );
@@ -89,7 +89,7 @@ export default function MiniCalendar() {
             id: `gcal-${ev.id}`,
             title: ev.title,
             date: toLocalDateString(ev.starts_at),
-            color: GOOGLE_EVENT_COLOR,
+            color: colorForTitle(ev.title),
             source: "google",
           })),
         );

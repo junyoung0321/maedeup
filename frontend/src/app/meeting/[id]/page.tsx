@@ -8,6 +8,10 @@ import AiAssistantPane from "@/components/meeting/AiAssistantPane";
 import CompletionPage from "@/components/meeting/CompletionPage";
 import InfoPane from "@/components/meeting/InfoPane";
 import { MeetingProvider, useMeeting } from "@/contexts/MeetingContext";
+import MeetingPreferencePopup from "@/components/meeting/MeetingPreferencePopup";
+import { useEffect, useState } from "react";
+import { useAuth } from "@/hooks/useAuth";
+import { apiFetch } from "@/lib/api";
 
 function getSingleParamValue(value: string | string[] | undefined): string | null {
   if (typeof value === "string" && value.trim()) {
@@ -34,7 +38,36 @@ export default function MeetingPage() {
 }
 
 function MeetingPageInner() {
-  const { contextMode, setContextMode } = useMeeting();
+  const { contextMode, setContextMode, roomId } = useMeeting();
+  const { user } = useAuth();
+  const [showPreferencePopup, setShowPreferencePopup] = useState(false);
+  const [preferenceChecked, setPreferenceChecked] = useState(false);
+
+  // 입장 시 선호 정보 입력 여부 확인
+  useEffect(() => {
+    if (!roomId || !user || preferenceChecked) return;
+    apiFetch<{ preferences: Array<{ user_id: number }> }>(
+      `/api/v1/rooms/${roomId}/preferences`,
+    )
+      .then((data) => {
+        const userId = (user as { id?: number })?.id;
+        const alreadySubmitted = data.preferences.some(
+          (p) => p.user_id === userId,
+        );
+        if (!alreadySubmitted) {
+          setShowPreferencePopup(true);
+        }
+        setPreferenceChecked(true);
+      })
+      .catch(() => {
+        setPreferenceChecked(true);
+      });
+  }, [roomId, user, preferenceChecked]);
+
+  // 팝업 제출 후 팝업 닫기 (파이프라인 트리거는 백엔드 POST에서 자동 처리)
+  const handlePreferenceSubmitted = () => {
+    setShowPreferencePopup(false);
+  };
   const currentStep: Step = contextMode === "agent" ? "schedule" : contextMode;
 
   if (contextMode === "done") {
@@ -94,6 +127,14 @@ function MeetingPageInner() {
         <AiAssistantPane />
         <InfoPane />
       </main>
+
+      {showPreferencePopup && (
+        <MeetingPreferencePopup
+          roomId={roomId}
+          onClose={() => setShowPreferencePopup(false)}
+          onSubmitted={handlePreferenceSubmitted}
+        />
+      )}
     </div>
   );
 }

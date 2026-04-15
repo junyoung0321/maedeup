@@ -6,10 +6,20 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+import asyncio
+import json
+import logging
+
+from sqlalchemy import func as sa_func
+
 from app.core.security import AuthUser, get_current_user
 from app.db.session import get_session
+from app.models.chat import ChatMessage, PaneType
+from app.models.meeting_preference import MeetingPreference
 from app.models.room import MemberRole, Room, RoomMember
 from app.models.user import User
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/rooms", tags=["rooms"])
 
@@ -31,6 +41,31 @@ class RoomResponse(BaseModel):
     category: Optional[str]
     created_by: int
     created_at: datetime
+
+
+class PreferenceRequest(BaseModel):
+    preferred_times: list[str] = []
+    preferred_location: Optional[str] = None
+    preferred_foods: list[str] = []
+    disliked_foods: list[str] = []
+    note: Optional[str] = None
+
+
+class PreferenceResponse(BaseModel):
+    user_id: int
+    user_name: str
+    preferred_times: list[str]
+    preferred_location: Optional[str]
+    preferred_foods: list[str]
+    disliked_foods: list[str]
+    note: Optional[str]
+
+
+class PreferenceStatusResponse(BaseModel):
+    total_members: int
+    submitted_count: int
+    all_submitted: bool
+    preferences: list[PreferenceResponse]
 
 
 # ── 엔드포인트 ─────────────────────────────────────────────
@@ -101,3 +136,212 @@ async def list_rooms(
         )
         for r in result.scalars().all()
     ]
+
+
+# ── 선호 정보 엔드포인트 ──────────────────────────────────────
+
+
+@router.post("/{room_id}/preferences", response_model=PreferenceResponse)
+async def upsert_preference(
+    room_id: int,
+    body: PreferenceRequest,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """모임 선호 정보를 저장(또는 업데이트)합니다."""
+    user_id = int(current_user.sub)
+
+    # 기존 preference 조회
+    result = await session.execute(
+        select(MeetingPreference).where(
+            MeetingPreference.room_id == room_id,
+            MeetingPreference.user_id == user_id,
+        )
+    )
+    pref = result.scalar_one_or_none()
+
+    if pref:
+        pref.preferred_times = body.preferred_times
+        pref.preferred_location = body.preferred_location
+        pref.preferred_foods = body.preferred_foods
+        pref.disliked_foods = body.disliked_foods
+        pref.note = body.note
+    else:
+        pref = MeetingPreference(
+            room_id=room_id,
+            user_id=user_id,
+            preferred_times=body.preferred_times,
+            preferred_location=body.preferred_location,
+            preferred_foods=body.preferred_foods,
+            disliked_foods=body.disliked_foods,
+            note=body.note,
+        )
+        session.add(pref)
+
+    await session.commit()
+
+    # 사용자 이름 조회
+    user_result = await session.execute(select(User.name).where(User.id == user_id))
+    user_name = user_result.scalar_one_or_none() or "Unknown"
+
+    # 전원 입력 완료 체크 → 파이프라인 자동 트리거
+    member_count_result = await session.execute(
+        select(sa_func.count()).select_from(RoomMember).where(RoomMember.room_id == room_id)
+    )
+    total_members = member_count_result.scalar_one()
+    pref_count_result = await session.execute(
+        select(sa_func.count()).select_from(MeetingPreference).where(MeetingPreference.room_id == room_id)
+    )
+    pref_count = pref_count_result.scalar_one()
+
+    if pref_count >= total_members:
+        # 전원 완료 → 백그라운드에서 파이프라인 트리거
+        asyncio.create_task(
+            _trigger_auto_recommendation(room_id, session, user_name)
+        )
+
+    return PreferenceResponse(
+        user_id=user_id,
+        user_name=user_name,
+        preferred_times=pref.preferred_times or [],
+        preferred_location=pref.preferred_location,
+        preferred_foods=pref.preferred_foods or [],
+        disliked_foods=pref.disliked_foods or [],
+        note=pref.note,
+    )
+
+
+@router.get("/{room_id}/preferences", response_model=PreferenceStatusResponse)
+async def get_preferences(
+    room_id: int,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """모임의 전체 선호 정보 현황을 반환합니다."""
+    # 멤버 수
+    member_count_result = await session.execute(
+        select(sa_func.count()).select_from(RoomMember).where(RoomMember.room_id == room_id)
+    )
+    total_members = member_count_result.scalar_one()
+
+    # 선호 정보 + 사용자 이름 조인
+    pref_result = await session.execute(
+        select(MeetingPreference, User.name)
+        .join(User, User.id == MeetingPreference.user_id)
+        .where(MeetingPreference.room_id == room_id)
+    )
+    rows = pref_result.all()
+
+    preferences = [
+        PreferenceResponse(
+            user_id=pref.user_id,
+            user_name=name,
+            preferred_times=pref.preferred_times or [],
+            preferred_location=pref.preferred_location,
+            preferred_foods=pref.preferred_foods or [],
+            disliked_foods=pref.disliked_foods or [],
+            note=pref.note,
+        )
+        for pref, name in rows
+    ]
+
+    return PreferenceStatusResponse(
+        total_members=total_members,
+        submitted_count=len(preferences),
+        all_submitted=len(preferences) >= total_members,
+        preferences=preferences,
+    )
+
+
+async def _trigger_auto_recommendation(room_id: int, db_session: AsyncSession, user_name: str) -> None:
+    """전원 선호 입력 완료 시 파이프라인을 자동 실행하고 결과를 Redis로 발행합니다."""
+    try:
+        from app.db.session import AsyncSessionLocal as async_session_factory
+        from app.services.langgraph_pipeline import run_pipeline
+
+        async with async_session_factory() as db:
+            # 자동 트리거 메시지를 채팅 히스토리에 추가
+            auto_msg = ChatMessage(
+                pane_type=PaneType.agent,
+                role="user",
+                content="모든 멤버의 선호 정보가 입력됐어! 최적의 모임 일정과 장소를 추천해줘",
+                sender=user_name,
+                room_id=room_id,
+            )
+            db.add(auto_msg)
+            await db.commit()
+            await db.refresh(auto_msg)
+
+            # 최근 메시지 로드
+            from sqlmodel import select as sm_select
+            msg_result = await db.execute(
+                sm_select(ChatMessage)
+                .where(ChatMessage.room_id == room_id)
+                .order_by(ChatMessage.created_at.desc())
+                .limit(30)
+            )
+            messages = list(reversed(msg_result.scalars().all()))
+
+            message_dicts = [
+                {
+                    "id": m.id,
+                    "pane_type": m.pane_type,
+                    "role": m.role,
+                    "content": m.content,
+                    "sender": m.sender,
+                    "created_at": m.created_at.isoformat() if m.created_at else "",
+                }
+                for m in messages
+            ]
+
+            # 파이프라인 실행
+            result = await run_pipeline(
+                room_id=str(room_id),
+                messages=message_dicts,
+                db=db,
+            )
+
+            # 결과를 Redis로 발행 (WS로 프론트엔드에 전달)
+            from app.core.config import settings
+            import redis.asyncio as aioredis
+
+            r = aioredis.from_url(settings.REDIS_URL)
+            channel = f"agent:{room_id}"
+
+            # 새 어시스턴트 메시지 발행
+            new_msgs = result.get("new_assistant_messages") or []
+            if not new_msgs:
+                # 파이프라인이 new_assistant_messages를 반환하지 않으면 DB에서 최신 메시지 조회
+                latest_result = await db.execute(
+                    sm_select(ChatMessage)
+                    .where(ChatMessage.room_id == room_id, ChatMessage.role == "assistant")
+                    .order_by(ChatMessage.created_at.desc())
+                    .limit(3)
+                )
+                for m in latest_result.scalars().all():
+                    await r.publish(channel, json.dumps({
+                        "id": m.id,
+                        "pane_type": m.pane_type if isinstance(m.pane_type, str) else m.pane_type.value if m.pane_type else "agent",
+                        "role": "assistant",
+                        "content": m.content,
+                        "sender": m.sender,
+                        "created_at": m.created_at.isoformat() if m.created_at else "",
+                    }))
+
+            # 투표 카드 발행
+            vote_payload = result.get("vote_card_payload")
+            if vote_payload:
+                logger.info("[AUTO-RECOMMEND] vote_card_payload: %s", json.dumps(vote_payload, ensure_ascii=False)[:500])
+                await r.publish(channel, json.dumps(vote_payload))
+            else:
+                logger.info("[AUTO-RECOMMEND] No vote_card_payload in result")
+
+            # 장소 추천 발행
+            if result.get("place_recommendation_payload"):
+                await r.publish(channel, json.dumps(result["place_recommendation_payload"]))
+
+            await r.aclose()
+            logger.info("[AUTO-RECOMMEND] Pipeline triggered for room %s, status=%s", room_id, result.get("status"))
+
+    except Exception:
+        logger.exception("[AUTO-RECOMMEND] Failed to trigger pipeline for room %s", room_id)

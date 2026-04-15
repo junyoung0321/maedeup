@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
+import { parseServerDate } from "@/lib/datetime";
 import type { UpcomingMeetingData } from "@/types";
 
 function formatSchedule(scheduledAt: string): string {
-  const date = new Date(scheduledAt);
+  const date = parseServerDate(scheduledAt);
   const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
   const month = date.getMonth() + 1;
   const day = date.getDate();
@@ -20,7 +21,7 @@ function formatSchedule(scheduledAt: string): string {
 }
 
 function getTimeLeft(scheduledAt: string): { h: number; m: number; s: number } | null {
-  const diff = new Date(scheduledAt).getTime() - Date.now();
+  const diff = parseServerDate(scheduledAt).getTime() - Date.now();
   if (diff <= 0) return null;
   const totalSeconds = Math.floor(diff / 1000);
   return {

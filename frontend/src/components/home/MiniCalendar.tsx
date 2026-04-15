@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { parseServerDate } from "@/lib/datetime";
 
 interface EventRead {
   id: number;
@@ -47,7 +48,7 @@ function colorForTitle(title: string): string {
 }
 
 function toLocalDateString(iso: string): string {
-  const d = new Date(iso);
+  const d = parseServerDate(iso);
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");

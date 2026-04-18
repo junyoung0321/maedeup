@@ -5,6 +5,7 @@ import { Bell, User, Menu } from "lucide-react";
 import StepIndicator, { Step } from "./StepIndicator";
 import NotificationPanel from "@/components/home/NotificationPanel";
 import ProfileDropdown from "@/components/home/ProfileDropdown";
+import MenuPanel from "@/components/home/MenuPanel";
 
 interface HeaderProps {
   showSteps?: boolean;
@@ -14,6 +15,7 @@ interface HeaderProps {
 export default function Header({ showSteps = false, currentStep = "schedule" }: HeaderProps) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   return (
     <header>
@@ -35,11 +37,12 @@ export default function Header({ showSteps = false, currentStep = "schedule" }: 
             className="w-10 h-10 text-white/70 cursor-pointer hover:text-white"
             onClick={() => { setProfileOpen(!profileOpen); setNotifOpen(false); }}
           />
-          <Menu className="w-[38px] h-[38px] text-white/70 cursor-pointer hover:text-white" />
+          <Menu className="w-[38px] h-[38px] text-white/70 cursor-pointer hover:text-white" onClick={() => { setMenuOpen(!menuOpen); setNotifOpen(false); setProfileOpen(false); }} />
         </div>
       </div>
       <NotificationPanel open={notifOpen} onClose={() => setNotifOpen(false)} />
       <ProfileDropdown open={profileOpen} onClose={() => setProfileOpen(false)} />
+      <MenuPanel open={menuOpen} onClose={() => setMenuOpen(false)} />
     </header>
   );
 }

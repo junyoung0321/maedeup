@@ -8,6 +8,7 @@
 
 import json
 import re
+import time
 from playwright.sync_api import Page, BrowserContext
 
 
@@ -131,6 +132,7 @@ def _parse_menu_info(menu_str: str) -> list[dict]:
 def fetch_detail_rating_keywords(page: Page, place_id: str) -> dict:
     """JS fetch로 GraphQL 직접 호출 → 별점 + 키워드(themes) 추출.
     page는 pcmap.place.naver.com 도메인에 이미 진입해 있어야 함.
+    businessType: "restaurant" 1차 → 결과 없으면 "place" 폴백.
     반환: {"rating": float, "keyword_tags": list[str], "review_total": int}
     """
     result = {"rating": 0.0, "keyword_tags": [], "review_total": 0}
@@ -144,55 +146,84 @@ def fetch_detail_rating_keywords(page: Page, place_id: str) -> dict:
         "  }"
         "}"
     )
-    payload = json.dumps([{
-        "operationName": "getVisitorReviewStats",
-        "variables": {"input": {"businessId": place_id, "businessType": "restaurant"}},
-        "query": gql_query,
-    }])
 
-    try:
-        resp = page.evaluate("""async (args) => {
-            const [pid, payload] = args;
-            const resp = await fetch('https://pcmap-api.place.naver.com/place/graphql', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: payload,
-            });
-            return { status: resp.status, body: await resp.text() };
-        }""", [place_id, payload])
-    except Exception as e:
-        print(f"  [js fetch error] {place_id}: {e}")
-        return result
+    def _try_business_type(business_type: str) -> dict:
+        payload = json.dumps([{
+            "operationName": "getVisitorReviewStats",
+            "variables": {"input": {"businessId": place_id, "businessType": business_type}},
+            "query": gql_query,
+        }])
+        for attempt in range(3):
+            try:
+                resp = page.evaluate("""async (args) => {
+                    const [payload] = args;
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => controller.abort(), 10000);
+                    try {
+                        const r = await fetch('https://pcmap-api.place.naver.com/place/graphql', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: payload,
+                            signal: controller.signal,
+                        });
+                        clearTimeout(timer);
+                        return { status: r.status, body: await r.text() };
+                    } catch(e) {
+                        clearTimeout(timer);
+                        return { status: -1, body: '' };
+                    }
+                }""", [payload])
+            except Exception as e:
+                print(f"  [js fetch error] {place_id}: {e}")
+                return {}
 
-    if resp.get("status") != 200:
-        return result
-
-    try:
-        data = json.loads(resp["body"])
-    except (json.JSONDecodeError, KeyError):
-        return result
-
-    entries = data if isinstance(data, list) else [data]
-    for entry in entries:
-        stats = (entry.get("data") or {}).get("visitorReviewStats") or {}
-
-        # 별점
-        review = stats.get("review") or {}
-        avg = review.get("avgRating", 0)
-        if avg and result["rating"] == 0.0:
-            result["rating"] = float(avg)
-        total = review.get("totalCount", 0)
-        if total:
-            result["review_total"] = int(total)
-
-        # 키워드 themes
-        themes = (stats.get("analysis") or {}).get("themes") or []
-        for theme in themes:
-            if not isinstance(theme, dict):
+            status = resp.get("status")
+            if status == 429:
+                wait = 60 * (attempt + 1)
+                print(f"  [429 rate-limit] {place_id} bt={business_type}, {wait}s 대기 후 재시도")
+                time.sleep(wait)
                 continue
-            label = theme.get("label", "")
-            if label and label not in result["keyword_tags"]:
-                result["keyword_tags"].append(label)
+            if status != 200:
+                return {}
+            break
+        else:
+            # 3회 재시도 모두 실패
+            return {}
+
+        try:
+            data = json.loads(resp["body"])
+        except (json.JSONDecodeError, KeyError):
+            return {}
+
+        partial = {"rating": 0.0, "keyword_tags": [], "review_total": 0}
+        entries = data if isinstance(data, list) else [data]
+        for entry in entries:
+            stats = (entry.get("data") or {}).get("visitorReviewStats") or {}
+            review = stats.get("review") or {}
+            avg = review.get("avgRating", 0)
+            if avg:
+                partial["rating"] = float(avg)
+            total = review.get("totalCount", 0)
+            if total:
+                partial["review_total"] = int(total)
+            themes = (stats.get("analysis") or {}).get("themes") or []
+            for theme in themes:
+                if not isinstance(theme, dict):
+                    continue
+                label = theme.get("label", "")
+                if label and label not in partial["keyword_tags"]:
+                    partial["keyword_tags"].append(label)
+        return partial
+
+    # 1차: restaurant
+    r = _try_business_type("restaurant")
+    if r.get("rating", 0) > 0 or r.get("keyword_tags"):
+        return {**result, **r}
+
+    # 2차 폴백: place (카페/술집/스터디 등)
+    r = _try_business_type("place")
+    if r:
+        return {**result, **r}
 
     return result
 

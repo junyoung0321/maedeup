@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Sparkles, Send, UtensilsCrossed, MessageCircle } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import type { PlaceResult } from "@/types";
+import EmptyState from "@/components/ui/EmptyState";
 
 interface Props {
   onSelectPlace: (place: PlaceResult) => void;
@@ -151,9 +152,7 @@ export default function PlaceAiPane({ onSelectPlace }: Props) {
 
         {/* No results */}
         {searched && !loading && results.length === 0 && (
-          <div style={{ textAlign: "center", padding: "20px 0", fontSize: 14, color: "#94a3b8" }}>
-            검색 결과가 없습니다
-          </div>
+          <EmptyState message="검색 결과가 없습니다" sub="다른 키워드나 지역으로 검색해 보세요" />
         )}
 
         {/* Place cards */}

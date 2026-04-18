@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { apiFetchWithFallback } from "@/lib/api";
+import EmptyState from "@/components/ui/EmptyState";
 import {
   Users,
   Search,
@@ -143,9 +144,7 @@ export default function CreateInviteSettings({
                 친구 목록 불러오는 중...
               </span>
             ) : members.length === 0 ? (
-              <span style={{ fontSize: 13, color: "#94a3b8", padding: "8px 14px" }}>
-                아직 친구가 없어요
-              </span>
+              <EmptyState message="아직 친구가 없어요" sub="홈에서 친구를 먼저 추가해 보세요" />
             ) : (
               members.map((member) => {
                 const isSelected = invitedMembers.has(member.name);

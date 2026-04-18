@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import AiRecommendDetailModal from "./AiRecommendDetailModal";
+import QuickMatchPopup from "./QuickMatchPopup";
+import AiPlacePopup from "./AiPlacePopup";
 
 export default function AiRecommendCard() {
-  const [detailOpen, setDetailOpen] = useState(false);
+  const [quickMatchOpen, setQuickMatchOpen] = useState(false);
+  const [aiPlaceOpen, setAiPlaceOpen] = useState(false);
 
   return (
     <>
@@ -22,7 +24,7 @@ export default function AiRecommendCard() {
         <div className="flex gap-4">
           {/* Card A: Purple gradient - friend availability */}
           <div
-            onClick={() => setDetailOpen(true)}
+            onClick={() => setQuickMatchOpen(true)}
             className="flex-1 rounded-[18px] p-5 flex flex-col justify-between text-white min-h-[280px] cursor-pointer hover:opacity-95 transition-opacity"
             style={{
               background:
@@ -61,7 +63,7 @@ export default function AiRecommendCard() {
 
           {/* Card B: Green-to-teal gradient - place recommendations */}
           <div
-            onClick={() => setDetailOpen(true)}
+            onClick={() => setAiPlaceOpen(true)}
             className="flex-1 rounded-[18px] p-5 flex flex-col justify-between text-white min-h-[280px] cursor-pointer hover:opacity-95 transition-opacity"
             style={{
               background:
@@ -104,7 +106,8 @@ export default function AiRecommendCard() {
         </div>
       </div>
 
-      <AiRecommendDetailModal open={detailOpen} onClose={() => setDetailOpen(false)} />
+      <QuickMatchPopup open={quickMatchOpen} onClose={() => setQuickMatchOpen(false)} />
+      <AiPlacePopup open={aiPlaceOpen} onClose={() => setAiPlaceOpen(false)} />
     </>
   );
 }

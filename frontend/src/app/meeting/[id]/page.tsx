@@ -50,10 +50,10 @@ function MeetingPageInner() {
       `/api/v1/rooms/${roomId}/preferences`,
     )
       .then((data) => {
-        const userId = (user as { id?: number })?.id;
-        const alreadySubmitted = data.preferences.some(
-          (p) => p.user_id === userId,
-        );
+        const userId = user?.sub ? Number(user.sub) : NaN;
+        const alreadySubmitted =
+          Number.isFinite(userId) &&
+          data.preferences.some((p) => p.user_id === userId);
         if (!alreadySubmitted) {
           setShowPreferencePopup(true);
         }

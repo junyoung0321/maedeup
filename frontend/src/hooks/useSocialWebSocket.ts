@@ -132,6 +132,23 @@ export function useSocialWebSocket(roomId: string, sender: string) {
       return;
     }
 
+    // JWT sub에서 내 user_id 추출 (echo 필터용)
+    let myUserId: number | null = null;
+    try {
+      const payloadPart = token.split(".")[1];
+      if (payloadPart) {
+        const normalized = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
+        const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+        const decoded = JSON.parse(atob(padded));
+        if (decoded?.sub) {
+          const asNum = Number(decoded.sub);
+          if (Number.isFinite(asNum)) myUserId = asNum;
+        }
+      }
+    } catch {
+      /* token 파싱 실패는 무시 — echo 필터만 못함 */
+    }
+
     let isActive = true;
 
     setMessages([]);
@@ -242,10 +259,10 @@ export function useSocialWebSocket(roomId: string, sender: string) {
         }
 
         if (isPeerDateSelectionPayload(data)) {
-          // 자기 자신 이벤트는 무시 (로컬 clickedDay가 이미 반영됨)
-          if (data.sender && data.sender === sender) {
-            return;
-          }
+          // 자기 자신 이벤트는 무시 (user_id 기준 — 동명이인에 안전).
+          // user_id가 누락된 이벤트(예: 구버전 서버)는 sender 이름으로 fallback.
+          if (myUserId !== null && data.user_id === myUserId) return;
+          if (data.user_id == null && data.sender && data.sender === sender) return;
           const peerKey = data.user_id != null ? `u${data.user_id}` : `n:${data.sender ?? ""}`;
           setPeerSelections((prev) => {
             const next = { ...prev };

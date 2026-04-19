@@ -15,6 +15,7 @@ from app.core.security import verify_token
 from app.db.session import AsyncSessionLocal
 from app.models.chat import ChatMessage, PaneType
 from app.models.room import RoomMember
+from app.models.user import User
 from app.services.intent_classifier import classify_intent
 from app.services.stalemate_judge import judge_stalemate
 
@@ -115,7 +116,9 @@ async def social_ws(
     except (TypeError, ValueError):
         room_pk = None
 
-    # 룸 멤버십 확인
+    # 룸 멤버십 + 인증된 사용자 이름 확인 (클라이언트 payload의 sender 스푸핑 방지)
+    authed_user_id: int | None = None
+    authed_user_name: str = ""
     if room_pk is not None:
         try:
             user_id_check = int(token_payload["sub"])
@@ -129,6 +132,13 @@ async def social_ws(
                 if member_result.scalar_one_or_none() is None:
                     await websocket.close(code=4003, reason="Not a member of this room")
                     return
+                user_result = await _session.execute(
+                    select(User).where(User.id == user_id_check)
+                )
+                user_row = user_result.scalar_one_or_none()
+                if user_row is not None:
+                    authed_user_id = user_row.id
+                    authed_user_name = user_row.name or ""
         except (TypeError, ValueError):
             await websocket.close(code=4003, reason="Invalid user token")
             return
@@ -171,16 +181,12 @@ async def social_ws(
                     # YYYY-MM-DD 기본 검증
                     if raw_date[4] == "-" and raw_date[7] == "-":
                         date_value = raw_date
-                sender = payload.get("sender")
-                try:
-                    peer_user_id: int | None = int(token_payload.get("sub", ""))
-                except (TypeError, ValueError):
-                    peer_user_id = None
+                # sender/user_id는 서버에서 인증된 값만 사용 (클라이언트 payload 신뢰 X)
                 out = json.dumps(
                     {
                         "type": "peer_date_selection",
-                        "user_id": peer_user_id,
-                        "sender": sender,
+                        "user_id": authed_user_id,
+                        "sender": authed_user_name,
                         "date": date_value,
                     },
                     ensure_ascii=False,

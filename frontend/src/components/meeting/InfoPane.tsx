@@ -7,6 +7,7 @@ import VoteCardSection from "@/components/meeting/VoteCardSection";
 import PlaceRecommendationCard from "@/components/meeting/PlaceRecommendationCard";
 import TimeBarSelector from "@/components/meeting/TimeBarSelector";
 import { useMeeting } from "@/contexts/MeetingContext";
+import { fs } from "@/lib/responsive";
 import type { PlaceResult } from "@/types";
 
 // Removed fixed dimensions — uses flex layout from parent
@@ -85,7 +86,7 @@ export default function InfoPane() {
     <div
       style={{
         flex: 1,
-        minWidth: 300,
+        minWidth: 0,
         display: "flex",
         flexDirection: "column",
         overflowY: "auto",
@@ -111,7 +112,7 @@ export default function InfoPane() {
                 border: "none",
                 background: "transparent",
                 color: "#4f46e5",
-                fontSize: 14,
+                fontSize: fs(14, 12),
                 fontWeight: 500,
                 cursor: "pointer",
                 fontFamily: "Pretendard Variable, Pretendard, sans-serif",
@@ -142,13 +143,13 @@ export default function InfoPane() {
                   textAlign: "center",
                   fontFamily: "Pretendard Variable, Pretendard, sans-serif",
                 }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: "#4f46e5", marginBottom: 6 }}>
+                  <div style={{ fontSize: fs(15, 12), fontWeight: 700, color: "#4f46e5", marginBottom: 6 }}>
                     {voteCard.title}
                   </div>
-                  <div style={{ fontSize: 13, color: "#475569" }}>
+                  <div style={{ fontSize: fs(13, 11), color: "#475569" }}>
                     캘린더에서 파란 테두리 날짜를 클릭해서 날짜를 선택하세요
                   </div>
-                  <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
+                  <div style={{ fontSize: fs(12, 10.5), color: "#94a3b8", marginTop: 4 }}>
                     {voteCard.headcount}명 기준 · {voteCard.time_options.length}개 날짜 추천
                   </div>
                 </div>
@@ -188,10 +189,10 @@ export default function InfoPane() {
                       textAlign: "center",
                       fontFamily: "Pretendard Variable, Pretendard, sans-serif",
                     }}>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: "#4f46e5", marginBottom: 8 }}>
+                      <div style={{ fontSize: fs(14, 12), fontWeight: 600, color: "#4f46e5", marginBottom: 8 }}>
                         장소 추천 대기 중...
                       </div>
-                      <div style={{ fontSize: 13, color: "#64748b" }}>
+                      <div style={{ fontSize: fs(13, 11), color: "#64748b" }}>
                         AI가 장소를 찾고 있어요
                       </div>
                     </div>
@@ -210,7 +211,7 @@ export default function InfoPane() {
                   textAlign: "center",
                   fontFamily: "Pretendard Variable, Pretendard, sans-serif",
                 }}>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: "#166534" }}>
+                  <div style={{ fontSize: fs(16, 13), fontWeight: 700, color: "#166534" }}>
                     ✓ 모임이 확정되었습니다!
                   </div>
                 </div>

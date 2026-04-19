@@ -80,46 +80,39 @@ function MeetingPageInner() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#ffffff", fontFamily: "Pretendard, sans-serif" }}>
-      <Header showSteps currentStep={currentStep} />
-
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "flex-end",
-          padding: "16px 48px 0",
-        }}
-      >
+    <div style={{ height: "100vh", overflow: "hidden", background: "#ffffff", fontFamily: "Pretendard, sans-serif", display: "flex", flexDirection: "column" }}>
+      <Header showSteps currentStep={currentStep}>
         <button
           onClick={() => setContextMode("done")}
           type="button"
           style={{
             display: "flex",
             alignItems: "center",
-            padding: "8px 20px",
-            borderRadius: 24,
-            border: "1px solid #4f46e5",
-            background: "#4f46e5",
+            padding: "6px 18px",
+            borderRadius: 20,
+            border: "1px solid rgba(255,255,255,0.3)",
+            background: "rgba(255,255,255,0.15)",
             color: "#ffffff",
-            fontSize: 14,
+            fontSize: 13,
             fontWeight: 600,
             cursor: "pointer",
             fontFamily: "Pretendard, sans-serif",
             transition: "all 0.2s",
+            backdropFilter: "blur(4px)",
           }}
         >
           생성 완료
         </button>
-      </div>
+      </Header>
 
       <main
         style={{
           display: "flex",
           alignItems: "stretch",
-          gap: 20,
-          padding: "16px 24px 24px",
-          height: "calc(100vh - 140px)",
-          minHeight: 500,
+          gap: "clamp(6px, 0.8vw, 16px)",
+          padding: "clamp(6px, 0.8vw, 16px)",
+          flex: 1,
+          minHeight: 0,
           maxWidth: 1800,
           margin: "0 auto",
           width: "100%",

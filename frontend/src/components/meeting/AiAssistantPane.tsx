@@ -5,6 +5,7 @@ import { Sparkles, Send, Square, MessageCircle, CalendarDays, MapPin, Users, Che
 import { useAgentWebSocket } from "@/hooks/useAgentWebSocket";
 import { useAuth } from "@/hooks/useAuth";
 import { MeetingContext } from "@/contexts/MeetingContext";
+import { fs } from "@/lib/responsive";
 import type { ContextMode } from "@/types";
 
 const PANE_TYPE_MAP: Record<string, ContextMode> = {
@@ -203,7 +204,7 @@ export default function AiAssistantPane() {
     <div
       style={{
         flex: 1,
-        minWidth: 300,
+        minWidth: 0,
         borderRadius: 20,
         border: "1px solid #e2e8f0",
         boxShadow: "0 4px 3.5px rgba(0,0,0,0.25)",
@@ -219,7 +220,7 @@ export default function AiAssistantPane() {
           display: "flex",
           alignItems: "center",
           gap: 8,
-          padding: "16px 20px",
+          padding: "clamp(10px, 1vw, 16px) clamp(12px, 1.2vw, 20px)",
           background: "linear-gradient(135deg, #837cff, #6eb3ff)",
           borderBottom: "1px solid #e2e8f0",
         }}
@@ -227,7 +228,7 @@ export default function AiAssistantPane() {
         <Sparkles style={{ width: 20, height: 20, color: "#ffffff" }} />
         <span
           style={{
-            fontSize: 26,
+            fontSize: fs(26, 17),
             fontWeight: 400,
             color: "#ffffff",
             letterSpacing: 0.75,
@@ -334,7 +335,7 @@ export default function AiAssistantPane() {
             `}</style>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <ClipboardList style={{ width: 18, height: 18, color: "#ffffff" }} />
-              <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.9)" }}>
+              <span style={{ fontSize: fs(13, 11), fontWeight: 700, color: "rgba(255,255,255,0.9)" }}>
                 현재 대화 정리
               </span>
             </div>
@@ -351,7 +352,7 @@ export default function AiAssistantPane() {
               {meetingSummary.date && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <CalendarDays style={{ width: 14, height: 14, color: "#e9d5ff", flexShrink: 0 }} />
-                  <span style={{ fontSize: 14, fontWeight: 500 }}>
+                  <span style={{ fontSize: fs(14, 12), fontWeight: 500 }}>
                     날짜: {meetingSummary.date}
                   </span>
                 </div>
@@ -359,7 +360,7 @@ export default function AiAssistantPane() {
               {meetingSummary.place && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <MapPin style={{ width: 14, height: 14, color: "#e9d5ff", flexShrink: 0 }} />
-                  <span style={{ fontSize: 14, fontWeight: 500 }}>
+                  <span style={{ fontSize: fs(14, 12), fontWeight: 500 }}>
                     장소: {meetingSummary.place}
                   </span>
                 </div>
@@ -367,7 +368,7 @@ export default function AiAssistantPane() {
               {meetingSummary.headcount && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <Users style={{ width: 14, height: 14, color: "#e9d5ff", flexShrink: 0 }} />
-                  <span style={{ fontSize: 14, fontWeight: 500 }}>
+                  <span style={{ fontSize: fs(14, 12), fontWeight: 500 }}>
                     인원: {meetingSummary.headcount}
                   </span>
                 </div>
@@ -375,7 +376,7 @@ export default function AiAssistantPane() {
               {meetingSummary.meeting_type && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <Sparkles style={{ width: 14, height: 14, color: "#e9d5ff", flexShrink: 0 }} />
-                  <span style={{ fontSize: 14, fontWeight: 500 }}>
+                  <span style={{ fontSize: fs(14, 12), fontWeight: 500 }}>
                     유형: {meetingSummary.meeting_type}
                   </span>
                 </div>
@@ -383,7 +384,7 @@ export default function AiAssistantPane() {
               {meetingSummary.notes && meetingSummary.notes.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
                   {meetingSummary.notes.map((note, i) => (
-                    <span key={i} style={{ fontSize: 13, fontWeight: 400, color: "rgba(255,255,255,0.85)" }}>
+                    <span key={i} style={{ fontSize: fs(13, 11), fontWeight: 400, color: "rgba(255,255,255,0.85)" }}>
                       · {note}
                     </span>
                   ))}
@@ -405,7 +406,7 @@ export default function AiAssistantPane() {
             }}
           >
             <MessageCircle style={{ width: 16, height: 16, color: "#4f46e5" }} />
-            <span style={{ fontSize: 15, fontWeight: 400, color: "#4f46e5", fontFamily: "Inter, sans-serif" }}>
+            <span style={{ fontSize: fs(15, 12), fontWeight: 400, color: "#4f46e5", fontFamily: "Inter, sans-serif" }}>
               AI 어시스턴트에게 모임 일정이나 장소를 물어보세요
             </span>
           </div>
@@ -425,7 +426,7 @@ export default function AiAssistantPane() {
             }}
           >
             <CalendarDays style={{ width: 18, height: 18, color: "#4f46e5" }} />
-            <span style={{ fontSize: 14, fontWeight: 500, color: "#4f46e5", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}>
+            <span style={{ fontSize: fs(14, 12), fontWeight: 500, color: "#4f46e5", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}>
               {voteCard ? "투표가 진행 중입니다" : "장소 추천이 도착했습니다"} — 오른쪽 캘린더 탭에서 확인하세요
             </span>
           </div>
@@ -453,10 +454,10 @@ export default function AiAssistantPane() {
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <CheckCircle2 style={{ width: 24, height: 24, color: "#ffffff" }} />
                 <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.82)" }}>
+                  <span style={{ fontSize: fs(12, 10.5), fontWeight: 700, color: "rgba(255,255,255,0.82)" }}>
                     최종 확정
                   </span>
-                  <span style={{ fontSize: 21, fontWeight: 700, color: "#ffffff" }}>
+                  <span style={{ fontSize: fs(21, 15), fontWeight: 700, color: "#ffffff" }}>
                     {title}
                   </span>
                 </div>
@@ -473,10 +474,10 @@ export default function AiAssistantPane() {
               >
                 {maedeupCard && (
                   <>
-                    <span style={{ fontSize: 15, lineHeight: 1.5 }}>
+                    <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
                       {maedeupCard.meeting_type} · {maedeupCard.date_hint}
                     </span>
-                    <span style={{ fontSize: 15, lineHeight: 1.5 }}>
+                    <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
                       참석 인원 {maedeupCard.headcount}명
                     </span>
                   </>
@@ -488,10 +489,10 @@ export default function AiAssistantPane() {
                 )}
                 {displayPlace && (
                   <>
-                    <span style={{ fontSize: 15, lineHeight: 1.5 }}>
+                    <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
                       장소 {displayPlace.name}
                     </span>
-                    <span style={{ fontSize: 14, lineHeight: 1.5, color: "rgba(255,255,255,0.84)" }}>
+                    <span style={{ fontSize: fs(14, 12), lineHeight: 1.5, color: "rgba(255,255,255,0.84)" }}>
                       {displayPlace.address}
                     </span>
                   </>
@@ -544,7 +545,7 @@ export default function AiAssistantPane() {
                 }}
               >
                 {!isMe && (
-                  <span style={{ fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>
+                  <span style={{ fontSize: fs(11, 10), color: "#94a3b8", marginBottom: 4 }}>
                     {senderLabel}
                   </span>
                 )}
@@ -563,7 +564,7 @@ export default function AiAssistantPane() {
                           background: "#f1f5f9",
                           color: "#000000",
                         }),
-                    fontSize: 17,
+                    fontSize: fs(17, 13),
                     fontWeight: 300,
                     lineHeight: 1.5,
                     whiteSpace: "pre-wrap" as const,
@@ -694,16 +695,16 @@ export default function AiAssistantPane() {
           >
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <Sparkles style={{ width: 20, height: 20, color: "#ffffff" }} />
-              <span style={{ fontSize: 12, fontWeight: 600, color: "#ffffff", fontFamily: "Inter, sans-serif" }}>
+              <span style={{ fontSize: fs(12, 10.5), fontWeight: 600, color: "#ffffff", fontFamily: "Inter, sans-serif" }}>
                 AI 어시스턴트
               </span>
             </div>
-            <span style={{ fontSize: 18, fontWeight: 600, color: "#ffffff", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}>
+            <span style={{ fontSize: fs(18, 14), fontWeight: 600, color: "#ffffff", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}>
               {isAiLoading ? "분석 중..." : "일정 조율을 시작하겠습니다"}
             </span>
             <span
               style={{
-                fontSize: 13,
+                fontSize: fs(13, 11),
                 fontWeight: 300,
                 color: "#ffffff",
                 lineHeight: 1.5,
@@ -726,7 +727,7 @@ export default function AiAssistantPane() {
                   flexShrink: 0,
                 }}
               />
-              <span style={{ fontSize: 12, fontWeight: 300, color: "#ffffff", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}>
+              <span style={{ fontSize: fs(12, 10.5), fontWeight: 300, color: "#ffffff", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}>
                 {status === "connecting"
                   ? "연결 중..."
                   : isAiLoading
@@ -767,7 +768,7 @@ export default function AiAssistantPane() {
             borderRadius: 60,
             border: "1.5px solid #a2f4fd",
             outline: "none",
-            fontSize: 15,
+            fontSize: fs(15, 12),
             color: "#1e293b",
             fontFamily: "Pretendard Variable, Pretendard, sans-serif",
             boxShadow: "0 2px 3.5px rgba(0,0,0,0.15)",

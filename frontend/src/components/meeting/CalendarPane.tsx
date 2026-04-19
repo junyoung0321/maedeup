@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useMeetingOptional } from "@/contexts/MeetingContext";
 import MiniTimeBar from "@/components/meeting/MiniTimeBar";
+import { fs } from "@/lib/responsive";
 
 /* ── Types ─────────────────────────────────────────────── */
 interface DayAvail {
@@ -130,13 +131,13 @@ export default function CalendarPane() {
         style={{
           background: "#f2f4f7",
           borderRadius: "20px 20px 0 0",
-          padding: "16px 20px",
+          padding: "clamp(10px, 1vw, 16px) clamp(12px, 1.2vw, 20px)",
           borderBottom: "1px solid #e2e8f0",
         }}
       >
         <span
           style={{
-            fontSize: 26,
+            fontSize: fs(26, 17),
             fontWeight: 400,
             color: "#000000",
             letterSpacing: 0.75,
@@ -174,7 +175,7 @@ export default function CalendarPane() {
         </div>
         <span
           style={{
-            fontSize: 16,
+            fontSize: fs(16, 13),
             fontWeight: "normal",
             color: "#1e293b",
             fontFamily: "Inter, sans-serif",
@@ -200,7 +201,7 @@ export default function CalendarPane() {
       </div>
 
       {/* Calendar grid */}
-      <div style={{ padding: "0 19px" }}>
+      <div style={{ padding: "0 clamp(8px, 1vw, 19px)" }}>
         {/* Weekday headers */}
         <div
           style={{
@@ -214,11 +215,10 @@ export default function CalendarPane() {
             <span
               key={d}
               style={{
-                fontSize: 12,
+                fontSize: fs(12, 10.5),
                 fontWeight: "normal",
                 color: "#94a3b8",
                 padding: "6px 0",
-                width: 50,
               }}
             >
               {d}
@@ -230,12 +230,12 @@ export default function CalendarPane() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(7, 50px)",
-            justifyContent: "space-between",
+            gridTemplateColumns: "repeat(7, 1fr)",
+            gap: 2,
           }}
         >
           {blanks.map((b) => (
-            <div key={`b-${b}`} style={{ height: 52 }} />
+            <div key={`b-${b}`} style={{ aspectRatio: "1 / 1", minHeight: 36 }} />
           ))}
           {days.map((day) => {
             const isHighlighted = highlightedDays.has(day);
@@ -284,8 +284,9 @@ export default function CalendarPane() {
                   flexDirection: "column",
                   alignItems: "center",
                   justifyContent: "center",
-                  height: 52,
-                  width: 50,
+                  aspectRatio: "1 / 1",
+                  minHeight: 36,
+                  width: "100%",
                   borderRadius: isHighlighted || isAiHighlighted || isToday || isClicked ? 8 : 0,
                   cursor: isPast ? "default" : "pointer",
                   background: isPast ? "transparent" : isHighlighted ? "#e0e7ff" : "transparent",
@@ -295,7 +296,7 @@ export default function CalendarPane() {
               >
                 <span
                   style={{
-                    fontSize: 13,
+                    fontSize: fs(13, 11),
                     fontWeight: "normal",
                     color: isPast ? "#cbd5e1" : "#334155",
                     lineHeight: 1.4,
@@ -306,7 +307,7 @@ export default function CalendarPane() {
                 {avail && (
                   <span
                     style={{
-                      fontSize: 9,
+                      fontSize: fs(9, 8),
                       fontWeight: "normal",
                       color: availColor(avail.count, avail.total),
                       lineHeight: 1.2,
@@ -327,7 +328,7 @@ export default function CalendarPane() {
         style={{
           height: 1,
           background: "#e2e8f0",
-          margin: "8px 19px 0",
+          margin: "8px clamp(8px, 1vw, 19px) 0",
         }}
       />
 
@@ -337,7 +338,7 @@ export default function CalendarPane() {
           flex: 1,
           display: "flex",
           flexDirection: "column",
-          padding: "10px 19px 19px",
+          padding: "10px clamp(8px, 1vw, 19px) clamp(10px, 1vw, 19px)",
           overflow: "hidden",
         }}
       >

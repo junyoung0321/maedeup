@@ -10,16 +10,20 @@ import ProfileDropdown from "@/components/home/ProfileDropdown";
 interface HeaderProps {
   showSteps?: boolean;
   currentStep?: Step;
+  children?: React.ReactNode;
 }
 
-export default function Header({ showSteps = false, currentStep = "schedule" }: HeaderProps) {
+export default function Header({ showSteps = false, currentStep = "schedule", children }: HeaderProps) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
   return (
     <header>
-      <div className="h-[79px] bg-primary-600 flex items-center justify-between px-7 relative">
-        <span className="text-white text-[30px] font-normal tracking-wide" style={{ fontFamily: "Pretendard, sans-serif" }}>
+      <div className="h-[79px] bg-primary-600 flex items-center justify-between px-[clamp(12px,1.5vw,28px)] relative gap-3">
+        <span
+          className="text-white font-normal tracking-wide whitespace-nowrap"
+          style={{ fontFamily: "Pretendard, sans-serif", fontSize: "clamp(18px, 6px + 1.25vw, 30px)" }}
+        >
           매듭 : AI 모임 플래너
         </span>
         {showSteps && (
@@ -28,6 +32,7 @@ export default function Header({ showSteps = false, currentStep = "schedule" }: 
           </div>
         )}
         <div className="flex items-center gap-3">
+          {children}
           <Link
             href="/settings"
             className="rounded-full border border-white/20 px-4 py-2 text-sm font-medium text-white/80 transition hover:border-white/40 hover:text-white"

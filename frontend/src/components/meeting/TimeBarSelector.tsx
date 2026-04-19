@@ -223,6 +223,15 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
   const dayOfWeek = ["일", "월", "화", "수", "목", "금", "토"][new Date(date).getDay()];
   const dateLabel = `${Number(monthStr)}월 ${Number(dayStr)}일 (${dayOfWeek})`;
 
+  // aria-activedescendant: 스크린리더가 현재 활성 슬롯을 알 수 있도록 aggregate row cell에 id 부여.
+  // aggregate row는 members.length > 0 일 때만 렌더되므로, 없을 때 id 참조가 DOM에 존재하지 않게 가드.
+  const gridId = `timebar-${date.replace(/-/g, "")}`;
+  const activeSlotIdx = selectionEnd ?? selectionStart;
+  const activeDescendantId =
+    activeSlotIdx !== null && members.length > 0
+      ? `${gridId}-agg-${activeSlotIdx}`
+      : undefined;
+
   if (loading) {
     return (
       <div style={{
@@ -272,8 +281,6 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
         border: "1px solid #cbd5e1",
         fontFamily: "Pretendard Variable, Pretendard, sans-serif",
       }}
-      onKeyDown={handleKeyDown}
-      tabIndex={0}
     >
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -296,9 +303,16 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
 
       {/* Time grid */}
       <div style={{ overflowX: "auto", paddingBottom: 4 }}>
-        <div style={{ display: "inline-block", minWidth: "100%" }}>
-          {/* Hour labels */}
-          <div style={{ display: "flex", marginLeft: NAME_WIDTH, marginBottom: 2 }}>
+        <div
+          style={{ display: "inline-block", minWidth: "100%" }}
+          role="grid"
+          aria-label={`${dateLabel} 시간 선택`}
+          aria-activedescendant={activeDescendantId}
+          tabIndex={0}
+          onKeyDown={handleKeyDown}
+        >
+          {/* Hour labels — 시각적 눈금. 스크린리더는 cell aria-label이 시간을 이미 포함하므로 숨김 */}
+          <div aria-hidden="true" style={{ display: "flex", marginLeft: NAME_WIDTH, marginBottom: 2 }}>
             {Array.from({ length: HOUR_END - HOUR_START }, (_, i) => (
               <div
                 key={i}
@@ -319,22 +333,24 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
           {/* Member rows — 모든 셀이 모임 전체의 단일 시간 선택을 트리거.
               멤버의 가능/불가 색은 유지하면서, 선택된 slot에만 연한 보라 블렌딩으로 하이라이트 */}
           {members.map((member) => (
-            <div key={member.name} style={{ display: "flex", alignItems: "center", marginBottom: 2 }}>
-              <div style={{
-                width: NAME_WIDTH,
-                fontSize: 11,
-                fontWeight: 500,
-                color: "#475569",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                flexShrink: 0,
-                paddingRight: 4,
-              }}>
+            <div key={member.name} role="row" style={{ display: "flex", alignItems: "center", marginBottom: 2 }}>
+              <div
+                role="rowheader"
+                style={{
+                  width: NAME_WIDTH,
+                  fontSize: 11,
+                  fontWeight: 500,
+                  color: "#475569",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  flexShrink: 0,
+                  paddingRight: 4,
+                }}
+              >
                 {member.name}
               </div>
-              <div style={{ display: "flex" }}>
-                {Array.from({ length: TOTAL_SLOTS }, (_, slotIdx) => {
+              {Array.from({ length: TOTAL_SLOTS }, (_, slotIdx) => {
                   const isBusy = isBusyAtSlot(member.periods, date, slotIdx);
                   const isInSelection = isSlotInSelection(slotIdx, selectionStart, selectionEnd);
                   const isRecommended = !!recommendedRange &&
@@ -345,9 +361,14 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
                   else if (isInSelection) bg = COLOR_AVAILABLE_SELECTED_MEMBER;
                   else bg = COLOR_AVAILABLE;
 
+                  const cellLabel = `${member.name} ${slotToTime(slotIdx)} ${isBusy ? "불가" : "가능"}${isInSelection ? ", 선택됨" : ""}`;
                   return (
                     <div
                       key={slotIdx}
+                      role="gridcell"
+                      tabIndex={-1}
+                      aria-selected={isInSelection}
+                      aria-label={cellLabel}
                       onClick={() => handleSlotClick(slotIdx)}
                       style={{
                         width: CELL_WIDTH,
@@ -361,31 +382,33 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
                         outline: isRecommended && !isBusy ? `1px solid ${COLOR_RECOMMEND_OUTLINE}` : "none",
                         outlineOffset: -1,
                         // 선택 표시는 inset shadow로 분리 → 색약 사용자도 테두리로 구분 가능
-                        boxShadow: isInSelection ? `inset 0 0 0 2px ${COLOR_SELECTION_BORDER}` : undefined,
+                        // 12px 셀에 2px 테두리는 과포화라 1px로. 추천 outline과 동시 활성 시에도 가독성 유지
+                        boxShadow: isInSelection ? `inset 0 0 0 1px ${COLOR_SELECTION_BORDER}` : undefined,
                       }}
-                      title={`${member.name} ${slotToTime(slotIdx)} ${isBusy ? "불가" : "가능"}${isInSelection ? " (선택됨)" : ""}`}
+                      title={cellLabel}
                     />
                   );
                 })}
-              </div>
             </div>
           ))}
 
           {/* Aggregate "전원" row — the ONLY clickable row for selecting meeting time */}
           {members.length > 0 && (
-            <div style={{ borderTop: "1.5px solid #94a3b8", marginTop: 2, paddingTop: 2, display: "flex", alignItems: "center" }}>
-              <div style={{
-                width: NAME_WIDTH,
-                fontSize: 11,
-                fontWeight: 700,
-                color: "#1e293b",
-                flexShrink: 0,
-                paddingRight: 4,
-              }}>
+            <div role="row" style={{ borderTop: "1.5px solid #94a3b8", marginTop: 2, paddingTop: 2, display: "flex", alignItems: "center" }}>
+              <div
+                role="rowheader"
+                style={{
+                  width: NAME_WIDTH,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: "#1e293b",
+                  flexShrink: 0,
+                  paddingRight: 4,
+                }}
+              >
                 전원
               </div>
-              <div style={{ display: "flex" }}>
-                {aggregateAvailability.map((available, slotIdx) => {
+              {aggregateAvailability.map((available, slotIdx) => {
                   const isInSelection = isSlotInSelection(slotIdx, selectionStart, selectionEnd);
 
                   let bg: string;
@@ -393,9 +416,15 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
                   else if (isInSelection) bg = COLOR_AVAILABLE_SELECTED_AGG;
                   else bg = COLOR_AVAILABLE_AGG;
 
+                  const aggLabel = `전원 ${slotToTime(slotIdx)} ${available ? "가능" : "불가"}${isInSelection ? ", 선택됨" : ""}`;
                   return (
                     <div
                       key={slotIdx}
+                      id={`${gridId}-agg-${slotIdx}`}
+                      role="gridcell"
+                      tabIndex={-1}
+                      aria-selected={isInSelection}
+                      aria-label={aggLabel}
                       onClick={() => handleSlotClick(slotIdx)}
                       style={{
                         width: CELL_WIDTH,
@@ -405,13 +434,13 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
                         cursor: "pointer",
                         flexShrink: 0,
                         // 선택 테두리를 inset shadow로 통일 (색약 대응)
-                        boxShadow: isInSelection ? `inset 0 0 0 2px ${COLOR_SELECTION_BORDER}` : undefined,
+                        // 12px 셀에 2px 테두리는 과포화라 1px로. 추천 outline과 동시 활성 시에도 가독성 유지
+                        boxShadow: isInSelection ? `inset 0 0 0 1px ${COLOR_SELECTION_BORDER}` : undefined,
                       }}
-                      title={`전원 ${slotToTime(slotIdx)} ${available ? "가능" : "불가"}${isInSelection ? " (선택됨)" : ""}`}
+                      title={aggLabel}
                     />
                   );
                 })}
-              </div>
             </div>
           )}
 

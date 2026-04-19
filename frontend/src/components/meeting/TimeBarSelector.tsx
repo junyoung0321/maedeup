@@ -276,7 +276,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
 
       {/* Time grid */}
       <div style={{ overflowX: "auto", paddingBottom: 4 }}>
-        <div style={{ display: "inline-block", minWidth: "100%" }}>
+        <div style={{ display: "inline-block", minWidth: "100%", position: "relative" }}>
           {/* Hour labels */}
           <div style={{ display: "flex", marginLeft: NAME_WIDTH, marginBottom: 2 }}>
             {Array.from({ length: HOUR_END - HOUR_START }, (_, i) => (
@@ -296,7 +296,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
             ))}
           </div>
 
-          {/* Member rows */}
+          {/* Member rows (read-only: show each member's availability, NOT clickable) */}
           {members.map((member) => (
             <div key={member.name} style={{ display: "flex", alignItems: "center", marginBottom: 2 }}>
               <div style={{
@@ -315,28 +315,21 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
               <div style={{ display: "flex" }}>
                 {Array.from({ length: TOTAL_SLOTS }, (_, slotIdx) => {
                   const isBusy = isBusyAtSlot(member.periods, date, slotIdx);
-                  const isInSelection = selectionStart !== null &&
-                    ((selectionEnd !== null && slotIdx >= selectionStart && slotIdx <= selectionEnd) ||
-                     (selectionEnd === null && slotIdx === selectionStart));
                   const isRecommended = recommendedRange &&
                     slotIdx >= recommendedRange.start && slotIdx <= recommendedRange.end;
 
                   return (
                     <div
                       key={slotIdx}
-                      onClick={() => handleSlotClick(slotIdx)}
                       style={{
                         width: CELL_WIDTH,
                         height: CELL_HEIGHT,
                         background: isBusy ? "#e2e8f0" : "#bbf7d0",
                         borderLeft: slotIdx % 2 === 0 ? "1px solid rgba(0,0,0,0.06)" : "none",
                         borderBottom: "1px solid rgba(0,0,0,0.04)",
-                        borderTop: isInSelection ? "2px solid #4f46e5" : undefined,
-                        cursor: "pointer",
                         flexShrink: 0,
-                        outline: isRecommended && !isBusy && !isInSelection ? "1px solid #3B82F6" : "none",
+                        outline: isRecommended && !isBusy ? "1px solid #3B82F6" : "none",
                         outlineOffset: -1,
-                        boxShadow: isInSelection ? "inset 0 -2px 0 #4f46e5" : undefined,
                       }}
                       title={`${member.name} ${slotToTime(slotIdx)} ${isBusy ? "불가" : "가능"}`}
                     />
@@ -346,45 +339,62 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
             </div>
           ))}
 
-          {/* Aggregate "전원" row */}
+          {/* Aggregate "전원" row — the ONLY clickable row for selecting meeting time */}
           {members.length > 0 && (
-            <>
-              <div style={{ borderTop: "1.5px solid #94a3b8", marginTop: 2, paddingTop: 2, display: "flex", alignItems: "center" }}>
-                <div style={{
-                  width: NAME_WIDTH,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  color: "#1e293b",
-                  flexShrink: 0,
-                  paddingRight: 4,
-                }}>
-                  전원
-                </div>
-                <div style={{ display: "flex" }}>
-                  {aggregateAvailability.map((available, slotIdx) => {
-                    const isInSelection = selectionStart !== null &&
-                      ((selectionEnd !== null && slotIdx >= selectionStart && slotIdx <= selectionEnd) ||
-                       (selectionEnd === null && slotIdx === selectionStart));
-
-                    return (
-                      <div
-                        key={slotIdx}
-                        onClick={() => handleSlotClick(slotIdx)}
-                        style={{
-                          width: CELL_WIDTH,
-                          height: CELL_HEIGHT,
-                          background: !available ? "#e2e8f0" : isInSelection ? "#818cf8" : "#22c55e",
-                          borderLeft: slotIdx % 2 === 0 ? "1px solid rgba(0,0,0,0.06)" : "none",
-                          cursor: "pointer",
-                          flexShrink: 0,
-                        }}
-                        title={`전원 ${slotToTime(slotIdx)} ${available ? "가능" : "불가"}`}
-                      />
-                    );
-                  })}
-                </div>
+            <div style={{ borderTop: "1.5px solid #94a3b8", marginTop: 2, paddingTop: 2, display: "flex", alignItems: "center" }}>
+              <div style={{
+                width: NAME_WIDTH,
+                fontSize: 11,
+                fontWeight: 700,
+                color: "#1e293b",
+                flexShrink: 0,
+                paddingRight: 4,
+              }}>
+                전원
               </div>
-            </>
+              <div style={{ display: "flex" }}>
+                {aggregateAvailability.map((available, slotIdx) => {
+                  const isInSelection = selectionStart !== null &&
+                    ((selectionEnd !== null && slotIdx >= selectionStart && slotIdx <= selectionEnd) ||
+                     (selectionEnd === null && slotIdx === selectionStart));
+
+                  return (
+                    <div
+                      key={slotIdx}
+                      onClick={() => handleSlotClick(slotIdx)}
+                      style={{
+                        width: CELL_WIDTH,
+                        height: CELL_HEIGHT,
+                        background: !available ? "#e2e8f0" : isInSelection ? "#6366f1" : "#22c55e",
+                        borderLeft: slotIdx % 2 === 0 ? "1px solid rgba(0,0,0,0.06)" : "none",
+                        cursor: "pointer",
+                        flexShrink: 0,
+                      }}
+                      title={`전원 ${slotToTime(slotIdx)} ${available ? "가능" : "불가"}`}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Selection overlay — vertical band spanning all rows to visualize chosen range */}
+          {selectionStart !== null && (
+            <div
+              style={{
+                position: "absolute",
+                left: NAME_WIDTH + selectionStart * CELL_WIDTH,
+                top: HEADER_HEIGHT,
+                bottom: 0,
+                width:
+                  ((selectionEnd !== null ? selectionEnd - selectionStart + 1 : 1) *
+                    CELL_WIDTH),
+                background: "rgba(99, 102, 241, 0.22)",
+                border: "2px solid #4f46e5",
+                borderRadius: 6,
+                pointerEvents: "none",
+              }}
+            />
           )}
         </div>
       </div>

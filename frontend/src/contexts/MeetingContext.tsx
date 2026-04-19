@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import type { AiTriggerIntent, ContextMode, PlaceResult } from "@/types";
 import type { VoteCardPayload, VoteUpdatePayload, PlaceRecommendationPayload, VoteCardTimeOption } from "@/hooks/useAgentWebSocket";
+import type { PeerSelection } from "@/hooks/useSocialWebSocket";
 
 // ┌─────────────────┐    setVoteCard/etc     ┌──────────────┐
 // │ AiAssistantPane │ ─────────────────────→ │ MeetingContext│
@@ -44,6 +45,8 @@ interface MeetingState {
   confirmedDate: string | null; // "YYYY-MM-DD"
   confirmedTimeRange: { startAt: string; endAt: string } | null;
   confirmedMeetingId: number | null;
+  // 실시간으로 다른 참여자들이 캘린더에서 선택한 날짜 공유용
+  peerDateSelections: Record<string, PeerSelection>;
 }
 
 interface MeetingContextValue extends MeetingState {
@@ -65,6 +68,10 @@ interface MeetingContextValue extends MeetingState {
   // sendMessage bridge: AiAssistantPane registers, CalendarPane uses
   sendMessageToAi: ((msg: string) => void) | null;
   setSendMessageToAi: (fn: ((msg: string) => void) | null) => void;
+  // 날짜 선택 공유 bridge: ChatPane의 social WS와 CalendarPane을 연결
+  setPeerDateSelections: (selections: Record<string, PeerSelection>) => void;
+  sendDateSelection: ((date: string | null) => void) | null;
+  setSendDateSelection: (fn: ((date: string | null) => void) | null) => void;
 }
 
 export const MeetingContext = createContext<MeetingContextValue | null>(null);
@@ -94,11 +101,21 @@ export function MeetingProvider({
     confirmedDate: null,
     confirmedTimeRange: null,
     confirmedMeetingId: null,
+    peerDateSelections: {},
   });
 
   const [sendMessageToAi, setSendMessageToAiRaw] = useState<((msg: string) => void) | null>(null);
   const setSendMessageToAi = useCallback((fn: ((msg: string) => void) | null) => {
     setSendMessageToAiRaw(() => fn);
+  }, []);
+
+  const [sendDateSelection, setSendDateSelectionRaw] = useState<((date: string | null) => void) | null>(null);
+  const setSendDateSelection = useCallback((fn: ((date: string | null) => void) | null) => {
+    setSendDateSelectionRaw(() => fn);
+  }, []);
+
+  const setPeerDateSelections = useCallback((selections: Record<string, PeerSelection>) => {
+    setState((prev) => ({ ...prev, peerDateSelections: selections }));
   }, []);
 
   const setContextMode = useCallback((mode: ContextMode) => {
@@ -257,6 +274,10 @@ export function MeetingProvider({
       confirmedDate: state.confirmedDate,
       confirmedTimeRange: state.confirmedTimeRange,
       confirmedMeetingId: state.confirmedMeetingId,
+      peerDateSelections: state.peerDateSelections,
+      setPeerDateSelections,
+      sendDateSelection,
+      setSendDateSelection,
       setContextMode,
       setSelectedPlace,
       setRoom,
@@ -289,6 +310,10 @@ export function MeetingProvider({
       state.confirmedDate,
       state.confirmedTimeRange,
       state.confirmedMeetingId,
+      state.peerDateSelections,
+      setPeerDateSelections,
+      sendDateSelection,
+      setSendDateSelection,
       setAiTriggerIntent,
       setContextMode,
       refreshCalendar,

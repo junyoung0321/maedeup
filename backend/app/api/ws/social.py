@@ -161,6 +161,33 @@ async def social_ws(
             except json.JSONDecodeError:
                 continue
 
+            msg_type = payload.get("type")
+
+            # ── 날짜 선택 공유 이벤트: DB 저장 없이 broadcast만 ─────────────
+            if msg_type == "date_selection":
+                raw_date = payload.get("date")
+                date_value: str | None = None
+                if isinstance(raw_date, str) and len(raw_date) == 10:
+                    # YYYY-MM-DD 기본 검증
+                    if raw_date[4] == "-" and raw_date[7] == "-":
+                        date_value = raw_date
+                sender = payload.get("sender")
+                try:
+                    peer_user_id: int | None = int(token_payload.get("sub", ""))
+                except (TypeError, ValueError):
+                    peer_user_id = None
+                out = json.dumps(
+                    {
+                        "type": "peer_date_selection",
+                        "user_id": peer_user_id,
+                        "sender": sender,
+                        "date": date_value,
+                    },
+                    ensure_ascii=False,
+                )
+                await _publish_social_message(r, channel, out)
+                continue
+
             role = payload.get("role", "user")
             content = payload.get("content", "")
             sender = payload.get("sender")

@@ -12,7 +12,6 @@ const TOTAL_SLOTS = ((HOUR_END - HOUR_START) * 60) / SLOT_MINUTES; // 26 slots
 const CELL_WIDTH = 12;
 const CELL_HEIGHT = 28;
 const NAME_WIDTH = 56;
-const HEADER_HEIGHT = 20;
 
 interface MemberBusyPeriod {
   start: string;
@@ -276,7 +275,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
 
       {/* Time grid */}
       <div style={{ overflowX: "auto", paddingBottom: 4 }}>
-        <div style={{ display: "inline-block", minWidth: "100%", position: "relative" }}>
+        <div style={{ display: "inline-block", minWidth: "100%" }}>
           {/* Hour labels */}
           <div style={{ display: "flex", marginLeft: NAME_WIDTH, marginBottom: 2 }}>
             {Array.from({ length: HOUR_END - HOUR_START }, (_, i) => (
@@ -296,8 +295,8 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
             ))}
           </div>
 
-          {/* Member rows — 모든 칸이 모임 전체의 단일 시간 선택을 트리거 (UX 일관성).
-              개별 칸 배경색은 그 사람의 가능/불가만 표시하고, 선택된 범위는 아래 overlay로 덮음. */}
+          {/* Member rows — 모든 셀이 모임 전체의 단일 시간 선택을 트리거.
+              멤버의 가능/불가 색은 유지하면서, 선택된 slot에만 연한 보라 블렌딩으로 하이라이트 */}
           {members.map((member) => (
             <div key={member.name} style={{ display: "flex", alignItems: "center", marginBottom: 2 }}>
               <div style={{
@@ -316,8 +315,17 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
               <div style={{ display: "flex" }}>
                 {Array.from({ length: TOTAL_SLOTS }, (_, slotIdx) => {
                   const isBusy = isBusyAtSlot(member.periods, date, slotIdx);
+                  const isInSelection = selectionStart !== null &&
+                    ((selectionEnd !== null && slotIdx >= selectionStart && slotIdx <= selectionEnd) ||
+                     (selectionEnd === null && slotIdx === selectionStart));
                   const isRecommended = recommendedRange &&
                     slotIdx >= recommendedRange.start && slotIdx <= recommendedRange.end;
+
+                  // 배경색 우선순위: busy > 선택+가능(연한 보라) > 가능(초록)
+                  let bg: string;
+                  if (isBusy) bg = isInSelection ? "#cbd5e1" : "#e2e8f0";
+                  else if (isInSelection) bg = "#a5b4fc";
+                  else bg = "#bbf7d0";
 
                   return (
                     <div
@@ -326,12 +334,12 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
                       style={{
                         width: CELL_WIDTH,
                         height: CELL_HEIGHT,
-                        background: isBusy ? "#e2e8f0" : "#bbf7d0",
+                        background: bg,
                         borderLeft: slotIdx % 2 === 0 ? "1px solid rgba(0,0,0,0.06)" : "none",
                         borderBottom: "1px solid rgba(0,0,0,0.04)",
                         cursor: "pointer",
                         flexShrink: 0,
-                        outline: isRecommended && !isBusy ? "1px solid #3B82F6" : "none",
+                        outline: isRecommended && !isBusy && !isInSelection ? "1px solid #3B82F6" : "none",
                         outlineOffset: -1,
                       }}
                       title={`${member.name} ${slotToTime(slotIdx)} ${isBusy ? "불가" : "가능"}`}
@@ -361,6 +369,12 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
                     ((selectionEnd !== null && slotIdx >= selectionStart && slotIdx <= selectionEnd) ||
                      (selectionEnd === null && slotIdx === selectionStart));
 
+                  // 전원 row는 합의 기준이라 선택 시 진한 보라로 강조
+                  let bg: string;
+                  if (!available) bg = isInSelection ? "#cbd5e1" : "#e2e8f0";
+                  else if (isInSelection) bg = "#6366f1";
+                  else bg = "#22c55e";
+
                   return (
                     <div
                       key={slotIdx}
@@ -368,7 +382,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
                       style={{
                         width: CELL_WIDTH,
                         height: CELL_HEIGHT,
-                        background: !available ? "#e2e8f0" : isInSelection ? "#6366f1" : "#22c55e",
+                        background: bg,
                         borderLeft: slotIdx % 2 === 0 ? "1px solid rgba(0,0,0,0.06)" : "none",
                         cursor: "pointer",
                         flexShrink: 0,
@@ -381,24 +395,6 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
             </div>
           )}
 
-          {/* Selection overlay — vertical band spanning all rows to visualize chosen range */}
-          {selectionStart !== null && (
-            <div
-              style={{
-                position: "absolute",
-                left: NAME_WIDTH + selectionStart * CELL_WIDTH,
-                top: HEADER_HEIGHT,
-                bottom: 0,
-                width:
-                  ((selectionEnd !== null ? selectionEnd - selectionStart + 1 : 1) *
-                    CELL_WIDTH),
-                background: "rgba(99, 102, 241, 0.22)",
-                border: "2px solid #4f46e5",
-                borderRadius: 6,
-                pointerEvents: "none",
-              }}
-            />
-          )}
         </div>
       </div>
 

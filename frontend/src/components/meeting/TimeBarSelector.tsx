@@ -328,13 +328,15 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
                       style={{
                         width: CELL_WIDTH,
                         height: CELL_HEIGHT,
-                        background: isBusy ? "#e2e8f0" : isInSelection ? "#818cf8" : "#bbf7d0",
+                        background: isBusy ? "#e2e8f0" : "#bbf7d0",
                         borderLeft: slotIdx % 2 === 0 ? "1px solid rgba(0,0,0,0.06)" : "none",
                         borderBottom: "1px solid rgba(0,0,0,0.04)",
+                        borderTop: isInSelection ? "2px solid #4f46e5" : undefined,
                         cursor: "pointer",
                         flexShrink: 0,
                         outline: isRecommended && !isBusy && !isInSelection ? "1px solid #3B82F6" : "none",
                         outlineOffset: -1,
+                        boxShadow: isInSelection ? "inset 0 -2px 0 #4f46e5" : undefined,
                       }}
                       title={`${member.name} ${slotToTime(slotIdx)} ${isBusy ? "불가" : "가능"}`}
                     />

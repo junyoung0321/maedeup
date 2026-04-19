@@ -121,7 +121,15 @@ export default function InfoPane() {
               <ChevronLeft style={{ width: 16, height: 16 }} />
               돌아가기
             </button>
-            <PlaceDetailPane place={selectedPlace} roomId={roomId} />
+            <PlaceDetailPane
+              place={selectedPlace}
+              roomId={roomId}
+              meetingId={confirmedMeetingId}
+              onConfirmed={() => {
+                handlePlaceConfirmed();
+                setSelectedPlace(null);
+              }}
+            />
           </div>
         </>
       ) : (

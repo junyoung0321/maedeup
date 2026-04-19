@@ -16,9 +16,11 @@ declare global {
 interface Props {
   place: PlaceResult | null;
   roomId?: string;
+  meetingId?: number | null;
+  onConfirmed?: () => void;
 }
 
-export default function PlaceDetailPane({ place, roomId }: Props) {
+export default function PlaceDetailPane({ place, roomId, meetingId, onConfirmed }: Props) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
   const markerRef = useRef<any>(null);
@@ -86,31 +88,39 @@ export default function PlaceDetailPane({ place, roomId }: Props) {
   }, [place?.id]);
 
   /* ── Confirm handler ─────────────────────────────────── */
-  const parsedRoomId = Number.parseInt(roomId ?? "", 10);
-  const hasValidRoom = Number.isFinite(parsedRoomId);
+  const hasValidMeeting = typeof meetingId === "number" && Number.isFinite(meetingId);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
 
   const handleSelect = async () => {
-    if (!place || !hasValidRoom) return;
-    const now = new Date().toISOString();
+    if (!place || !hasValidMeeting) return;
+    setIsConfirming(true);
+    setConfirmError(null);
     try {
-      await apiFetch("/api/v1/events/", {
-        method: "POST",
+      await apiFetch(`/api/v1/meetings/${meetingId}/place`, {
+        method: "PATCH",
         body: JSON.stringify({
-          title: place.name,
-          location_name: place.address,
-          latitude: place.y ? parseFloat(place.y) : null,
-          longitude: place.x ? parseFloat(place.x) : null,
-          starts_at: now,
-          kakao_place_id: place.id,
-          kakao_place_url: place.url || null,
-          room_id: parsedRoomId,
+          place_id: place.id,
+          name: place.name,
+          address: place.address,
+          url: place.url || null,
         }),
       });
       setConfirmed(true);
-    } catch {
-      /* API unavailable */
+      onConfirmed?.();
+    } catch (error) {
+      setConfirmError(
+        error instanceof Error && error.message
+          ? error.message
+          : "장소 확정에 실패했습니다.",
+      );
+    } finally {
+      setIsConfirming(false);
     }
   };
+
+  // roomId는 현재 handler에서 사용하지 않지만, 향후 확장을 위해 prop으로 유지
+  void roomId;
 
   /* ── Distance display ────────────────────────────────── */
   const distanceLabel = (() => {
@@ -383,7 +393,7 @@ export default function PlaceDetailPane({ place, roomId }: Props) {
       </div>
 
       {/* Bottom button */}
-      <div style={{ padding: "16px 20px 20px" }}>
+      <div style={{ padding: "16px 20px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
         {confirmed ? (
           <div
             style={{
@@ -401,24 +411,31 @@ export default function PlaceDetailPane({ place, roomId }: Props) {
             이 장소가 확정되었습니다
           </div>
         ) : (
-          <button
-            onClick={handleSelect}
-            disabled={!place || !hasValidRoom}
-            style={{
-              width: "100%",
-              height: 44,
-              background: place && hasValidRoom ? "#4f46e5" : "#cbd5e1",
-              color: "#ffffff",
-              fontSize: 14,
-              fontWeight: 500,
-              borderRadius: 12,
-              border: "none",
-              cursor: place ? "pointer" : "not-allowed",
-              fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-            }}
-          >
-            이 장소로 확정
-          </button>
+          <>
+            <button
+              onClick={handleSelect}
+              disabled={!place || !hasValidMeeting || isConfirming}
+              style={{
+                width: "100%",
+                height: 44,
+                background: place && hasValidMeeting && !isConfirming ? "#4f46e5" : "#cbd5e1",
+                color: "#ffffff",
+                fontSize: 14,
+                fontWeight: 500,
+                borderRadius: 12,
+                border: "none",
+                cursor: place && hasValidMeeting && !isConfirming ? "pointer" : "not-allowed",
+                fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+              }}
+            >
+              {isConfirming ? "확정 중..." : hasValidMeeting ? "이 장소로 확정" : "일정을 먼저 확정해주세요"}
+            </button>
+            {confirmError && (
+              <span style={{ fontSize: 13, fontWeight: 500, color: "#dc2626", textAlign: "center" }}>
+                {confirmError}
+              </span>
+            )}
+          </>
         )}
       </div>
     </div>

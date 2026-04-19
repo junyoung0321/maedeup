@@ -173,6 +173,54 @@ async def social_ws(
 
             msg_type = payload.get("type")
 
+            # ── 시간 선택 공유 이벤트: When2Meet 스타일, DB 저장 없이 broadcast ─
+            if msg_type == "time_selection":
+                raw_date = payload.get("date")
+                date_value: str | None = None
+                if isinstance(raw_date, str) and len(raw_date) == 10:
+                    if raw_date[4] == "-" and raw_date[7] == "-":
+                        date_value = raw_date
+                # slot 범위는 0..TIME_SLOT_MAX-1 (30분 단위, 9~22시 기준 총 26개). 프론트와 동일.
+                TIME_SLOT_MAX = 26
+                raw_start = payload.get("start")
+                raw_end = payload.get("end")
+
+                def _to_slot(v: object) -> int | None:
+                    # bool은 int의 서브클래스라 먼저 차단 (True→1, False→0 실수 방지)
+                    if isinstance(v, bool):
+                        return None
+                    if not isinstance(v, (int, float)):
+                        return None
+                    if isinstance(v, float) and (v != v):  # NaN 방어
+                        return None
+                    iv = int(v)
+                    if iv < 0 or iv >= TIME_SLOT_MAX:
+                        return None
+                    return iv
+
+                start_value = _to_slot(raw_start)
+                end_value = _to_slot(raw_end)
+                # start/end 둘 중 하나만 유효하거나 역순이면 해제로 간주
+                if start_value is None or end_value is None:
+                    start_value = None
+                    end_value = None
+                elif start_value > end_value:
+                    start_value, end_value = end_value, start_value
+
+                out = json.dumps(
+                    {
+                        "type": "peer_time_selection",
+                        "user_id": authed_user_id,
+                        "sender": authed_user_name,
+                        "date": date_value,
+                        "start": start_value,
+                        "end": end_value,
+                    },
+                    ensure_ascii=False,
+                )
+                await _publish_social_message(r, channel, out)
+                continue
+
             # ── 날짜 선택 공유 이벤트: DB 저장 없이 broadcast만 ─────────────
             if msg_type == "date_selection":
                 raw_date = payload.get("date")

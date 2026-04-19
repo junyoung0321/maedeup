@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import type { AiTriggerIntent, ContextMode, PlaceResult } from "@/types";
 import type { VoteCardPayload, VoteUpdatePayload, PlaceRecommendationPayload, VoteCardTimeOption } from "@/hooks/useAgentWebSocket";
-import type { PeerSelection } from "@/hooks/useSocialWebSocket";
+import type { PeerSelection, PeerTimeSelection } from "@/hooks/useSocialWebSocket";
 
 // ┌─────────────────┐    setVoteCard/etc     ┌──────────────┐
 // │ AiAssistantPane │ ─────────────────────→ │ MeetingContext│
@@ -47,6 +47,8 @@ interface MeetingState {
   confirmedMeetingId: number | null;
   // 실시간으로 다른 참여자들이 캘린더에서 선택한 날짜 공유용
   peerDateSelections: Record<string, PeerSelection>;
+  // 실시간으로 다른 참여자들이 TimeBar에서 선택한 시간 범위 공유용
+  peerTimeSelections: Record<string, PeerTimeSelection>;
 }
 
 interface MeetingContextValue extends MeetingState {
@@ -72,6 +74,10 @@ interface MeetingContextValue extends MeetingState {
   setPeerDateSelections: (selections: Record<string, PeerSelection>) => void;
   sendDateSelection: ((date: string | null) => void) | null;
   setSendDateSelection: (fn: ((date: string | null) => void) | null) => void;
+  // 시간 선택 공유 bridge: ChatPane WS와 TimeBarSelector를 연결
+  setPeerTimeSelections: (selections: Record<string, PeerTimeSelection>) => void;
+  sendTimeSelection: ((date: string | null, start: number | null, end: number | null) => void) | null;
+  setSendTimeSelection: (fn: ((date: string | null, start: number | null, end: number | null) => void) | null) => void;
 }
 
 export const MeetingContext = createContext<MeetingContextValue | null>(null);
@@ -102,6 +108,7 @@ export function MeetingProvider({
     confirmedTimeRange: null,
     confirmedMeetingId: null,
     peerDateSelections: {},
+    peerTimeSelections: {},
   });
 
   const [sendMessageToAi, setSendMessageToAiRaw] = useState<((msg: string) => void) | null>(null);
@@ -116,6 +123,19 @@ export function MeetingProvider({
 
   const setPeerDateSelections = useCallback((selections: Record<string, PeerSelection>) => {
     setState((prev) => ({ ...prev, peerDateSelections: selections }));
+  }, []);
+
+  const [sendTimeSelection, setSendTimeSelectionRaw] =
+    useState<((date: string | null, start: number | null, end: number | null) => void) | null>(null);
+  const setSendTimeSelection = useCallback(
+    (fn: ((date: string | null, start: number | null, end: number | null) => void) | null) => {
+      setSendTimeSelectionRaw(() => fn);
+    },
+    [],
+  );
+
+  const setPeerTimeSelections = useCallback((selections: Record<string, PeerTimeSelection>) => {
+    setState((prev) => ({ ...prev, peerTimeSelections: selections }));
   }, []);
 
   const setContextMode = useCallback((mode: ContextMode) => {
@@ -278,6 +298,10 @@ export function MeetingProvider({
       setPeerDateSelections,
       sendDateSelection,
       setSendDateSelection,
+      peerTimeSelections: state.peerTimeSelections,
+      setPeerTimeSelections,
+      sendTimeSelection,
+      setSendTimeSelection,
       setContextMode,
       setSelectedPlace,
       setRoom,
@@ -314,6 +338,10 @@ export function MeetingProvider({
       setPeerDateSelections,
       sendDateSelection,
       setSendDateSelection,
+      state.peerTimeSelections,
+      setPeerTimeSelections,
+      sendTimeSelection,
+      setSendTimeSelection,
       setAiTriggerIntent,
       setContextMode,
       refreshCalendar,

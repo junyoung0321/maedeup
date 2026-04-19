@@ -296,7 +296,8 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
             ))}
           </div>
 
-          {/* Member rows (read-only: show each member's availability, NOT clickable) */}
+          {/* Member rows — 모든 칸이 모임 전체의 단일 시간 선택을 트리거 (UX 일관성).
+              개별 칸 배경색은 그 사람의 가능/불가만 표시하고, 선택된 범위는 아래 overlay로 덮음. */}
           {members.map((member) => (
             <div key={member.name} style={{ display: "flex", alignItems: "center", marginBottom: 2 }}>
               <div style={{
@@ -321,12 +322,14 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
                   return (
                     <div
                       key={slotIdx}
+                      onClick={() => handleSlotClick(slotIdx)}
                       style={{
                         width: CELL_WIDTH,
                         height: CELL_HEIGHT,
                         background: isBusy ? "#e2e8f0" : "#bbf7d0",
                         borderLeft: slotIdx % 2 === 0 ? "1px solid rgba(0,0,0,0.06)" : "none",
                         borderBottom: "1px solid rgba(0,0,0,0.04)",
+                        cursor: "pointer",
                         flexShrink: 0,
                         outline: isRecommended && !isBusy ? "1px solid #3B82F6" : "none",
                         outlineOffset: -1,

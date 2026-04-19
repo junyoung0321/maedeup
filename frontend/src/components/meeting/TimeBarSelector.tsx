@@ -13,6 +13,27 @@ const CELL_WIDTH = 12;
 const CELL_HEIGHT = 28;
 const NAME_WIDTH = 56;
 
+// TODO(tech-debt): 아래 hex 색상들은 디자인 토큰(Tailwind theme)으로 추출 예정.
+// 현재 inline style 범벅이라 다크모드 대응 시 일괄 교체 필요.
+const COLOR_BUSY = "#e2e8f0";
+const COLOR_BUSY_SELECTED = "#cbd5e1";
+const COLOR_AVAILABLE = "#bbf7d0";
+const COLOR_AVAILABLE_SELECTED_MEMBER = "#a5b4fc"; // 멤버 행: 연한 보라
+const COLOR_AVAILABLE_AGG = "#22c55e";
+const COLOR_AVAILABLE_SELECTED_AGG = "#6366f1"; // 전원 행: 진한 보라 (합의 기준 강조)
+const COLOR_RECOMMEND_OUTLINE = "#3B82F6";
+const COLOR_SELECTION_BORDER = "#4f46e5";
+
+function isSlotInSelection(
+  slotIdx: number,
+  selectionStart: number | null,
+  selectionEnd: number | null,
+): boolean {
+  if (selectionStart === null) return false;
+  if (selectionEnd === null) return slotIdx === selectionStart;
+  return slotIdx >= selectionStart && slotIdx <= selectionEnd;
+}
+
 interface MemberBusyPeriod {
   start: string;
   end: string;
@@ -315,17 +336,14 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
               <div style={{ display: "flex" }}>
                 {Array.from({ length: TOTAL_SLOTS }, (_, slotIdx) => {
                   const isBusy = isBusyAtSlot(member.periods, date, slotIdx);
-                  const isInSelection = selectionStart !== null &&
-                    ((selectionEnd !== null && slotIdx >= selectionStart && slotIdx <= selectionEnd) ||
-                     (selectionEnd === null && slotIdx === selectionStart));
-                  const isRecommended = recommendedRange &&
+                  const isInSelection = isSlotInSelection(slotIdx, selectionStart, selectionEnd);
+                  const isRecommended = !!recommendedRange &&
                     slotIdx >= recommendedRange.start && slotIdx <= recommendedRange.end;
 
-                  // 배경색 우선순위: busy > 선택+가능(연한 보라) > 가능(초록)
                   let bg: string;
-                  if (isBusy) bg = isInSelection ? "#cbd5e1" : "#e2e8f0";
-                  else if (isInSelection) bg = "#a5b4fc";
-                  else bg = "#bbf7d0";
+                  if (isBusy) bg = isInSelection ? COLOR_BUSY_SELECTED : COLOR_BUSY;
+                  else if (isInSelection) bg = COLOR_AVAILABLE_SELECTED_MEMBER;
+                  else bg = COLOR_AVAILABLE;
 
                   return (
                     <div
@@ -339,10 +357,13 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
                         borderBottom: "1px solid rgba(0,0,0,0.04)",
                         cursor: "pointer",
                         flexShrink: 0,
-                        outline: isRecommended && !isBusy && !isInSelection ? "1px solid #3B82F6" : "none",
+                        // 추천 outline은 선택과 무관하게 항상 유지 (색상 겹침 회피)
+                        outline: isRecommended && !isBusy ? `1px solid ${COLOR_RECOMMEND_OUTLINE}` : "none",
                         outlineOffset: -1,
+                        // 선택 표시는 inset shadow로 분리 → 색약 사용자도 테두리로 구분 가능
+                        boxShadow: isInSelection ? `inset 0 0 0 2px ${COLOR_SELECTION_BORDER}` : undefined,
                       }}
-                      title={`${member.name} ${slotToTime(slotIdx)} ${isBusy ? "불가" : "가능"}`}
+                      title={`${member.name} ${slotToTime(slotIdx)} ${isBusy ? "불가" : "가능"}${isInSelection ? " (선택됨)" : ""}`}
                     />
                   );
                 })}
@@ -365,15 +386,12 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
               </div>
               <div style={{ display: "flex" }}>
                 {aggregateAvailability.map((available, slotIdx) => {
-                  const isInSelection = selectionStart !== null &&
-                    ((selectionEnd !== null && slotIdx >= selectionStart && slotIdx <= selectionEnd) ||
-                     (selectionEnd === null && slotIdx === selectionStart));
+                  const isInSelection = isSlotInSelection(slotIdx, selectionStart, selectionEnd);
 
-                  // 전원 row는 합의 기준이라 선택 시 진한 보라로 강조
                   let bg: string;
-                  if (!available) bg = isInSelection ? "#cbd5e1" : "#e2e8f0";
-                  else if (isInSelection) bg = "#6366f1";
-                  else bg = "#22c55e";
+                  if (!available) bg = isInSelection ? COLOR_BUSY_SELECTED : COLOR_BUSY;
+                  else if (isInSelection) bg = COLOR_AVAILABLE_SELECTED_AGG;
+                  else bg = COLOR_AVAILABLE_AGG;
 
                   return (
                     <div
@@ -386,8 +404,10 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
                         borderLeft: slotIdx % 2 === 0 ? "1px solid rgba(0,0,0,0.06)" : "none",
                         cursor: "pointer",
                         flexShrink: 0,
+                        // 선택 테두리를 inset shadow로 통일 (색약 대응)
+                        boxShadow: isInSelection ? `inset 0 0 0 2px ${COLOR_SELECTION_BORDER}` : undefined,
                       }}
-                      title={`전원 ${slotToTime(slotIdx)} ${available ? "가능" : "불가"}`}
+                      title={`전원 ${slotToTime(slotIdx)} ${available ? "가능" : "불가"}${isInSelection ? " (선택됨)" : ""}`}
                     />
                   );
                 })}

@@ -16,11 +16,10 @@ const NAME_WIDTH = 56;
 // TODO(tech-debt): 아래 hex 색상들은 디자인 토큰(Tailwind theme)으로 추출 예정.
 // 현재 inline style 범벅이라 다크모드 대응 시 일괄 교체 필요.
 const COLOR_BUSY = "#e2e8f0";
-const COLOR_BUSY_SELECTED = "#cbd5e1";
-const COLOR_AVAILABLE = "#bbf7d0";
-const COLOR_AVAILABLE_SELECTED_MEMBER = "#a5b4fc"; // 멤버 행: 연한 보라
-const COLOR_AVAILABLE_AGG = "#22c55e";
-const COLOR_AVAILABLE_SELECTED_AGG = "#6366f1"; // 전원 행: 진한 보라 (합의 기준 강조)
+const COLOR_BUSY_SELECTED = "#cbd5e1"; // 전원 row에서 불가 slot이 선택 범위에 포함된 경우
+const COLOR_AVAILABLE = "#bbf7d0";     // 멤버 row 가능
+const COLOR_AVAILABLE_AGG = "#22c55e"; // 전원 row 가능
+const COLOR_AVAILABLE_SELECTED_AGG = "#6366f1"; // 전원 row: 선택 시 진한 보라
 const COLOR_RECOMMEND_OUTLINE = "#3B82F6";
 const COLOR_SELECTION_BORDER = "#4f46e5";
 
@@ -352,22 +351,19 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
               </div>
               {Array.from({ length: TOTAL_SLOTS }, (_, slotIdx) => {
                   const isBusy = isBusyAtSlot(member.periods, date, slotIdx);
-                  const isInSelection = isSlotInSelection(slotIdx, selectionStart, selectionEnd);
                   const isRecommended = !!recommendedRange &&
                     slotIdx >= recommendedRange.start && slotIdx <= recommendedRange.end;
 
-                  let bg: string;
-                  if (isBusy) bg = isInSelection ? COLOR_BUSY_SELECTED : COLOR_BUSY;
-                  else if (isInSelection) bg = COLOR_AVAILABLE_SELECTED_MEMBER;
-                  else bg = COLOR_AVAILABLE;
+                  // 멤버 row는 순수 조회용: 가능/불가만 표시. 시간 선택 하이라이트는
+                  // 아래 "전원" row에서만 노출 (사용자가 남의 시간에 개입한다는 오해 방지)
+                  const bg = isBusy ? COLOR_BUSY : COLOR_AVAILABLE;
+                  const cellLabel = `${member.name} ${slotToTime(slotIdx)} ${isBusy ? "불가" : "가능"}`;
 
-                  const cellLabel = `${member.name} ${slotToTime(slotIdx)} ${isBusy ? "불가" : "가능"}${isInSelection ? ", 선택됨" : ""}`;
                   return (
                     <div
                       key={slotIdx}
                       role="gridcell"
                       tabIndex={-1}
-                      aria-selected={isInSelection}
                       aria-label={cellLabel}
                       onClick={() => handleSlotClick(slotIdx)}
                       style={{
@@ -378,12 +374,8 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
                         borderBottom: "1px solid rgba(0,0,0,0.04)",
                         cursor: "pointer",
                         flexShrink: 0,
-                        // 추천 outline은 선택과 무관하게 항상 유지 (색상 겹침 회피)
                         outline: isRecommended && !isBusy ? `1px solid ${COLOR_RECOMMEND_OUTLINE}` : "none",
                         outlineOffset: -1,
-                        // 선택 표시는 inset shadow로 분리 → 색약 사용자도 테두리로 구분 가능
-                        // 12px 셀에 2px 테두리는 과포화라 1px로. 추천 outline과 동시 활성 시에도 가독성 유지
-                        boxShadow: isInSelection ? `inset 0 0 0 1px ${COLOR_SELECTION_BORDER}` : undefined,
                       }}
                       title={cellLabel}
                     />

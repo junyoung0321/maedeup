@@ -115,12 +115,14 @@ function MeetingPageInner() {
       <main
         style={{
           display: "flex",
-          justifyContent: "center",
-          alignItems: "flex-start",
-          gap: 53,
-          paddingTop: 24,
-          paddingLeft: 48,
-          paddingRight: 48,
+          alignItems: "stretch",
+          gap: 20,
+          padding: "16px 24px 24px",
+          height: "calc(100vh - 140px)",
+          minHeight: 500,
+          maxWidth: 1800,
+          margin: "0 auto",
+          width: "100%",
         }}
       >
         <ChatPane />

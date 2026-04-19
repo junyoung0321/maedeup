@@ -124,7 +124,10 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
   }, [members, date]);
 
   // AI recommended range: longest streak where all members are available
+  // Only show if there are actual members with calendar data, and cap at 4 hours (8 slots)
   const recommendedRange = useMemo(() => {
+    if (members.length === 0) return null; // No members → no recommendation
+    const MAX_RECOMMEND_SLOTS = 8; // 4 hours max
     let bestStart = -1, bestLen = 0, curStart = -1, curLen = 0;
     for (let i = 0; i < TOTAL_SLOTS; i++) {
       if (aggregateAvailability[i]) {
@@ -135,8 +138,10 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
         curStart = -1; curLen = 0;
       }
     }
-    if (bestLen >= 2) return { start: bestStart, end: bestStart + bestLen - 1 };
-    return null;
+    if (bestLen < 2) return null;
+    // Cap the recommended range
+    const cappedLen = Math.min(bestLen, MAX_RECOMMEND_SLOTS);
+    return { start: bestStart, end: bestStart + cappedLen - 1 };
   }, [aggregateAvailability]);
 
   const handleSlotClick = useCallback((slotIndex: number) => {

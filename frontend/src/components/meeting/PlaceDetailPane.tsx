@@ -122,8 +122,8 @@ export default function PlaceDetailPane({ place, roomId }: Props) {
   return (
     <div
       style={{
-        width: 414,
-        minHeight: 733,
+        width: "100%",
+        minHeight: 400,
         borderRadius: 20,
         border: "1px solid #e2e8f0",
         boxShadow: "0 4px 3.5px rgba(0,0,0,0.25)",

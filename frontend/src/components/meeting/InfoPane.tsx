@@ -9,8 +9,7 @@ import TimeBarSelector from "@/components/meeting/TimeBarSelector";
 import { useMeeting } from "@/contexts/MeetingContext";
 import type { PlaceResult } from "@/types";
 
-const PANE_WIDTH = 414;
-const PANE_HEIGHT = 733;
+// Removed fixed dimensions — uses flex layout from parent
 
 export default function InfoPane() {
   const {
@@ -32,10 +31,10 @@ export default function InfoPane() {
   } = useMeeting();
 
   const hasSelectedPlace = selectedPlace !== null;
-  // Non-phased flow: place-only (no vote card, just place recommendation)
-  const isPlaceOnlyFlow = !voteCard && placeRecommendation !== null;
-  // Phased flow: vote card is present
-  const isPhasedFlow = voteCard !== null;
+  // Non-phased flow: place-only (no vote card, just place recommendation, not manually started)
+  const isPlaceOnlyFlow = !voteCard && placeRecommendation !== null && infoPanePhase === "idle";
+  // Phased flow: vote card present OR user manually started the flow
+  const isPhasedFlow = voteCard !== null || infoPanePhase !== "idle";
 
   const handlePlaceClick = (place: PlaceResult) => {
     setSelectedPlace(place);
@@ -85,8 +84,8 @@ export default function InfoPane() {
   return (
     <div
       style={{
-        width: PANE_WIDTH,
-        height: PANE_HEIGHT,
+        flex: 1,
+        minWidth: 300,
         display: "flex",
         flexDirection: "column",
         overflowY: "auto",

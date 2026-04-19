@@ -202,8 +202,8 @@ export default function AiAssistantPane() {
   return (
     <div
       style={{
-        width: 414,
-        height: 733,
+        flex: 1,
+        minWidth: 300,
         borderRadius: 20,
         border: "1px solid #e2e8f0",
         boxShadow: "0 4px 3.5px rgba(0,0,0,0.25)",

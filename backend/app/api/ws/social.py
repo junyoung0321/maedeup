@@ -16,6 +16,7 @@ from app.db.session import AsyncSessionLocal
 from app.models.chat import ChatMessage, PaneType
 from app.models.room import RoomMember
 from app.services.intent_classifier import classify_intent
+from app.services.stalemate_judge import judge_stalemate
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -229,50 +230,66 @@ async def _detect_and_notify_intent(
     trigger_message_id: int,
 ) -> None:
     """
-    메시지 의도를 분류하고, 모임/장소 관련 의도가 감지되면:
+    메시지 의도를 분류하고, 대화 흐름에 개입이 필요한지 판정합니다.
 
-    - 메시지 카운터(social_trigger_count:{room_id})를 1 증가
-    - 카운터 >= 5 이고 결론이 아직 안 났으면 → auto_trigger 발행 (교착 개입)
-    - 결론 패턴이 감지되면 → 정리 카드용 auto_trigger 발행 + 카운터 리셋
-    - 카운터 < 5 이면 → 조용히 관찰 (트리거 발행 안 함)
+    1단계 — 경량 필터 (비용 0):
+        - classify_intent로 의도 추출 (meeting_schedule / place_suggestion / general)
+        - 모임 관련 의도면 intent_detected 이벤트 발행 (프론트 배너용)
+        - 모든 user 메시지에 대해 카운터 +1
+
+    2단계 — 조건부 LLM 판정 (쿨다운 있음):
+        - 카운터 >= 3 이고 60초 쿨다운 해제된 상태에서
+        - 최근 10개 메시지를 judge_stalemate에 보내 교착 여부 판정
+        - yes → auto_trigger 발행 + 카운터 리셋
+        - no → 쿨다운만 설정 (카운터 유지, 다음 메시지 기다림)
+
+    3단계 — 합의 감지 (regex 폴백):
+        - 확정/결정 패턴이 명확히 보이면 즉시 정리 카드 트리거
     """
     try:
         result = await classify_intent(content)
-        if result["intent"] not in _NOTIFIABLE_INTENTS or result["confidence"] < 0.6:
-            return
-
         room_id = channel.split(":", 1)[1] if ":" in channel else channel
-        counter_key = f"social_trigger_count:{room_id}"
+        counter_key = f"social_msg_count:{room_id}"
+        cooldown_key = f"social_judge_cooldown:{room_id}"
+        agent_channel = f"agent:{room_id}"
 
-        # intent_detected 이벤트는 항상 발행 (프론트엔드 배너용)
-        event = json.dumps(
-            {
-                "type": "intent_detected",
-                "intent": result["intent"],
-                "confidence": result["confidence"],
-                "method": result["method"],
-                "trigger_message_id": trigger_message_id,
-            }
-        )
-        await _publish_social_message(r, channel, event)
-
-        # ── 결론 감지: 합의 패턴이 보이면 정리 카드 트리거 + 카운터 리셋 ──
-        if _is_conclusion(content):
-            await r.delete(counter_key)
-            agent_channel = f"agent:{room_id}"
-            auto_trigger_event = json.dumps(
-                {
-                    "type": "ai_auto_trigger",
-                    "intent": result["intent"],
-                    "confidence": result["confidence"],
-                    "content": content,
-                    "trigger_message_id": trigger_message_id,
-                    "trigger_reason": "conclusion_detected",
-                },
-                ensure_ascii=False,
+        # ── 배너 알림: 모임 관련 의도면 프론트로 발행 ───────────────────
+        if (
+            result["intent"] in _NOTIFIABLE_INTENTS
+            and result["confidence"] >= 0.6
+        ):
+            await _publish_social_message(
+                r,
+                channel,
+                json.dumps(
+                    {
+                        "type": "intent_detected",
+                        "intent": result["intent"],
+                        "confidence": result["confidence"],
+                        "method": result["method"],
+                        "trigger_message_id": trigger_message_id,
+                    }
+                ),
             )
+
+        # ── 결론 감지: 명시적 합의 패턴 → 즉시 정리 카드 ────────────────
+        if _is_conclusion(content) and result["intent"] in _NOTIFIABLE_INTENTS:
+            await r.delete(counter_key)
             try:
-                await r.publish(agent_channel, auto_trigger_event)
+                await r.publish(
+                    agent_channel,
+                    json.dumps(
+                        {
+                            "type": "ai_auto_trigger",
+                            "intent": result["intent"],
+                            "confidence": result["confidence"],
+                            "content": content,
+                            "trigger_message_id": trigger_message_id,
+                            "trigger_reason": "conclusion_detected",
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
             except Exception:
                 logger.warning(
                     "Failed to publish conclusion auto_trigger to %s",
@@ -281,36 +298,94 @@ async def _detect_and_notify_intent(
                 )
             return
 
-        # ── 카운터 증가 및 교착 판단 ──────────────────────────────────
+        # ── 카운터 증가 (모든 user 메시지 대상) ──────────────────────────
         count = await r.incr(counter_key)
-        # 카운터에 TTL 설정 (10분 동안 활동 없으면 자동 리셋)
         await r.expire(counter_key, 600)
 
-        if count < 5:
-            # 아직 충분한 맥락이 없음 → 조용히 관찰
+        if count < 3:
             logger.debug(
-                "Meeting-related message count for room %s: %d (threshold: 5, skipping trigger)",
+                "Social msg count for room %s: %d (threshold: 3, skipping judge)",
                 room_id,
                 count,
             )
             return
 
-        # 카운터 >= 5: 교착 상태로 판단 → auto_trigger 발행 + 카운터 리셋
-        await r.delete(counter_key)
-        agent_channel = f"agent:{room_id}"
-        auto_trigger_event = json.dumps(
-            {
-                "type": "ai_auto_trigger",
-                "intent": result["intent"],
-                "confidence": result["confidence"],
-                "content": content,
-                "trigger_message_id": trigger_message_id,
-                "trigger_reason": "stalemate_detected",
-            },
-            ensure_ascii=False,
-        )
+        # ── 쿨다운 체크: 최근 60초 내 judge 호출이 있었다면 skip ─────────
+        if await r.get(cooldown_key):
+            logger.debug("Stalemate judge cooldown active for room %s", room_id)
+            return
+
+        # ── 최근 10개 메시지 로드 ────────────────────────────────────
         try:
-            await r.publish(agent_channel, auto_trigger_event)
+            room_pk = int(room_id)
+        except (TypeError, ValueError):
+            return
+
+        async with AsyncSessionLocal() as session:
+            rs = await session.execute(
+                select(ChatMessage)
+                .where(
+                    ChatMessage.room_id == room_pk,
+                    ChatMessage.pane_type == PaneType.social,
+                )
+                .order_by(ChatMessage.created_at.desc())
+                .limit(10)
+            )
+            recent = list(reversed(rs.scalars().all()))
+
+        msgs_for_judge = [
+            {"sender": m.sender or "익명", "content": m.content}
+            for m in recent
+            if m.content and m.content.strip()
+        ]
+        if not msgs_for_judge:
+            return
+
+        # ── LLM 판정 ────────────────────────────────────────────────
+        judgment = await judge_stalemate(msgs_for_judge)
+        # 판정 결과와 무관하게 60초 쿨다운 (연속 호출 방지)
+        await r.setex(cooldown_key, 60, "1")
+
+        if not judgment.get("stalemate"):
+            logger.debug(
+                "Stalemate judge says no for room %s: %s",
+                room_id,
+                judgment.get("reason"),
+            )
+            return
+
+        # ── 교착 확정 → auto_trigger 발행 + 카운터 리셋 ──────────────────
+        await r.delete(counter_key)
+
+        judged_intent = judgment.get("intent")
+        if judged_intent not in _NOTIFIABLE_INTENTS:
+            judged_intent = (
+                result["intent"]
+                if result["intent"] in _NOTIFIABLE_INTENTS
+                else "meeting_schedule"
+            )
+
+        try:
+            await r.publish(
+                agent_channel,
+                json.dumps(
+                    {
+                        "type": "ai_auto_trigger",
+                        "intent": judged_intent,
+                        "confidence": result["confidence"],
+                        "content": content,
+                        "trigger_message_id": trigger_message_id,
+                        "trigger_reason": "stalemate_judged",
+                        "judge_reason": judgment.get("reason", ""),
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            logger.info(
+                "Stalemate judge triggered for room %s: %s",
+                room_id,
+                judgment.get("reason"),
+            )
         except Exception:
             logger.warning(
                 "Failed to publish stalemate auto_trigger to %s",

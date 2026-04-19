@@ -19,19 +19,20 @@ export default function Header({ showSteps = false, currentStep = "schedule", ch
 
   return (
     <header>
-      <div className="h-[79px] bg-primary-600 flex items-center justify-between px-[clamp(12px,1.5vw,28px)] relative gap-3">
+      <div
+        className="h-[79px] bg-primary-600 items-center px-[clamp(12px,1.5vw,28px)] gap-3 grid"
+        style={{ gridTemplateColumns: "auto 1fr auto" }}
+      >
         <span
           className="text-white font-normal tracking-wide whitespace-nowrap"
           style={{ fontFamily: "Pretendard, sans-serif", fontSize: "clamp(18px, 6px + 1.25vw, 30px)" }}
         >
           매듭 : AI 모임 플래너
         </span>
-        {showSteps && (
-          <div className="absolute left-1/2 -translate-x-1/2">
-            <StepIndicator currentStep={currentStep} />
-          </div>
-        )}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center justify-center min-w-0 overflow-hidden">
+          {showSteps && <StepIndicator currentStep={currentStep} />}
+        </div>
+        <div className="flex items-center gap-3 justify-self-end">
           {children}
           <Link
             href="/settings"

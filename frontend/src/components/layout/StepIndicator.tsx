@@ -27,13 +27,15 @@ export default function StepIndicator({ currentStep }: StepIndicatorProps) {
           <div key={step.key} className="flex items-center gap-2">
             {i > 0 && (
               <ChevronRight
+                className="shrink-0"
                 style={{ width: 18, height: 18, color: "#818cf8" }}
               />
             )}
             <div
+              className="shrink-0"
               style={{
-                width: 42,
-                height: 37,
+                width: "clamp(28px, 1.8vw + 12px, 42px)",
+                aspectRatio: "42 / 37",
                 borderRadius: 90,
                 display: "flex",
                 alignItems: "center",
@@ -48,15 +50,16 @@ export default function StepIndicator({ currentStep }: StepIndicatorProps) {
             >
               <Icon
                 style={{
-                  width: 20,
-                  height: 20,
+                  width: "clamp(14px, 0.8vw + 8px, 20px)",
+                  height: "clamp(14px, 0.8vw + 8px, 20px)",
                   color: isActive ? "#ffffff" : "#4338ca",
                 }}
               />
             </div>
             <span
+              className="hidden lg:inline whitespace-nowrap"
               style={{
-                fontSize: 20,
+                fontSize: "clamp(14px, 0.6vw + 8px, 20px)",
                 letterSpacing: 0.6,
                 fontFamily: "Pretendard, sans-serif",
                 fontWeight: isActive ? 500 : 300,

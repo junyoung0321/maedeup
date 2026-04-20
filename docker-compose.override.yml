@@ -21,9 +21,13 @@ services:
     container_name: maedeup-cr-api
     ports: !override
       - "8001:8000"
-    # Override CORS origin so the cr-stack frontend (port 3001) is trusted.
+    # Override CORS origin + Google OAuth callback so cr-stack (3001/8001) is
+    # fully independent from the main stack (3000/8000). The callback URI
+    # below must ALSO be registered in Google Cloud Console → Credentials →
+    # OAuth 2.0 Client → "Authorized redirect URIs".
     environment:
       FRONTEND_URL: "http://localhost:3001"
+      GOOGLE_REDIRECT_URI: "http://localhost:8001/auth/google/callback"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
 

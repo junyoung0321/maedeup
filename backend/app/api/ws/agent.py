@@ -13,9 +13,10 @@ from app.api.ws.manager import manager
 from app.core.config import settings
 from app.core.security import verify_token
 from app.db.session import AsyncSessionLocal
-from app.models.chat import ChatMessage, PaneType
+from app.models.chat import ChatMessage, PaneType, Visibility
 from app.models.room import Room, RoomMember
 from app.models.user import User
+from app.repositories.messages import MessageReader
 from app.services.gemini import call_gemini
 from app.services.langgraph_pipeline import extract_meeting_summary, run_pipeline
 
@@ -61,11 +62,20 @@ async def _build_conversation_summary(messages: list[ChatMessage]) -> str:
 
 
 async def _redis_subscriber(
-    channel: str,
+    channels: list[str],
     websocket: WebSocket,
     stop_event: asyncio.Event,
     auto_trigger_queue: asyncio.Queue | None = None,
 ) -> None:
+    """Subscribe multiple Redis pub/sub channels on a single connection.
+
+    docs/ai-separation.md §4.2 — WS subscribes BOTH `agent:{room}` (shared) and
+    `agent:{room}:user:{user_id}` (private) so the client receives both streams.
+    Ordering across channels is not guaranteed; the client must sort by
+    `chat_message.id` (event sequence).
+    """
+    if not channels:
+        return
     try:
         r = aioredis.from_url(
             settings.REDIS_URL,
@@ -74,9 +84,9 @@ async def _redis_subscriber(
             socket_timeout=1,
         )
         pubsub = r.pubsub()
-        await pubsub.subscribe(channel)
+        await pubsub.subscribe(*channels)
     except Exception:
-        logger.exception("Redis subscriber unavailable for agent channel %s", channel)
+        logger.exception("Redis subscriber unavailable for agent channels %s", channels)
         return
     try:
         while not stop_event.is_set():
@@ -85,7 +95,7 @@ async def _redis_subscriber(
                     ignore_subscribe_messages=True, timeout=0.01
                 )
             except Exception:
-                logger.exception("Redis subscriber read failed for agent channel %s", channel)
+                logger.exception("Redis subscriber read failed for channels %s", channels)
                 break
             if msg:
                 data = msg["data"]
@@ -94,21 +104,20 @@ async def _redis_subscriber(
                 except (json.JSONDecodeError, TypeError):
                     parsed = None
 
-                # ai_auto_trigger 메시지는 그대로 WebSocket으로 전달
-                # (프론트엔드에서 자동 트리거 알림 및 AI 실행을 처리)
                 try:
                     await websocket.send_text(data)
                 except WebSocketDisconnect:
                     break
 
-                # ai_auto_trigger인 경우 auto_trigger_queue에 넣어서
-                # 메인 루프에서 파이프라인 실행할 수 있도록 함
+                # ai_auto_trigger는 shared 채널에서 옴 → auto_trigger_queue로 전달
                 if parsed and parsed.get("type") == "ai_auto_trigger" and auto_trigger_queue is not None:
                     await auto_trigger_queue.put(parsed)
             else:
                 await asyncio.sleep(0.01)
     finally:
-        await pubsub.unsubscribe(channel)
+        for ch in channels:
+            with suppress(Exception):
+                await pubsub.unsubscribe(ch)
         await pubsub.close()
         await r.aclose()
 
@@ -150,11 +159,21 @@ async def agent_ws(
         return
 
     stop_event = asyncio.Event()
-    channel = f"agent:{room_id}"
+    # docs/ai-separation.md §4.1 — 채널 분리
+    shared_channel = f"agent:{room_id}"
+    user_channel = f"agent:{room_id}:user:{user_id_check}"
+    # 이전 코드와의 호환을 위해 channel 변수는 유지 (기본 발행 채널 = shared)
+    channel = shared_channel
     auto_trigger_queue: asyncio.Queue = asyncio.Queue()
-    manager.add(channel, websocket)
+    manager.add(shared_channel, websocket)
+    manager.add(user_channel, websocket)
     subscriber_task = asyncio.create_task(
-        _redis_subscriber(channel, websocket, stop_event, auto_trigger_queue)
+        _redis_subscriber(
+            [shared_channel, user_channel],
+            websocket,
+            stop_event,
+            auto_trigger_queue,
+        )
     )
 
     try:
@@ -214,11 +233,34 @@ async def agent_ws(
             if not trigger_content:
                 continue
 
-            # 중복 응답 방지: 같은 room에서 60초 내 중복 auto_trigger 무시
+            # room-singleton lock (Phase 3 eng review §3.4):
+            # N users connected = N subscribers to shared channel, all dequeue the trigger.
+            # Redis SET NX picks one winner per room; others skip pipeline execution so the
+            # AI doesn't run N times per auto-trigger.
+            nx_key = f"nx_autotrigger:{room_id}"
+            acquired = False
+            if r is not None:
+                try:
+                    acquired = bool(
+                        await r.set(
+                            nx_key, str(user_id_check), nx=True, ex=int(_AUTO_TRIGGER_DEBOUNCE_SECONDS)
+                        )
+                    )
+                except Exception:
+                    logger.warning("Auto-trigger NX lock failed", exc_info=True)
+                    acquired = False
+            if not acquired:
+                logger.debug(
+                    "Auto-trigger skipped for room %s user %s (another WS holds the lock)",
+                    room_id, user_id_check,
+                )
+                continue
+
+            # Local debounce as a belt-and-suspenders guard (same-connection dup)
             now = time.monotonic()
             if now - _last_auto_trigger_time < _AUTO_TRIGGER_DEBOUNCE_SECONDS:
                 logger.debug(
-                    "Auto-trigger debounced for room %s (%.1fs since last)",
+                    "Auto-trigger local-debounced for room %s (%.1fs since last)",
                     room_id,
                     now - _last_auto_trigger_time,
                 )
@@ -261,7 +303,7 @@ async def agent_ws(
             except (TypeError, ValueError):
                 room_pk_val = None
 
-            # 사용자 메시지를 DB에 저장 (자동 트리거로 생성된 메시지)
+            # 사용자 메시지를 DB에 저장 (자동 트리거로 생성된 메시지 → 공용)
             async with AsyncSessionLocal() as session:
                 auto_msg = ChatMessage(
                     pane_type=PaneType.agent,
@@ -269,25 +311,24 @@ async def agent_ws(
                     content=prompt,
                     sender="system",
                     room_id=room_pk_val,
+                    user_id=None,
+                    visibility=Visibility.shared.value,
                 )
                 session.add(auto_msg)
                 await session.commit()
                 await session.refresh(auto_msg)
 
-            # 파이프라인 실행
+            # 파이프라인 실행 (auto-trigger → shared 시야)
             try:
                 async with AsyncSessionLocal() as session:
-                    recent_messages_result = await session.execute(
-                        select(ChatMessage)
-                        .where(ChatMessage.room_id == room_pk_val)
-                        .where(ChatMessage.pane_type == PaneType.agent)
-                        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
-                        .limit(20)
+                    context = await MessageReader.load_agent_context(
+                        session=session,
+                        room_id=room_pk_val,
+                        viewer_user_id=None,  # auto-trigger: shared-only view
                     )
-                    recent_messages = list(reversed(recent_messages_result.scalars().all()))
 
                     result = await run_pipeline(
-                        room_id, recent_messages, session, slot_context=slot_context
+                        room_id, context, session, slot_context=slot_context
                     )
 
                 # 슬롯 컨텍스트 업데이트
@@ -377,7 +418,7 @@ async def agent_ws(
                         "date": payload.get("date"),
                     }
                     await _publish_agent_message(
-                        r, channel, json.dumps(ack_payload, ensure_ascii=False),
+                        r, user_channel, json.dumps(ack_payload, ensure_ascii=False),
                     )
                 elif action == "confirm_time":
                     # 시간 확정 → 슬롯 컨텍스트 저장 후 장소 추천 파이프라인 실행
@@ -397,23 +438,22 @@ async def agent_ws(
                             content=synthetic_content,
                             sender="system",
                             room_id=room_pk_val,
+                            user_id=user_id_check,
+                            visibility=Visibility.private.value,
                         )
                         session.add(synth_msg)
                         await session.commit()
                         await session.refresh(synth_msg)
 
                     async with AsyncSessionLocal() as session:
-                        recent_messages_result = await session.execute(
-                            select(ChatMessage)
-                            .where(ChatMessage.room_id == room_pk_val)
-                            .where(ChatMessage.pane_type == PaneType.agent)
-                            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
-                            .limit(20)
+                        context = await MessageReader.load_agent_context(
+                            session=session,
+                            room_id=room_pk_val,
+                            viewer_user_id=user_id_check,
                         )
-                        recent_messages = list(reversed(recent_messages_result.scalars().all()))
 
                         result = await run_pipeline(
-                            room_id, recent_messages, session, slot_context=slot_context
+                            room_id, context, session, slot_context=slot_context
                         )
 
                     # 슬롯 컨텍스트 업데이트
@@ -428,13 +468,13 @@ async def agent_ws(
 
                     for new_msg in result.get("new_assistant_messages", []):
                         await _publish_agent_message(
-                            r, channel, json.dumps(new_msg, ensure_ascii=False),
+                            r, user_channel, json.dumps(new_msg, ensure_ascii=False),
                         )
 
                     place_recommendation_payload = result.get("place_recommendation_payload")
                     if place_recommendation_payload:
                         await _publish_agent_message(
-                            r, channel,
+                            r, user_channel,
                             json.dumps(
                                 {"type": "place_recommendation", **place_recommendation_payload},
                                 ensure_ascii=False,
@@ -444,7 +484,7 @@ async def agent_ws(
                     maedeup_card_payload = result.get("maedeup_card_payload")
                     if maedeup_card_payload:
                         await _publish_agent_message(
-                            r, channel,
+                            r, user_channel,
                             json.dumps(
                                 {"type": "maedeup_card", **maedeup_card_payload},
                                 ensure_ascii=False,
@@ -472,6 +512,8 @@ async def agent_ws(
                     content=content,
                     sender=sender,
                     room_id=room_pk,
+                    user_id=user_id_check,
+                    visibility=Visibility.private.value,
                 )
                 session.add(msg)
                 await session.commit()
@@ -485,13 +527,17 @@ async def agent_ws(
                     "content": msg.content,
                     "sender": msg.sender,
                     "created_at": msg.created_at.isoformat(),
+                    "user_id": msg.user_id,
+                    "visibility": msg.visibility,
+                    "shared_from_id": msg.shared_from_id,
+                    "shared_by_user_id": msg.shared_by_user_id,
                 }
             )
             await _publish_agent_message(
                 r,
-                channel,
+                user_channel,
                 out,
-                queue_key=f"agent_queue:{room_id}",
+                queue_key=f"agent_queue:{room_id}:user:{user_id_check}",
             )
 
             if role == "user":
@@ -507,17 +553,15 @@ async def agent_ws(
                     and int(slot_context.get("total_message_count") or 0) % 10 == 0
                 ):
                     async with AsyncSessionLocal() as session:
-                        summary_messages_result = await session.execute(
-                            select(ChatMessage)
-                            .where(ChatMessage.room_id == room_pk)
-                            .where(ChatMessage.pane_type == PaneType.agent)
-                            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
-                            .limit(10)
+                        summary_context = await MessageReader.load_agent_context(
+                            session=session,
+                            room_id=room_pk,
+                            viewer_user_id=user_id_check,
+                            limit=10,
                         )
-                        summary_messages = list(
-                            reversed(summary_messages_result.scalars().all())
-                        )
-                    summary = await _build_conversation_summary(summary_messages)
+                    summary = await _build_conversation_summary(
+                        summary_context.messages
+                    )
                     if summary:
                         slot_context["conversation_summary"] = summary
 
@@ -544,17 +588,14 @@ async def agent_ws(
                     })
 
                 async with AsyncSessionLocal() as session:
-                    recent_messages_result = await session.execute(
-                        select(ChatMessage)
-                        .where(ChatMessage.room_id == room_pk)
-                        .where(ChatMessage.pane_type == PaneType.agent)
-                        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
-                        .limit(20)
+                    context = await MessageReader.load_agent_context(
+                        session=session,
+                        room_id=room_pk,
+                        viewer_user_id=user_id_check,
                     )
-                    recent_messages = list(reversed(recent_messages_result.scalars().all()))
 
                     result = await run_pipeline(
-                        room_id, recent_messages, session, slot_context=slot_context
+                        room_id, context, session, slot_context=slot_context
                     )
 
                 # 슬롯 컨텍스트 업데이트 (다음 메시지에서 이어받기)
@@ -584,11 +625,11 @@ async def agent_ws(
                     result.get("intent"),
                 )
 
-                # 파이프라인이 발행한 어시스턴트 메시지(슬롯 질문, 오류, 일반 응답 등) Redis 발행
+                # 파이프라인이 발행한 어시스턴트 메시지(슬롯 질문, 오류, 일반 응답 등) — user 전용
                 for new_msg in result.get("new_assistant_messages", []):
                     await _publish_agent_message(
                         r,
-                        channel,
+                        user_channel,
                         json.dumps(new_msg, ensure_ascii=False),
                     )
 
@@ -596,13 +637,13 @@ async def agent_ws(
                 if result.get("awaiting_user_reply") is True:
                     continue
 
-                # location_first: 장소 추천 페이로드를 먼저 발행 후 슬롯 컨텍스트 유지
+                # location_first: 장소 추천 페이로드를 먼저 발행 후 슬롯 컨텍스트 유지 (private)
                 if result.get("is_location_first") and not result.get("date_hint"):
                     place_recommendation_payload = result.get("place_recommendation_payload")
                     if place_recommendation_payload:
                         await _publish_agent_message(
                             r,
-                            channel,
+                            user_channel,
                             json.dumps(
                                 {
                                     "type": "place_recommendation",
@@ -634,9 +675,10 @@ async def agent_ws(
 
                 vote_card_payload = result.get("vote_card_payload")
                 if vote_card_payload:
+                    # user-driven pipeline vote card → private (share 버튼으로 공용화)
                     await _publish_agent_message(
                         r,
-                        channel,
+                        user_channel,
                         json.dumps(
                             {"type": "vote_card", **vote_card_payload},
                             ensure_ascii=False,
@@ -675,7 +717,7 @@ async def agent_ws(
                 if place_recommendation_payload:
                     await _publish_agent_message(
                         r,
-                        channel,
+                        user_channel,
                         json.dumps(
                             {
                                 "type": "place_recommendation",
@@ -689,7 +731,7 @@ async def agent_ws(
                 if maedeup_card_payload:
                     await _publish_agent_message(
                         r,
-                        channel,
+                        user_channel,
                         json.dumps(
                             {"type": "maedeup_card", **maedeup_card_payload},
                             ensure_ascii=False,
@@ -705,6 +747,7 @@ async def agent_ws(
         with suppress(Exception, asyncio.CancelledError):
             auto_trigger_task.cancel()
             await auto_trigger_task
-        manager.remove(channel, websocket)
+        manager.remove(shared_channel, websocket)
+        manager.remove(user_channel, websocket)
         if r is not None:
             await r.aclose()

@@ -26,8 +26,8 @@ import redis.asyncio as aioredis
 logger = logging.getLogger(__name__)
 
 
-PROPOSAL_TTL_SECONDS = 30 * 60          # 30 minutes
 PROPOSAL_DEADLINE_SECONDS = 24 * 3600   # Approach D: default deadline = +24h
+PROPOSAL_TTL_SECONDS = PROPOSAL_DEADLINE_SECONDS  # Redis 키 수명 = deadline
 AVAILABILITY_TTL_SECONDS = 6 * 3600     # room availability cache
 LOCK_TTL_SECONDS = 5
 RATE_LIMIT_WINDOW_SECONDS = 30
@@ -47,7 +47,6 @@ class ProposalStatus(str, Enum):
     majority_reached = "majority_reached"
     confirmed = "confirmed"
     superseded = "superseded"
-    rejected = "rejected"
 
 
 @dataclass
@@ -421,7 +420,7 @@ async def record_vote(
         proposal = await _load_proposal_by_id(redis, room_id, proposal_id)
         if proposal is None:
             raise NotFoundError(f"proposal {proposal_id} not found")
-        if proposal.status in (ProposalStatus.superseded, ProposalStatus.confirmed, ProposalStatus.rejected):
+        if proposal.status in (ProposalStatus.superseded, ProposalStatus.confirmed):
             raise SupersededError(f"proposal {proposal_id} not writable (status={proposal.status.value})")
 
         proposal.votes[str(user_id)] = choice

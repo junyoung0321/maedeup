@@ -451,3 +451,19 @@ def test_proposal_serialization_round_trip():
     assert round_tripped.votes == {"1": "like", "2": "like", "3": "other"}
     assert round_tripped.like_count == 2
     assert round_tripped.other_count == 1
+
+
+async def test_proposal_redis_key_ttl_matches_deadline(fake_redis):
+    """Redis 키 수명이 deadline(24h)과 일치해야 프론트 카운터가 거짓말이 아님."""
+    await sr.propose(
+        fake_redis,
+        room_id=90,
+        host_user_id=1,
+        total_eligible_voters=2,
+        proposed_slot={"label": "19:00"},
+        snapshot_hash="h-ttl",
+    )
+    ttl = await fake_redis.ttl(f"finalization_proposal:90")
+    # Allow small skew for time elapsed between SET and TTL read.
+    assert sr.PROPOSAL_DEADLINE_SECONDS - 5 <= ttl <= sr.PROPOSAL_DEADLINE_SECONDS
+    assert sr.PROPOSAL_TTL_SECONDS == sr.PROPOSAL_DEADLINE_SECONDS

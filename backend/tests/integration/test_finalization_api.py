@@ -363,3 +363,42 @@ async def test_confirm_with_majority_proposal_succeeds(client, redis_client):
     restored = await sr.restore_for_room(redis_client, room_id=10)
     assert restored is not None
     assert restored.status == sr.ProposalStatus.confirmed
+
+
+async def test_confirm_clears_room_availability(client, redis_client):
+    """확정 후 availability 캐시가 비워져야, 다음 선택이 새 proposal을 만들지 않음."""
+    proposal = await _seed_proposal(redis_client, total_eligible_voters=2)
+    # Seed availability for both members BEFORE confirming.
+    await sr.record_availability(
+        redis_client, room_id=10, user_id=1, date="2026-05-02", start=0, end=4,
+    )
+    await sr.record_availability(
+        redis_client, room_id=10, user_id=2, date="2026-05-02", start=0, end=4,
+    )
+    pre = await sr.load_room_availability(redis_client, room_id=10)
+    assert len(pre) == 2, "seed guard: availability should be present before confirm"
+
+    await sr.record_vote(
+        redis_client, room_id=10, proposal_id=proposal.proposal_id,
+        user_id=1, choice="like",
+    )
+    await sr.record_vote(
+        redis_client, room_id=10, proposal_id=proposal.proposal_id,
+        user_id=2, choice="like",
+    )
+
+    _set_current_user(1)
+    resp = await client.post(
+        "/api/v1/meetings/confirm",
+        json={
+            "room_id": 10,
+            "title": "저녁 모임",
+            "scheduled_at": "2026-05-02T15:00:00",
+            "end_at": "2026-05-02T17:00:00",
+            "proposal_id": proposal.proposal_id,
+        },
+    )
+    assert resp.status_code == 201
+
+    post = await sr.load_room_availability(redis_client, room_id=10)
+    assert post == {}, f"availability should be cleared after confirm, got {post}"

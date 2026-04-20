@@ -61,8 +61,7 @@ export type FinalizationStatus =
   | "active"
   | "majority_reached"
   | "confirmed"
-  | "superseded"
-  | "rejected";
+  | "superseded";
 
 export type VoteChoice = "like" | "other";
 

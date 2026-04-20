@@ -9,12 +9,17 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from app.api.routes.finalization import (
+    _publish_finalization_event,
+    get_redis as get_finalization_redis,
+)
 from app.core.config import settings
 from app.core.security import AuthUser, get_current_user
 from app.db.session import get_session
 from app.models.meeting import MeetingSchedule, MeetingStatus
-from app.models.room import RoomMember
+from app.models.room import Room, RoomMember
 from app.models.user import User
+from app.services import scheduling_round as sr
 from app.services.google_calendar import (
     GoogleCalendarAuthError,
     GoogleCalendarError,
@@ -36,6 +41,10 @@ class ConfirmMeetingRequest(BaseModel):
     location_name: Optional[str] = None
     vote_options: Optional[list[dict[str, str]]] = None
     meeting_id: int | None = None
+    # If the confirm is driven by a finalization proposal, the front-end
+    # supplies this so the server can enforce host-auth + proposal-state
+    # guards (superseded → 409, below-majority → 409, non-host → 403).
+    proposal_id: Optional[str] = None
 
 
 class ConfirmMeetingResponse(BaseModel):
@@ -153,12 +162,26 @@ async def confirm_meeting(
     body: ConfirmMeetingRequest,
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
+    redis=Depends(get_finalization_redis),
 ):
     if body.end_at <= body.scheduled_at:
         raise HTTPException(status_code=400, detail="end_at must be after scheduled_at")
     if not body.title.strip():
         raise HTTPException(status_code=400, detail="title must not be empty")
 
+    # Host-auth guard: only the room creator (rooms.created_by) may confirm.
+    # This protects against non-host members curling the endpoint directly.
+    room_row = await session.execute(
+        select(Room).where(Room.id == body.room_id)
+    )
+    room = room_row.scalar_one_or_none()
+    if room is None:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if room.created_by != int(current_user.sub):
+        raise HTTPException(status_code=403, detail="Only the room host can confirm")
+
+    # Membership check stays as defense-in-depth (host should always be a member,
+    # but keep the invariant explicit).
     member_result = await session.execute(
         select(RoomMember).where(
             RoomMember.user_id == int(current_user.sub),
@@ -166,7 +189,28 @@ async def confirm_meeting(
         )
     )
     if member_result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=403, detail="Forbidden")
+        raise HTTPException(status_code=403, detail="Host is not a room member")
+
+    # Finalization-proposal path: validate proposal state before DB write.
+    if body.proposal_id is not None:
+        try:
+            await sr.host_confirm(
+                redis,
+                room_id=body.room_id,
+                proposal_id=body.proposal_id,
+                user_id=int(current_user.sub),
+                room_host_id=room.created_by,
+            )
+        except sr.NotFoundError:
+            raise HTTPException(status_code=404, detail="proposal_not_found")
+        except sr.SupersededError as exc:
+            raise HTTPException(status_code=409, detail=f"superseded: {exc}")
+        except sr.BelowMajorityError as exc:
+            raise HTTPException(status_code=409, detail=f"below_majority: {exc}")
+        except sr.NotHostError as exc:
+            # Should be caught by the earlier room.created_by check, but be
+            # defensive — scheduling_round is the source of truth for state.
+            raise HTTPException(status_code=403, detail=str(exc))
 
     # DB는 naive datetime을 사용하므로 timezone 제거
     scheduled_at = body.scheduled_at.replace(tzinfo=None) if body.scheduled_at.tzinfo else body.scheduled_at
@@ -206,6 +250,35 @@ async def confirm_meeting(
 
     await session.commit()
     await session.refresh(meeting)
+
+    # If a proposal drove this confirm, mark it as confirmed in Redis and
+    # broadcast `meeting_confirmed` on the social channel so every client
+    # transitions into the success state together.
+    if body.proposal_id is not None:
+        try:
+            await sr.mark_confirmed(
+                redis, room_id=body.room_id, proposal_id=body.proposal_id
+            )
+            await _publish_finalization_event(
+                redis,
+                body.room_id,
+                {
+                    "type": "meeting_confirmed",
+                    "room_id": body.room_id,
+                    "meeting_id": meeting.id,
+                    "proposal_id": body.proposal_id,
+                    "scheduled_at": scheduled_at.isoformat(),
+                    "end_at": end_at.isoformat(),
+                    "title": body.title,
+                },
+            )
+        except Exception:
+            # Redis post-commit cleanup should never unwind the DB commit.
+            logger.warning(
+                "Finalization post-confirm bookkeeping failed (proposal_id=%s, meeting_id=%s)",
+                body.proposal_id, meeting.id, exc_info=True,
+            )
+
     return ConfirmMeetingResponse(id=meeting.id)
 
 

@@ -55,6 +55,90 @@ export interface PeerTimeSelection {
   end: number;
 }
 
+// ── Finalization (AI proposal → host approval) payloads ──────────────────
+export type FinalizationStatus =
+  | "pending_ai"
+  | "active"
+  | "majority_reached"
+  | "confirmed"
+  | "superseded"
+  | "rejected";
+
+export type VoteChoice = "like" | "other";
+
+export interface FinalizationSlot {
+  date: string;
+  start_idx: number;
+  end_idx: number;
+  start_at: string;
+  end_at: string;
+  label: string;
+}
+
+export interface FinalizationPendingPayload {
+  type: "finalization_pending";
+  room_id: number;
+  snapshot_hash: string;
+}
+
+export interface FinalizationProposalPayload {
+  type: "finalization_proposal";
+  room_id: number;
+  proposal_id: string;
+  version: number;
+  status: FinalizationStatus;
+  proposed_slot: FinalizationSlot;
+  alternate_slot: FinalizationSlot | null;
+  reason: string;
+  host_user_id: number;
+  total_eligible_voters: number;
+  votes: Record<string, VoteChoice>;
+  deadline_at: number;
+  created_at: number;
+}
+
+export interface FinalizationVoteUpdatePayload {
+  type: "finalization_vote_update";
+  room_id: number;
+  proposal_id: string;
+  version: number;
+  status: FinalizationStatus;
+  proposed_slot: FinalizationSlot;
+  alternate_slot: FinalizationSlot | null;
+  reason: string;
+  host_user_id: number;
+  total_eligible_voters: number;
+  like_count: number;
+  other_count: number;
+  votes: Record<string, VoteChoice>;
+  my_vote: VoteChoice | null;
+}
+
+export interface MeetingConfirmedPayload {
+  type: "meeting_confirmed";
+  room_id: number;
+  meeting_id: number;
+  proposal_id: string;
+  scheduled_at: string;
+  end_at: string;
+  title: string;
+}
+
+export interface FinalizationState {
+  proposal_id: string;
+  version: number;
+  status: FinalizationStatus;
+  proposed_slot: FinalizationSlot;
+  alternate_slot: FinalizationSlot | null;
+  reason: string;
+  host_user_id: number;
+  total_eligible_voters: number;
+  votes: Record<string, VoteChoice>;
+  my_vote: VoteChoice | null;
+  deadline_at: number;
+  created_at: number;
+}
+
 type WsStatus = "connecting" | "open" | "closed" | "error";
 
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -72,6 +156,46 @@ function isChatMessagePayload(data: unknown): data is ChatMessagePayload {
     typeof candidate.role === "string" &&
     typeof candidate.content === "string" &&
     typeof candidate.created_at === "string"
+  );
+}
+
+function isFinalizationPendingPayload(data: unknown): data is FinalizationPendingPayload {
+  if (!data || typeof data !== "object") return false;
+  const c = data as Partial<FinalizationPendingPayload>;
+  return c.type === "finalization_pending" && typeof c.room_id === "number";
+}
+
+function isFinalizationProposalPayload(data: unknown): data is FinalizationProposalPayload {
+  if (!data || typeof data !== "object") return false;
+  const c = data as Partial<FinalizationProposalPayload>;
+  return (
+    c.type === "finalization_proposal" &&
+    typeof c.proposal_id === "string" &&
+    typeof c.version === "number" &&
+    typeof c.status === "string" &&
+    !!c.proposed_slot
+  );
+}
+
+function isFinalizationVoteUpdatePayload(
+  data: unknown,
+): data is FinalizationVoteUpdatePayload {
+  if (!data || typeof data !== "object") return false;
+  const c = data as Partial<FinalizationVoteUpdatePayload>;
+  return (
+    c.type === "finalization_vote_update" &&
+    typeof c.proposal_id === "string" &&
+    typeof c.version === "number"
+  );
+}
+
+function isMeetingConfirmedPayload(data: unknown): data is MeetingConfirmedPayload {
+  if (!data || typeof data !== "object") return false;
+  const c = data as Partial<MeetingConfirmedPayload>;
+  return (
+    c.type === "meeting_confirmed" &&
+    typeof c.meeting_id === "number" &&
+    typeof c.proposal_id === "string"
   );
 }
 
@@ -148,6 +272,9 @@ export function useSocialWebSocket(roomId: string, sender: string) {
   const [detectedIntent, setDetectedIntent] = useState<IntentDetectedPayload | null>(null);
   const [peerSelections, setPeerSelections] = useState<Record<string, PeerSelection>>({});
   const [peerTimeSelections, setPeerTimeSelections] = useState<Record<string, PeerTimeSelection>>({});
+  const [finalizationProposal, setFinalizationProposal] = useState<FinalizationState | null>(null);
+  const [finalizationPending, setFinalizationPending] = useState<boolean>(false);
+  const [lastConfirmedMeeting, setLastConfirmedMeeting] = useState<MeetingConfirmedPayload | null>(null);
   const [status, setStatus] = useState<WsStatus>("connecting");
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -209,6 +336,51 @@ export function useSocialWebSocket(roomId: string, sender: string) {
             return;
           }
           setMessages([]);
+        });
+
+      // Restore any active finalization proposal so page reloads / late joiners
+      // see the card even if the original WS broadcast already fired.
+      fetch(`${apiBase}/api/v1/finalization/room/${roomPk}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then(async (response) => {
+          if (!response.ok) return null;
+          return response.json();
+        })
+        .then((data: unknown) => {
+          if (!isActive || data == null || typeof data !== "object") return;
+          const p = data as Partial<{
+            proposal_id: string;
+            version: number;
+            status: FinalizationStatus;
+            proposed_slot: FinalizationSlot;
+            alternate_slot: FinalizationSlot | null;
+            reason: string;
+            host_user_id: number;
+            total_eligible_voters: number;
+            votes: Record<string, VoteChoice>;
+            my_vote: VoteChoice | null;
+            deadline_at: number;
+            created_at: number;
+          }>;
+          if (!p.proposal_id || !p.proposed_slot) return;
+          setFinalizationProposal({
+            proposal_id: p.proposal_id,
+            version: p.version ?? 0,
+            status: (p.status ?? "active") as FinalizationStatus,
+            proposed_slot: p.proposed_slot,
+            alternate_slot: p.alternate_slot ?? null,
+            reason: p.reason ?? "",
+            host_user_id: p.host_user_id ?? 0,
+            total_eligible_voters: p.total_eligible_voters ?? 0,
+            votes: p.votes ?? {},
+            my_vote: p.my_vote ?? null,
+            deadline_at: p.deadline_at ?? 0,
+            created_at: p.created_at ?? 0,
+          });
+        })
+        .catch(() => {
+          /* non-fatal — WS will eventually deliver */
         });
     }
 
@@ -284,6 +456,72 @@ export function useSocialWebSocket(roomId: string, sender: string) {
 
         if (isIntentDetectedPayload(data)) {
           setDetectedIntent(data);
+          return;
+        }
+
+        if (isFinalizationPendingPayload(data)) {
+          setFinalizationPending(true);
+          return;
+        }
+
+        if (isFinalizationProposalPayload(data)) {
+          setFinalizationPending(false);
+          setFinalizationProposal((prev) => {
+            // Drop out-of-order frames (older version than currently-held one)
+            if (prev && prev.proposal_id === data.proposal_id && prev.version > data.version) {
+              return prev;
+            }
+            const myKey = myUserId != null ? String(myUserId) : null;
+            return {
+              proposal_id: data.proposal_id,
+              version: data.version,
+              status: data.status,
+              proposed_slot: data.proposed_slot,
+              alternate_slot: data.alternate_slot ?? null,
+              reason: data.reason,
+              host_user_id: data.host_user_id,
+              total_eligible_voters: data.total_eligible_voters,
+              votes: data.votes ?? {},
+              my_vote: myKey ? ((data.votes ?? {})[myKey] ?? null) : null,
+              deadline_at: data.deadline_at,
+              created_at: data.created_at,
+            };
+          });
+          return;
+        }
+
+        if (isFinalizationVoteUpdatePayload(data)) {
+          setFinalizationProposal((prev) => {
+            if (prev && prev.proposal_id === data.proposal_id && prev.version > data.version) {
+              return prev;
+            }
+            const myKey = myUserId != null ? String(myUserId) : null;
+            return {
+              proposal_id: data.proposal_id,
+              version: data.version,
+              status: data.status,
+              proposed_slot: data.proposed_slot,
+              alternate_slot: data.alternate_slot ?? null,
+              reason: data.reason,
+              host_user_id: data.host_user_id,
+              total_eligible_voters: data.total_eligible_voters,
+              votes: data.votes ?? {},
+              my_vote: myKey ? ((data.votes ?? {})[myKey] ?? null) : null,
+              deadline_at: prev?.deadline_at ?? 0,
+              created_at: prev?.created_at ?? 0,
+            };
+          });
+          return;
+        }
+
+        if (isMeetingConfirmedPayload(data)) {
+          setLastConfirmedMeeting(data);
+          setFinalizationProposal((prev) => {
+            if (prev && prev.proposal_id === data.proposal_id) {
+              return { ...prev, status: "confirmed" };
+            }
+            return prev;
+          });
           return;
         }
 
@@ -446,6 +684,11 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     setDetectedIntent(null);
   }, []);
 
+  const clearFinalizationProposal = useCallback(() => {
+    setFinalizationProposal(null);
+    setFinalizationPending(false);
+  }, []);
+
   return {
     messages,
     sendMessage,
@@ -456,5 +699,9 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     dismissIntent,
     peerSelections,
     peerTimeSelections,
+    finalizationProposal,
+    finalizationPending,
+    lastConfirmedMeeting,
+    clearFinalizationProposal,
   };
 }

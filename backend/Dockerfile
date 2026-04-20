@@ -13,6 +13,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
+# Test deps — baked into the image so `docker compose build` doesn't drop them.
+# `maedeup-cr` stack uses these; prod deploys can drop this layer later if needed.
+COPY requirements-dev.txt* ./
+RUN if [ -f requirements-dev.txt ]; then pip install --no-cache-dir -r requirements-dev.txt; fi
+
 COPY . .
 
 EXPOSE 8000

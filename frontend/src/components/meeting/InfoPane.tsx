@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import CalendarPane from "@/components/meeting/CalendarPane";
+import FinalizationProposalCard from "@/components/meeting/FinalizationProposalCard";
 import PlaceDetailPane from "@/components/meeting/PlaceDetailPane";
 import VoteCardSection from "@/components/meeting/VoteCardSection";
 import PlaceRecommendationCard from "@/components/meeting/PlaceRecommendationCard";
@@ -11,6 +13,26 @@ import { fs } from "@/lib/responsive";
 import type { PlaceResult } from "@/types";
 
 // Removed fixed dimensions — uses flex layout from parent
+
+function getCurrentUserIdFromToken(): number | null {
+  if (typeof window === "undefined") return null;
+  const token = localStorage.getItem("auth_token");
+  if (!token) return null;
+  try {
+    const payloadPart = token.split(".")[1];
+    if (!payloadPart) return null;
+    const normalized = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const decoded = JSON.parse(atob(padded));
+    if (decoded?.sub) {
+      const asNum = Number(decoded.sub);
+      if (Number.isFinite(asNum)) return asNum;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
 
 export default function InfoPane() {
   const {
@@ -29,7 +51,11 @@ export default function InfoPane() {
     setInfoPanePhase,
     sendMessageToAi,
     refreshCalendar,
+    finalizationProposal,
+    finalizationPending,
   } = useMeeting();
+
+  const currentUserId = useMemo(() => getCurrentUserIdFromToken(), []);
 
   const hasSelectedPlace = selectedPlace !== null;
   // Non-phased flow: place-only (no vote card, just place recommendation, not manually started)
@@ -80,6 +106,30 @@ export default function InfoPane() {
   const handlePlaceConfirmed = () => {
     confirmPlace();
     setTimeout(() => setContextMode("done"), 2000);
+  };
+
+  const handleFinalizationConfirm = async (
+    proposalId: string,
+    slot: { start_at: string; end_at: string; label: string },
+  ) => {
+    const { apiFetch } = await import("@/lib/api");
+    const parsedRoomId = Number.parseInt(roomId, 10);
+    if (Number.isNaN(parsedRoomId)) return;
+    const result = await apiFetch<{ id: number }>("/api/v1/meetings/confirm", {
+      method: "POST",
+      body: JSON.stringify({
+        room_id: parsedRoomId,
+        title: slot.label,
+        scheduled_at: slot.start_at,
+        end_at: slot.end_at,
+        proposal_id: proposalId,
+      }),
+    });
+    confirmTime(slot.start_at, slot.end_at, result.id);
+    refreshCalendar();
+    if (sendMessageToAi) {
+      sendMessageToAi("일정이 확정되었습니다. 장소를 추천해주세요");
+    }
   };
 
   return (
@@ -134,6 +184,19 @@ export default function InfoPane() {
         </>
       ) : (
         <>
+          {/* AI finalization proposal sits above the calendar whenever present */}
+          {(finalizationProposal !== null || finalizationPending) && (
+            <div style={{ padding: "8px 0" }}>
+              <FinalizationProposalCard
+                proposal={finalizationProposal}
+                pending={finalizationPending}
+                currentUserId={currentUserId}
+                roomId={roomId}
+                onConfirm={handleFinalizationConfirm}
+              />
+            </div>
+          )}
+
           {/* Calendar always on top */}
           <CalendarPane />
 

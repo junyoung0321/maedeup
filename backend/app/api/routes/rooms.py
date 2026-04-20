@@ -14,10 +14,11 @@ from sqlalchemy import func as sa_func
 
 from app.core.security import AuthUser, get_current_user
 from app.db.session import get_session
-from app.models.chat import ChatMessage, PaneType
+from app.models.chat import ChatMessage, PaneType, Visibility
 from app.models.meeting_preference import MeetingPreference
 from app.models.room import MemberRole, Room, RoomMember
 from app.models.user import User
+from app.repositories.messages import MessageReader
 
 logger = logging.getLogger(__name__)
 
@@ -260,44 +261,32 @@ async def _trigger_auto_recommendation(room_id: int, db_session: AsyncSession, u
         from app.services.langgraph_pipeline import run_pipeline
 
         async with async_session_factory() as db:
-            # 자동 트리거 메시지를 채팅 히스토리에 추가
+            # 자동 트리거 메시지를 채팅 히스토리에 추가 (공용)
             auto_msg = ChatMessage(
                 pane_type=PaneType.agent,
                 role="user",
                 content="모든 멤버의 선호 정보가 입력됐어! 최적의 모임 일정과 장소를 추천해줘",
                 sender=user_name,
                 room_id=room_id,
+                user_id=None,
+                visibility=Visibility.shared.value,
             )
             db.add(auto_msg)
             await db.commit()
             await db.refresh(auto_msg)
 
-            # 최근 메시지 로드
-            from sqlmodel import select as sm_select
-            msg_result = await db.execute(
-                sm_select(ChatMessage)
-                .where(ChatMessage.room_id == room_id)
-                .order_by(ChatMessage.created_at.desc())
-                .limit(30)
+            # 최근 메시지 로드 (auto-trigger → shared-only 시야)
+            context = await MessageReader.load_agent_context(
+                session=db,
+                room_id=room_id,
+                viewer_user_id=None,
+                limit=30,
             )
-            messages = list(reversed(msg_result.scalars().all()))
-
-            message_dicts = [
-                {
-                    "id": m.id,
-                    "pane_type": m.pane_type,
-                    "role": m.role,
-                    "content": m.content,
-                    "sender": m.sender,
-                    "created_at": m.created_at.isoformat() if m.created_at else "",
-                }
-                for m in messages
-            ]
 
             # 파이프라인 실행
             result = await run_pipeline(
                 room_id=str(room_id),
-                messages=message_dicts,
+                context=context,
                 db=db,
             )
 
@@ -311,10 +300,16 @@ async def _trigger_auto_recommendation(room_id: int, db_session: AsyncSession, u
             # 새 어시스턴트 메시지 발행
             new_msgs = result.get("new_assistant_messages") or []
             if not new_msgs:
-                # 파이프라인이 new_assistant_messages를 반환하지 않으면 DB에서 최신 메시지 조회
+                # 파이프라인이 new_assistant_messages를 반환하지 않으면 DB에서 최신 shared 메시지만 조회
+                # (auto-recommendation은 shared 채널로 발행되므로 private 메시지 유출 방지)
+                from sqlmodel import select as sm_select
                 latest_result = await db.execute(
                     sm_select(ChatMessage)
-                    .where(ChatMessage.room_id == room_id, ChatMessage.role == "assistant")
+                    .where(
+                        ChatMessage.room_id == room_id,
+                        ChatMessage.role == "assistant",
+                        ChatMessage.visibility == Visibility.shared.value,
+                    )
                     .order_by(ChatMessage.created_at.desc())
                     .limit(3)
                 )

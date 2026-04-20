@@ -22,6 +22,7 @@ from app.models.meeting import MeetingSchedule
 from app.models.meeting_preference import MeetingPreference
 from app.models.room import RoomMember
 from app.models.user import User
+from app.repositories.messages import AgentContextMessages, MessageReader
 from app.services.gemini import call_gemini
 from app.services.google_calendar import GoogleCalendarAuthError, get_google_access_token
 from app.services.intent_classifier import classify_intent
@@ -117,6 +118,8 @@ class GraphState(TypedDict, total=False):
     # 선호 정보
     preference_common_times: list[str]
     status: str
+    # 프라이버시 경계 (docs/ai-separation.md §9.4)
+    viewer_user_id: int | None  # None = auto-trigger (shared), int = private viewer
 
 
 def _default_state(
@@ -124,6 +127,7 @@ def _default_state(
     db: AsyncSession,
     messages: list[Any],
     slot_context: dict | None = None,
+    viewer_user_id: int | None = None,
 ) -> GraphState:
     normalized_messages = [_normalize_message(message) for message in messages]
     recent_messages, derived_summary = _split_message_context(normalized_messages)
@@ -142,6 +146,7 @@ def _default_state(
         "conversation_summary": conversation_summary,
         "seen_message_ids": seen_ids,
         "new_assistant_messages": [],
+        "viewer_user_id": viewer_user_id,
         "intent": "general",
         "intent_confidence": 0.0,
         "confidence_score": 0.0,
@@ -1027,12 +1032,15 @@ async def _emit_assistant_message(
     if room_pk is None:
         return
 
+    viewer_user_id = state.get("viewer_user_id")
     message = ChatMessage(
         pane_type=PaneType.agent,
         role="assistant",
         content=content,
         sender="매듭 AI",
         room_id=room_pk,
+        user_id=viewer_user_id,
+        visibility="private" if viewer_user_id is not None else "shared",
     )
     db.add(message)
     await db.commit()
@@ -2750,12 +2758,25 @@ GRAPH = _build_graph()
 
 async def run_pipeline(
     room_id: str,
-    messages: list[Any],
+    context: AgentContextMessages,
     db: AsyncSession,
     slot_context: dict | None = None,
 ) -> dict[str, Any]:
+    """Run the AI pipeline.
+
+    `context` MUST be built via `MessageReader.load_agent_context` so the privacy
+    boundary (visibility + user_id filter) is enforced at the query layer. Raw
+    `list[ChatMessage]` is rejected — see docs/ai-separation.md §9.4.
+    """
+    MessageReader.ensure_branded(context)
     _pipeline_t0 = time.monotonic()
-    initial_state = _default_state(room_id=room_id, db=db, messages=messages, slot_context=slot_context)
+    initial_state = _default_state(
+        room_id=room_id,
+        db=db,
+        messages=context.messages,
+        slot_context=slot_context,
+        viewer_user_id=context.viewer_user_id,
+    )
     await _compress_message_history(initial_state)
     final_state = await GRAPH.ainvoke(initial_state)
     logger.info(

@@ -20,6 +20,11 @@ export interface ChatMessagePayload {
   content: string;
   sender: string | null;
   created_at: string;
+  // docs/ai-separation.md §4 — visibility & sharing
+  user_id?: number | null;
+  visibility?: "private" | "shared" | null;
+  shared_from_id?: number | null;
+  shared_by_user_id?: number | null;
 }
 
 // ─── User / Friend ───

@@ -112,6 +112,8 @@ function isChatMessagePayload(data: unknown): data is ChatMessagePayload {
     typeof candidate.content === "string" &&
     typeof candidate.created_at === "string"
   );
+  // visibility / user_id / shared_from_id / shared_by_user_id are optional;
+  // the hook passes them through unchanged if present.
 }
 
 function isVoteCardPayload(data: unknown): data is VoteCardPayload {

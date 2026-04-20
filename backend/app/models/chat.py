@@ -11,6 +11,11 @@ class PaneType(str, Enum):
     agent = "agent"
 
 
+class Visibility(str, Enum):
+    private = "private"
+    shared = "shared"
+
+
 class ChatMessage(SQLModel, table=True):
     __tablename__ = "chat_messages"
 
@@ -21,6 +26,33 @@ class ChatMessage(SQLModel, table=True):
     sender: Optional[str] = Field(default=None, max_length=64)
     session_id: Optional[str] = Field(default=None, index=True, max_length=64)
     room_id: Optional[int] = Field(default=None, foreign_key="rooms.id", index=True)
+    user_id: Optional[int] = Field(
+        default=None,
+        foreign_key="users.id",
+        index=True,
+        nullable=True,
+    )
+    visibility: str = Field(
+        default="shared",
+        sa_column=sa.Column(
+            sa.String(16),
+            index=True,
+            nullable=False,
+            server_default="shared",
+        ),
+    )
+    shared_from_id: Optional[int] = Field(
+        default=None,
+        foreign_key="chat_messages.id",
+        index=True,
+        nullable=True,
+    )
+    shared_by_user_id: Optional[int] = Field(
+        default=None,
+        foreign_key="users.id",
+        index=True,
+        nullable=True,
+    )
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
@@ -31,6 +63,10 @@ class ChatMessageCreate(SQLModel):
     sender: Optional[str] = None
     session_id: Optional[str] = None
     room_id: Optional[int] = None
+    user_id: Optional[int] = None
+    visibility: Visibility = Visibility.shared
+    shared_from_id: Optional[int] = None
+    shared_by_user_id: Optional[int] = None
 
 
 class ChatMessageRead(SQLModel):
@@ -41,4 +77,8 @@ class ChatMessageRead(SQLModel):
     sender: Optional[str]
     session_id: Optional[str]
     room_id: Optional[int]
+    user_id: Optional[int]
+    visibility: Visibility
+    shared_from_id: Optional[int]
+    shared_by_user_id: Optional[int]
     created_at: datetime

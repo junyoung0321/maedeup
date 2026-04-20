@@ -37,6 +37,7 @@ async def _maybe_emit_proposal(
     start: Optional[int],
     end: Optional[int],
     channel: str,
+    skip_record: bool = False,
 ) -> None:
     """
     Update the caller's availability, then check if the room has a majority
@@ -45,15 +46,19 @@ async def _maybe_emit_proposal(
 
     All failure paths are logged but non-fatal — the peer_time_selection
     broadcast must keep working even if this aggregation is down.
+
+    `skip_record=True` bypasses availability write — used when re-aggregating
+    after a pure unavailability change (no time selection to record).
     """
-    await sr.record_availability(
-        redis_client,
-        room_id=room_pk,
-        user_id=user_id,
-        date=date,
-        start=start,
-        end=end,
-    )
+    if not skip_record:
+        await sr.record_availability(
+            redis_client,
+            room_id=room_pk,
+            user_id=user_id,
+            date=date,
+            start=start,
+            end=end,
+        )
 
     # We need the room host + eligible voter count to build a proposal.
     async with AsyncSessionLocal() as session:
@@ -70,7 +75,12 @@ async def _maybe_emit_proposal(
         return
 
     availability = await sr.load_room_availability(redis_client, room_id=room_pk)
-    result = sr.compute_majority_slot(availability, total_eligible_voters=member_count)
+    unavailability = await sr.load_room_unavailability(redis_client, room_id=room_pk)
+    result = sr.compute_majority_slot(
+        availability,
+        total_eligible_voters=member_count,
+        unavailability=unavailability,
+    )
     if result is None:
         return
 
@@ -261,6 +271,23 @@ async def social_ws(
     except Exception:
         logger.exception("Redis client unavailable for social room %s", room_id)
         r = None
+
+    # 접속 직후 현재 불가능 날짜 스냅샷을 이 소켓에만 전달 (새로고침/재접속 복구).
+    if r is not None:
+        try:
+            snapshot = await sr.load_room_unavailability(r, room_id=room_pk)
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "unavailable_snapshot",
+                        "by_user": {str(uid): dates for uid, dates in snapshot.items()},
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        except Exception:
+            logger.debug("unavailable_snapshot push failed room=%s", room_id, exc_info=True)
+
     try:
         while True:
             raw = await websocket.receive_text()
@@ -336,6 +363,57 @@ async def social_ws(
                     except Exception:
                         logger.warning(
                             "Finalization aggregation failed for room %s",
+                            room_id, exc_info=True,
+                        )
+                continue
+
+            # ── 불가능 날짜 토글: Redis 영속화 + broadcast ──────────────
+            if msg_type == "unavailable_toggle":
+                raw_date = payload.get("date")
+                if (
+                    not isinstance(raw_date, str)
+                    or len(raw_date) != 10
+                    or raw_date[4] != "-"
+                    or raw_date[7] != "-"
+                ):
+                    continue
+                unavailable_flag = bool(payload.get("unavailable", True))
+
+                if r is not None and authed_user_id is not None:
+                    dates_after = await sr.record_unavailable_toggle(
+                        r,
+                        room_id=room_pk,
+                        user_id=authed_user_id,
+                        date=raw_date,
+                        unavailable=unavailable_flag,
+                    )
+                else:
+                    dates_after = []
+
+                out = json.dumps(
+                    {
+                        "type": "peer_unavailable_update",
+                        "user_id": authed_user_id,
+                        "sender": authed_user_name,
+                        "dates": dates_after,
+                    },
+                    ensure_ascii=False,
+                )
+                await _publish_social_message(r, channel, out)
+
+                # 불가능 날짜 변경으로 과반 슬롯이 달라질 수 있으니 재집계 트리거.
+                if r is not None and authed_user_id is not None:
+                    try:
+                        await _maybe_emit_proposal(
+                            r, room_pk=room_pk,
+                            user_id=authed_user_id,
+                            date=None, start=None, end=None,
+                            channel=channel,
+                            skip_record=True,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Finalization aggregation failed after unavailable_toggle room=%s",
                             room_id, exc_info=True,
                         )
                 continue

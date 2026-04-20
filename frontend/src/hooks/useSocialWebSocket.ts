@@ -55,6 +55,19 @@ export interface PeerTimeSelection {
   end: number;
 }
 
+// ── Unavailability (red-bordered calendar dates) ─────────────────────────
+export interface PeerUnavailableUpdatePayload {
+  type: "peer_unavailable_update";
+  user_id: number | null;
+  sender: string | null;
+  dates: string[];
+}
+
+export interface UnavailableSnapshotPayload {
+  type: "unavailable_snapshot";
+  by_user: Record<string, string[]>;
+}
+
 // ── Finalization (AI proposal → host approval) payloads ──────────────────
 export type FinalizationStatus =
   | "pending_ai"
@@ -249,6 +262,18 @@ function isPeerTimeSelectionPayload(data: unknown): data is PeerTimeSelectionPay
   );
 }
 
+function isPeerUnavailableUpdatePayload(data: unknown): data is PeerUnavailableUpdatePayload {
+  if (!data || typeof data !== "object") return false;
+  const c = data as Partial<PeerUnavailableUpdatePayload>;
+  return c.type === "peer_unavailable_update" && Array.isArray(c.dates);
+}
+
+function isUnavailableSnapshotPayload(data: unknown): data is UnavailableSnapshotPayload {
+  if (!data || typeof data !== "object") return false;
+  const c = data as Partial<UnavailableSnapshotPayload>;
+  return c.type === "unavailable_snapshot" && c.by_user != null && typeof c.by_user === "object";
+}
+
 function isVoteReminderPayload(data: unknown): data is VoteReminderPayload {
   if (!data || typeof data !== "object") {
     return false;
@@ -271,6 +296,8 @@ export function useSocialWebSocket(roomId: string, sender: string) {
   const [detectedIntent, setDetectedIntent] = useState<IntentDetectedPayload | null>(null);
   const [peerSelections, setPeerSelections] = useState<Record<string, PeerSelection>>({});
   const [peerTimeSelections, setPeerTimeSelections] = useState<Record<string, PeerTimeSelection>>({});
+  // user_id → 해당 유저가 표시한 불가능 날짜 배열. 내 것과 남 것을 한 dict에 담음.
+  const [unavailabilityByUser, setUnavailabilityByUser] = useState<Record<number, string[]>>({});
   const [finalizationProposal, setFinalizationProposal] = useState<FinalizationState | null>(null);
   const [finalizationPending, setFinalizationPending] = useState<boolean>(false);
   const [lastConfirmedMeeting, setLastConfirmedMeeting] = useState<MeetingConfirmedPayload | null>(null);
@@ -548,6 +575,33 @@ export function useSocialWebSocket(roomId: string, sender: string) {
           return;
         }
 
+        if (isUnavailableSnapshotPayload(data)) {
+          // 접속 직후 서버가 직접 푸시하는 현재 상태. 덮어쓰기.
+          const next: Record<number, string[]> = {};
+          for (const [uidStr, dates] of Object.entries(data.by_user)) {
+            const uid = Number(uidStr);
+            if (!Number.isFinite(uid) || !Array.isArray(dates)) continue;
+            next[uid] = dates.filter((d) => typeof d === "string");
+          }
+          setUnavailabilityByUser(next);
+          return;
+        }
+
+        if (isPeerUnavailableUpdatePayload(data)) {
+          if (data.user_id == null) return;
+          const uid = data.user_id;
+          setUnavailabilityByUser((prev) => {
+            const next = { ...prev };
+            if (data.dates.length === 0) {
+              delete next[uid];
+            } else {
+              next[uid] = data.dates;
+            }
+            return next;
+          });
+          return;
+        }
+
         if (isPeerDateSelectionPayload(data)) {
           // 자기 자신 이벤트는 무시 (user_id 기준 — 동명이인에 안전).
           // user_id가 누락된 이벤트(예: 구버전 서버)는 sender 이름으로 fallback.
@@ -679,6 +733,16 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     [sender],
   );
 
+  const sendUnavailableToggle = useCallback(
+    (date: string, unavailable: boolean) => {
+      const ws = wsRef.current;
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "unavailable_toggle", date, unavailable }));
+      }
+    },
+    [],
+  );
+
   const dismissIntent = useCallback(() => {
     setDetectedIntent(null);
   }, []);
@@ -693,6 +757,8 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     sendMessage,
     sendDateSelection,
     sendTimeSelection,
+    sendUnavailableToggle,
+    unavailabilityByUser,
     status,
     detectedIntent,
     dismissIntent,

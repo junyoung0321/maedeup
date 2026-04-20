@@ -1,11 +1,31 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Ban, ChevronLeft, ChevronRight } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useMeetingOptional } from "@/contexts/MeetingContext";
 import MiniTimeBar from "@/components/meeting/MiniTimeBar";
 import { fs } from "@/lib/responsive";
+
+function getCurrentUserIdFromToken(): number | null {
+  if (typeof window === "undefined") return null;
+  const token = localStorage.getItem("auth_token");
+  if (!token) return null;
+  try {
+    const payloadPart = token.split(".")[1];
+    if (!payloadPart) return null;
+    const normalized = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const decoded = JSON.parse(atob(padded));
+    if (decoded?.sub) {
+      const asNum = Number(decoded.sub);
+      if (Number.isFinite(asNum)) return asNum;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
 
 /* ── Types ─────────────────────────────────────────────── */
 interface DayAvail {
@@ -40,12 +60,27 @@ export default function CalendarPane() {
   const candidateSlots = meeting?.candidateSlots ?? [];
   const peerDateSelections = meeting?.peerDateSelections ?? {};
   const sendDateSelection = meeting?.sendDateSelection ?? null;
+  const unavailabilityByUser = meeting?.unavailabilityByUser ?? {};
+  const sendUnavailableToggle = meeting?.sendUnavailableToggle ?? null;
+  const currentUserId = useMemo(() => getCurrentUserIdFromToken(), []);
   const [availabilityData, setAvailabilityData] = useState<Record<number, DayAvail>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [year, setYear] = useState(new Date().getFullYear());
   const [month, setMonth] = useState(new Date().getMonth() + 1);
   const [clickedDay, setClickedDay] = useState<number | null>(null);
+  const [blockMode, setBlockMode] = useState(false);
+
+  // 날짜 문자열 → 그 날 불가능 처리한 user_id 수. 내 것도 포함.
+  const unavailableCountByDate: Record<string, number> = {};
+  const myUnavailableDates = new Set<string>();
+  for (const [uidStr, dates] of Object.entries(unavailabilityByUser)) {
+    const uid = Number(uidStr);
+    for (const d of dates) {
+      unavailableCountByDate[d] = (unavailableCountByDate[d] ?? 0) + 1;
+      if (uid === currentUserId) myUnavailableDates.add(d);
+    }
+  }
 
   const daysInMonth = new Date(year, month, 0).getDate();
   const firstDay = new Date(year, month - 1, 1).getDay();
@@ -143,10 +178,14 @@ export default function CalendarPane() {
       {/* Header */}
       <div
         style={{
-          background: "#f2f4f7",
+          background: blockMode ? "#fef2f2" : "#f2f4f7",
           borderRadius: "20px 20px 0 0",
           padding: "clamp(10px, 1vw, 16px) clamp(12px, 1.2vw, 20px)",
-          borderBottom: "1px solid #e2e8f0",
+          borderBottom: `1px solid ${blockMode ? "#fecaca" : "#e2e8f0"}`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
         }}
       >
         <span
@@ -159,6 +198,28 @@ export default function CalendarPane() {
         >
           캘린더
         </span>
+        <button
+          onClick={() => setBlockMode((v) => !v)}
+          aria-pressed={blockMode}
+          title={blockMode ? "불가능 모드 끄기 (날짜 선택으로 돌아가기)" : "불가능 날짜 표시 모드 켜기"}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "6px 10px",
+            borderRadius: 8,
+            border: `1px solid ${blockMode ? "#ef4444" : "#cbd5e1"}`,
+            background: blockMode ? "#ef4444" : "#ffffff",
+            color: blockMode ? "#ffffff" : "#64748b",
+            fontSize: fs(12, 11),
+            fontWeight: 600,
+            cursor: "pointer",
+            fontFamily: "inherit",
+          }}
+        >
+          <Ban size={14} />
+          {blockMode ? "불가능 모드 ON" : "불가능 날짜"}
+        </button>
       </div>
 
       {/* Month nav */}
@@ -263,9 +324,17 @@ export default function CalendarPane() {
             const isClicked = day === clickedDay;
             const isPast = new Date(year, month - 1, day) < new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate());
 
+            const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+            const isMyBlocked = myUnavailableDates.has(dateStr);
+            const blockedCount = unavailableCountByDate[dateStr] ?? 0;
+
             const handleDayClick = () => {
               if (isPast) return; // 과거 날짜 클릭 무시
-              const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+              // 불가능 모드: 내 불가능 토글만 수행
+              if (blockMode) {
+                sendUnavailableToggle?.(dateStr, !isMyBlocked);
+                return;
+              }
               if (isClicked) {
                 setClickedDay(null);
                 if (setInfoPanePhase && infoPanePhase === "dateSelected") {
@@ -285,9 +354,11 @@ export default function CalendarPane() {
             const aiButBusy = isAiHighlighted && avail && avail.count === 0;
             const aiAndAvailable = isAiHighlighted && avail && avail.count > 0;
 
-            // Border priority: AI available (blue) > AI busy (red dashed) > today/clicked (indigo)
+            // Border priority: 내 불가능(red) > AI available (blue) > AI busy (red dashed) > today/clicked (indigo)
             let borderStyle: string | undefined;
-            if (aiButBusy) {
+            if (isMyBlocked) {
+              borderStyle = "2px solid #ef4444";
+            } else if (aiButBusy) {
               borderStyle = "2px dashed #ef4444";
             } else if (aiAndAvailable || isAiHighlighted) {
               borderStyle = "2px solid #3B82F6";
@@ -309,7 +380,7 @@ export default function CalendarPane() {
                   aspectRatio: "1 / 1",
                   minHeight: 36,
                   width: "100%",
-                  borderRadius: isHighlighted || isAiHighlighted || isToday || isClicked ? 8 : 0,
+                  borderRadius: isHighlighted || isAiHighlighted || isToday || isClicked || isMyBlocked ? 8 : 0,
                   cursor: isPast ? "default" : "pointer",
                   background: isPast ? "transparent" : isHighlighted ? "#e0e7ff" : "transparent",
                   border: isPast ? undefined : borderStyle,
@@ -340,6 +411,36 @@ export default function CalendarPane() {
                     {avail.count}/{avail.total}
                   </span>
                 )}
+                {(() => {
+                  const othersBlocked = blockedCount - (isMyBlocked ? 1 : 0);
+                  if (othersBlocked <= 0) return null;
+                  return (
+                    <span
+                      aria-label={`${othersBlocked}명 불가능`}
+                      title={`${othersBlocked}명 이 날 불가능`}
+                      style={{
+                        position: "absolute",
+                        top: 2,
+                        right: 2,
+                        minWidth: 14,
+                        height: 14,
+                        padding: "0 3px",
+                        borderRadius: 7,
+                        background: "#ef4444",
+                        color: "#ffffff",
+                        fontSize: 9,
+                        fontWeight: 700,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        lineHeight: 1,
+                        fontFamily: "Inter, sans-serif",
+                      }}
+                    >
+                      {othersBlocked}
+                    </span>
+                  );
+                })()}
                 {peersForDay.length > 0 && (
                   <div
                     style={{

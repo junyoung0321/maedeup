@@ -259,8 +259,9 @@ async def confirm_meeting(
             await sr.mark_confirmed(
                 redis, room_id=body.room_id, proposal_id=body.proposal_id
             )
-            # 확정 후 availability 캐시 비우기 — 다음 선택이 새 제안을 만들지 않도록.
+            # 확정 후 availability / unavailability 캐시 비우기 — 다음 선택이 새 제안을 만들지 않도록.
             await sr.clear_availability(redis, room_id=body.room_id)
+            await sr.clear_unavailability(redis, room_id=body.room_id)
             await _publish_finalization_event(
                 redis,
                 body.room_id,

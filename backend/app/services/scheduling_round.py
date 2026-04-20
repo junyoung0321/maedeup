@@ -582,17 +582,29 @@ class MajoritySlotResult:
 def compute_majority_slot(
     availability: dict[int, list[dict[str, Any]]],
     total_eligible_voters: int,
+    unavailability: Optional[dict[int, list[str]]] = None,
 ) -> Optional[MajoritySlotResult]:
     """
     Find the longest consecutive run of 30-min cells that has strict majority
     availability. Returns MajoritySlotResult with primary + optional alternate
     (when two runs tie on length AND coverage).
 
+    When `unavailability` is provided ({user_id: [date, ...]}), per-date threshold
+    is adjusted: on date D, eligible voters = total - |users who marked D as blocked|,
+    and availability cells from unavailable users on D are dropped defensively.
+
     Returns None if no run meets the majority threshold.
     """
     if total_eligible_voters <= 0:
         return None
-    threshold = total_eligible_voters // 2 + 1
+
+    unavailability = unavailability or {}
+    # Per-date set of user_ids who flagged the date as unavailable.
+    blocked_by_date: dict[str, set[int]] = {}
+    for uid, dates in unavailability.items():
+        for d in dates:
+            if isinstance(d, str):
+                blocked_by_date.setdefault(d, set()).add(int(uid))
 
     # cells[date][slot_idx] = set of user_ids
     cells: dict[str, dict[int, set[int]]] = {}
@@ -602,6 +614,10 @@ def compute_majority_slot(
             start = sel.get("start")
             end = sel.get("end")
             if not isinstance(date, str) or start is None or end is None:
+                continue
+            # Defensive: if the user also marked this date unavailable, drop their
+            # slot cells for that date — treat explicit "불가능" as authoritative.
+            if int(user_id) in blocked_by_date.get(date, set()):
                 continue
             try:
                 s, e = int(start), int(end)
@@ -616,11 +632,19 @@ def compute_majority_slot(
             for idx in range(s, e + 1):
                 by_cell.setdefault(idx, set()).add(int(user_id))
 
+    def _threshold_for(date: str) -> int:
+        effective = total_eligible_voters - len(blocked_by_date.get(date, set()))
+        if effective <= 0:
+            # 모두 불가능하면 과반 자체가 불가 — 사실상 차단.
+            return total_eligible_voters + 1
+        return effective // 2 + 1
+
     # Find all runs with count >= threshold, pick longest(+top-2 for tie).
     best_runs: list[tuple[str, int, int, int]] = []   # (date, start, end, min_count)
     for date, by_cell in cells.items():
         if not by_cell:
             continue
+        threshold = _threshold_for(date)
         sorted_idxs = sorted(by_cell.keys())
         i = 0
         while i < len(sorted_idxs):
@@ -664,5 +688,88 @@ async def clear_availability(redis: aioredis.Redis, *, room_id: int) -> None:
     """Reset the room's availability hash (called on meeting confirmation)."""
     try:
         await redis.delete(_key_availability(room_id))
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Per-meeting unavailability (red-bordered dates on calendar)
+# ---------------------------------------------------------------------------
+
+
+def _key_unavailability(room_id: int) -> str:
+    return f"room_unavailability:{room_id}"
+
+
+async def record_unavailable_toggle(
+    redis: aioredis.Redis,
+    *,
+    room_id: int,
+    user_id: int,
+    date: str,
+    unavailable: bool,
+) -> list[str]:
+    """
+    Add/remove a single date to the user's unavailability set for this room.
+    Returns the user's full list of unavailable dates after the mutation.
+    """
+    key = _key_unavailability(room_id)
+    try:
+        raw = await redis.hget(key, str(user_id))
+        current: list[str] = []
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    current = [d for d in parsed if isinstance(d, str)]
+            except json.JSONDecodeError:
+                current = []
+        as_set = set(current)
+        if unavailable:
+            as_set.add(date)
+        else:
+            as_set.discard(date)
+        new_list = sorted(as_set)
+        if new_list:
+            await redis.hset(key, str(user_id), json.dumps(new_list))
+            await redis.expire(key, AVAILABILITY_TTL_SECONDS)
+        else:
+            await redis.hdel(key, str(user_id))
+        return new_list
+    except Exception:
+        logger.warning(
+            "Unavailability write failed room_id=%s user_id=%s",
+            room_id, user_id, exc_info=True,
+        )
+        return []
+
+
+async def load_room_unavailability(
+    redis: aioredis.Redis, *, room_id: int
+) -> dict[int, list[str]]:
+    """Return {user_id: [date, ...]} — one list per user currently tracked."""
+    key = _key_unavailability(room_id)
+    try:
+        entries = await redis.hgetall(key)
+    except Exception:
+        logger.warning("Unavailability read failed room_id=%s", room_id, exc_info=True)
+        return {}
+
+    result: dict[int, list[str]] = {}
+    for user_key, raw in entries.items():
+        try:
+            uid = int(user_key)
+            parsed = json.loads(raw)
+        except (ValueError, json.JSONDecodeError):
+            continue
+        if isinstance(parsed, list):
+            result[uid] = [d for d in parsed if isinstance(d, str)]
+    return result
+
+
+async def clear_unavailability(redis: aioredis.Redis, *, room_id: int) -> None:
+    """Reset the room's unavailability hash (called on meeting confirmation)."""
+    try:
+        await redis.delete(_key_unavailability(room_id))
     except Exception:
         pass

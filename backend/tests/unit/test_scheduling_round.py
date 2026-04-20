@@ -467,3 +467,65 @@ async def test_proposal_redis_key_ttl_matches_deadline(fake_redis):
     # Allow small skew for time elapsed between SET and TTL read.
     assert sr.PROPOSAL_DEADLINE_SECONDS - 5 <= ttl <= sr.PROPOSAL_DEADLINE_SECONDS
     assert sr.PROPOSAL_TTL_SECONDS == sr.PROPOSAL_DEADLINE_SECONDS
+
+
+def test_compute_majority_slot_respects_all_blocked():
+    """모든 유저가 한 날짜를 불가능으로 표시하면 그 날짜는 제안 후보에서 빠져야 한다."""
+    availability = {
+        1: [{"date": "2026-05-02", "start": 0, "end": 10}],
+        2: [{"date": "2026-05-02", "start": 0, "end": 10}],
+        3: [{"date": "2026-05-02", "start": 0, "end": 10}],
+    }
+    unavailability = {
+        1: ["2026-05-02"],
+        2: ["2026-05-02"],
+        3: ["2026-05-02"],
+    }
+    result = sr.compute_majority_slot(
+        availability, total_eligible_voters=3, unavailability=unavailability
+    )
+    assert result is None
+
+
+def test_compute_majority_slot_drops_blocked_user_from_day():
+    """특정 유저가 해당 날짜 불가능이면, 그 유저의 availability 셀도 그 날엔 무시된다."""
+    availability = {
+        1: [{"date": "2026-05-02", "start": 0, "end": 4}],
+        2: [{"date": "2026-05-02", "start": 0, "end": 4}],
+    }
+    # 유저 2는 5/2 불가능 → effective voter = 1, threshold = 1, 유저 1이 모든 셀 점유 → 통과.
+    unavailability = {2: ["2026-05-02"]}
+    result = sr.compute_majority_slot(
+        availability, total_eligible_voters=2, unavailability=unavailability
+    )
+    assert result is not None
+    assert result.primary["date"] == "2026-05-02"
+
+
+async def test_record_unavailable_toggle_round_trip(fake_redis):
+    """토글 on/off 후 load_room_unavailability가 일관된 상태를 반환하는지."""
+    dates_after_on = await sr.record_unavailable_toggle(
+        fake_redis, room_id=77, user_id=1, date="2026-05-02", unavailable=True
+    )
+    assert dates_after_on == ["2026-05-02"]
+
+    dates_after_on_2 = await sr.record_unavailable_toggle(
+        fake_redis, room_id=77, user_id=1, date="2026-05-03", unavailable=True
+    )
+    assert dates_after_on_2 == ["2026-05-02", "2026-05-03"]
+
+    loaded = await sr.load_room_unavailability(fake_redis, room_id=77)
+    assert loaded == {1: ["2026-05-02", "2026-05-03"]}
+
+    dates_after_off = await sr.record_unavailable_toggle(
+        fake_redis, room_id=77, user_id=1, date="2026-05-02", unavailable=False
+    )
+    assert dates_after_off == ["2026-05-03"]
+
+    # 마지막 날짜도 해제하면 유저 엔트리 자체 삭제
+    final = await sr.record_unavailable_toggle(
+        fake_redis, room_id=77, user_id=1, date="2026-05-03", unavailable=False
+    )
+    assert final == []
+    loaded_after = await sr.load_room_unavailability(fake_redis, room_id=77)
+    assert loaded_after == {}

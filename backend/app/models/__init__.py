@@ -4,6 +4,7 @@ from app.models.chat import ChatMessage, PaneType
 from app.models.event import Event
 from app.models.friendship import Friendship, FriendshipStatus
 from app.models.meeting import MeetingParticipant, MeetingSchedule, MeetingStatus, ParticipantStatus
+from app.models.notification import Notification
 from app.models.room import MemberRole, Room, RoomMember, RoomStatus
 from app.models.user import User
 from app.models.vote import Vote, VoteOption, VoteResponse, VoteStatus, VoteType
@@ -20,6 +21,7 @@ __all__ = [
     "MeetingSchedule",
     "MeetingStatus",
     "ParticipantStatus",
+    "Notification",
     "MemberRole",
     "Room",
     "RoomMember",

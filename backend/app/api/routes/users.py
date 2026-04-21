@@ -11,6 +11,7 @@ from app.core.security import AuthUser, get_current_user, issue_jwt
 from app.db.session import get_session
 from app.models.friendship import Friendship, FriendshipStatus
 from app.models.user import User
+from app.services.notify import notify
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -216,6 +217,21 @@ async def send_friend_request(
     session.add(friendship)
     await session.commit()
     await session.refresh(friendship)
+
+    # 친구 요청 도착 알림 (수신자에게)
+    requester = await session.get(User, requester_id)
+    if requester is not None:
+        await notify(
+            session,
+            user_id=body.addressee_id,
+            type="FRIEND_REQUEST_RECEIVED",
+            title=f"{requester.name}님이 친구 요청을 보냈습니다",
+            payload={
+                "from_user_id": requester_id,
+                "from_user_name": requester.name,
+                "friendship_id": friendship.id,
+            },
+        )
 
     return FriendRequestResponse(id=friendship.id, status=friendship.status)
 

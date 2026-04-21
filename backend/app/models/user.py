@@ -18,4 +18,6 @@ class User(SQLModel, table=True):
     google_access_token: Optional[str] = Field(default=None, sa_column=Column(Text(), nullable=True))
     google_refresh_token: Optional[str] = Field(default=None, sa_column=Column(Text(), nullable=True))
     calendar_consent: bool = Field(default=False, index=True)
+    # 게스트 유저: 구글 로그인 없이 방 링크만으로 생성된 pseudo-user. email은 synthetic.
+    is_guest: bool = Field(default=False, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))

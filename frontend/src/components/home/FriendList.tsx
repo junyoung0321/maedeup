@@ -7,6 +7,7 @@ import AddFriendModal from "./AddFriendModal";
 import { apiFetchWithFallback } from "@/lib/api";
 import { mockFriends } from "@/mocks/friends";
 import type { FriendInfo } from "@/types";
+import EmptyState from "@/components/ui/EmptyState";
 
 const AVATAR_PALETTE = [
   "#c7d2fe", "#93c5fd", "#86efac", "#fca5a5",
@@ -42,13 +43,14 @@ export default function FriendList() {
               불러오는 중...
             </div>
           ) : error ? (
-            <div className="flex-1 flex items-center justify-center text-[#ef4444] text-sm">
-              친구 목록을 불러올 수 없습니다
-            </div>
+            <EmptyState message="친구 목록을 불러올 수 없습니다" icon={UserPlus} />
           ) : friends.length === 0 ? (
-            <div className="flex-1 flex items-center justify-center text-[#94a3b8] text-sm">
-              아직 친구가 없어요
-            </div>
+            <EmptyState
+              icon={UserPlus}
+              message="아직 친구가 없어요"
+              sub="친구 추가 버튼으로 새 친구를 초대해 보세요"
+              action={{ label: "친구 추가", onClick: () => setModalOpen(true) }}
+            />
           ) : (
             friends.map((friend, idx) => (
               <div key={friend.id}>

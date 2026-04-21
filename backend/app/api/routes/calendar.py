@@ -11,10 +11,14 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+import redis.asyncio as aioredis
+
+from app.core.config import settings
 from app.core.security import AuthUser, get_current_user
 from app.db.session import get_session
 from app.models.room import RoomMember
 from app.models.user import User
+from app.services import scheduling_round as sr
 from app.services.google_calendar import GoogleCalendarAuthError, get_google_access_token
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
@@ -40,11 +44,12 @@ def _calendar_display_name(user_key: str) -> str:
 
 
 class DayInfo(BaseModel):
-    count: int              # 해당 날 가능한 멤버 수
+    count: int              # 해당 날 가능한 멤버 수 (명시적 "불가능" 표시자는 제외)
     total: int              # 전체 연동 멤버 수
     available: list[str]    # 가능한 멤버 이름 목록
-    busy: list[str]         # 바쁜 멤버 이름 목록
+    busy: list[str]         # 바쁜 멤버 이름 목록 (캘린더 일정 기반)
     unconnected: list[str]  # 캘린더 미연동 멤버 이름 목록
+    blocked: list[str] = []  # 방에서 명시적으로 "불가능" 표시한 멤버 이름 목록
 
 
 class FreeSlot(BaseModel):
@@ -195,27 +200,45 @@ def _compute_dates(
     start_date: date,
     lookahead_days: int = LOOKAHEAD_DAYS,
     unconnected_names: list[str] | None = None,
+    blocked_by_date: dict[str, set[str]] | None = None,
 ) -> dict[str, DayInfo]:
-    """날짜별 가용 인원(count/total) 및 멤버별 가능/불가능 목록을 계산합니다."""
+    """날짜별 가용 인원(count/total) 및 멤버별 가능/불가능 목록을 계산합니다.
+
+    `blocked_by_date`: ISO 날짜 문자열 → 해당 날 "불가능"으로 표시한 display_name 집합.
+    명시적 불가능 표시는 캘린더 일정보다 우선시되어, available에서 제거되고
+    blocked 카테고리로 분리됨. unconnected 유저도 같은 규칙 적용.
+    """
     total = len(busy_by_user)
     unconnected = unconnected_names or []
+    blocked_map = blocked_by_date or {}
     result: dict[str, DayInfo] = {}
     for offset in range(lookahead_days):
         kst_date = start_date + timedelta(days=offset)
+        iso = kst_date.isoformat()
+        blocked_today = blocked_map.get(iso, set())
+
         available_names = [
-            _calendar_display_name(name) for name, periods in busy_by_user.items()
+            _calendar_display_name(name)
+            for name, periods in busy_by_user.items()
             if not _has_event_on_day(periods, kst_date)
+            and _calendar_display_name(name) not in blocked_today
         ]
         busy_names = [
-            _calendar_display_name(name) for name, periods in busy_by_user.items()
+            _calendar_display_name(name)
+            for name, periods in busy_by_user.items()
             if _has_event_on_day(periods, kst_date)
+            and _calendar_display_name(name) not in blocked_today
         ]
-        result[kst_date.isoformat()] = DayInfo(
+        unconnected_today = [n for n in unconnected if n not in blocked_today]
+        blocked_names = sorted(blocked_today)
+
+        result[iso] = DayInfo(
             count=len(available_names),
             total=total,
             available=available_names,
             busy=busy_names,
-            unconnected=unconnected,
+            unconnected=unconnected_today,
+            blocked=blocked_names,
         )
     return result
 
@@ -344,7 +367,33 @@ async def get_free_slots(
     for user in consenting:
         busy_by_user[_calendar_user_key(user)] = await _get_busy_periods(user, time_min, time_max, session)
 
-    dates = _compute_dates(busy_by_user, start_date, lookahead, unconnected_names)
+    # Redis에 저장된 방별 "불가능 날짜" 집계 (user_id → [dates]) → display_name 기준으로 매핑.
+    user_name_by_id = {user.id: user.name for user in all_users}
+    blocked_by_date: dict[str, set[str]] = {}
+    try:
+        redis_client = aioredis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+        try:
+            blocks = await sr.load_room_unavailability(redis_client, room_id=room_pk)
+            for uid, dates_list in blocks.items():
+                name = user_name_by_id.get(uid)
+                if not name:
+                    continue
+                for d in dates_list:
+                    blocked_by_date.setdefault(d, set()).add(name)
+        finally:
+            await redis_client.aclose()
+    except Exception:
+        logger.debug("Unavailability load skipped for room %s", room_pk, exc_info=True)
+
+    dates = _compute_dates(
+        busy_by_user, start_date, lookahead, unconnected_names,
+        blocked_by_date=blocked_by_date,
+    )
     free_slots = _compute_free_slots(busy_by_user, time_min, time_max)
 
     # detail_date: 특정 날짜의 멤버별 바쁜 시간대 조회

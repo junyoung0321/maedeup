@@ -773,3 +773,63 @@ async def clear_unavailability(redis: aioredis.Redis, *, room_id: int) -> None:
         await redis.delete(_key_unavailability(room_id))
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Per-room date selection (캘린더에서 클릭한 날짜 공유용)
+# ---------------------------------------------------------------------------
+
+
+def _key_date_selection(room_id: int) -> str:
+    return f"room_date_selection:{room_id}"
+
+
+async def record_date_selection(
+    redis: aioredis.Redis,
+    *,
+    room_id: int,
+    user_id: int,
+    date: Optional[str],
+) -> None:
+    """한 유저의 현재 선택 날짜를 영속화. date=None이면 삭제."""
+    key = _key_date_selection(room_id)
+    try:
+        if date is None:
+            await redis.hdel(key, str(user_id))
+        else:
+            await redis.hset(key, str(user_id), date)
+            await redis.expire(key, AVAILABILITY_TTL_SECONDS)
+    except Exception:
+        logger.warning(
+            "Date selection write failed room_id=%s user_id=%s",
+            room_id, user_id, exc_info=True,
+        )
+
+
+async def load_room_date_selections(
+    redis: aioredis.Redis, *, room_id: int
+) -> dict[int, str]:
+    """{user_id: date} — 각 유저의 현재 선택 날짜."""
+    key = _key_date_selection(room_id)
+    try:
+        entries = await redis.hgetall(key)
+    except Exception:
+        logger.warning("Date selection read failed room_id=%s", room_id, exc_info=True)
+        return {}
+    result: dict[int, str] = {}
+    for user_key, raw in entries.items():
+        try:
+            uid = int(user_key)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(raw, str):
+            result[uid] = raw
+    return result
+
+
+async def clear_date_selections(redis: aioredis.Redis, *, room_id: int) -> None:
+    """확정 시 방의 date_selection 해시 비움."""
+    try:
+        await redis.delete(_key_date_selection(room_id))
+    except Exception:
+        pass

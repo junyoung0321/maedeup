@@ -2433,6 +2433,16 @@ async def vote_card_creation(state: GraphState) -> GraphState:
             "blocker_notification": state.get("blocker_notification_payload"),
         }
         state["status"] = "vote_card_created"
+
+        # Narrator: 카드만 띄우고 조용히 끝내면 사용자가 "AI가 대답 안 했나?" 헷갈림.
+        # 다중 후보 안내 한 문장을 함께 띄움.
+        try:
+            narrator = "투표 카드를 준비했어요! 아래에서 가능한 시간대를 골라주세요. 📅"
+            async with AsyncSessionLocal() as db:
+                await _emit_assistant_message(state["room_id"], db, narrator, state)
+        except Exception:
+            logger.debug("vote_card narrator emit failed", exc_info=True)
+
         logger.info("[TIMING] vote_card_creation: %.2fs", time.monotonic() - _t0)
         return state
     except Exception as exc:
@@ -2587,6 +2597,21 @@ async def place_recommendation(state: GraphState) -> GraphState:
             "recommendations": ranked_places[:5],
         }
         state["status"] = "place_recommended"
+
+        # Narrator: 카드만 띄우고 끝내면 사용자가 "AI가 대답 안 했나?" 헷갈림.
+        try:
+            count = len(ranked_places[:5])
+            hint = state.get("place_hint") or "요청하신 지역"
+            narrator = (
+                f"{hint} 근처 추천 장소 {count}개를 정리했어요. 📍 아래 카드에서 확인해 주세요."
+                if count > 0
+                else "추천 장소를 정리해봤어요. 📍 아래 카드를 확인해 주세요."
+            )
+            async with AsyncSessionLocal() as db:
+                await _emit_assistant_message(state["room_id"], db, narrator, state)
+        except Exception:
+            logger.debug("place_recommendation narrator emit failed", exc_info=True)
+
         logger.info("[TIMING] place_recommendation: %.2fs", time.monotonic() - _t0)
         return state
     except Exception as exc:

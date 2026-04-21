@@ -99,6 +99,15 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
   const meeting = useMeetingOptional();
   const peerTimeSelections = meeting?.peerTimeSelections ?? {};
   const sendTimeSelection = meeting?.sendTimeSelection ?? null;
+  const myTimeSelection = meeting?.myTimeSelection ?? null;
+
+  // 리프레시 복구: 마운트 + date 변경 시 서버가 push한 내 이전 선택이 있으면 복원.
+  useEffect(() => {
+    if (myTimeSelection && myTimeSelection.date === date) {
+      setSelectionStart(myTimeSelection.start);
+      setSelectionEnd(myTimeSelection.end);
+    }
+  }, [date, myTimeSelection]);
 
   // Fetch member busy periods for the specific date
   useEffect(() => {

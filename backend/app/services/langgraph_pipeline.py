@@ -10,6 +10,7 @@ from typing import Any, Literal, TypedDict
 from zoneinfo import ZoneInfo
 
 import httpx
+import redis.asyncio as aioredis
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -17,6 +18,7 @@ from sqlmodel import select
 import holidays
 
 from app.core.config import settings
+from app.models.ai_memory import AIMemory
 from app.models.chat import ChatMessage, PaneType
 from app.models.room import RoomMember
 from app.models.user import User
@@ -25,6 +27,11 @@ from app.services.google_calendar import GoogleCalendarAuthError, get_google_acc
 from app.services.intent_classifier import classify_intent
 from app.services.kakao_maps import search_address, search_keyword
 from app.services.meeting_history import get_recent_meeting_records, search_meeting_history
+from app.services.personal_data_extractor import (
+    CATEGORY_FIELDS as PERSONAL_DATA_CATEGORIES,
+    CategoryExtraction,
+    extract_personal_data,
+)
 
 KST = ZoneInfo("Asia/Seoul")
 GOOGLE_FREEBUSY_URL = "https://www.googleapis.com/calendar/v3/freeBusy"
@@ -2189,6 +2196,194 @@ async def maedeup_card_creation(state: GraphState) -> GraphState:
         return await _handle_node_exception("maedeup_card_creation", state, exc)
 
 
+def _is_empty_personal_data(value: Any) -> bool:
+    """Personal data 필드가 '비어있다'고 볼 수 있는 값인지."""
+    if value is None:
+        return True
+    if isinstance(value, str) and value.strip() == "":
+        return True
+    if isinstance(value, list) and len(value) == 0:
+        return True
+    return False
+
+
+async def _publish_personal_data_updates(user_ids: list[int]) -> None:
+    """홈 PersonalData 패널 fade-in을 위한 user-scoped Redis publish.
+
+    실패는 logging만. extraction 자체를 깨지 않음.
+    """
+    if not user_ids:
+        return
+    try:
+        r = aioredis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+        try:
+            for uid in user_ids:
+                envelope = {
+                    "type": "personal_data:updated",
+                    "user_id": uid,
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                }
+                await r.publish(
+                    f"personal_data:user:{uid}:updated",
+                    json.dumps(envelope, ensure_ascii=False),
+                )
+        finally:
+            await r.aclose()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("personal_data Redis publish failed: %s", exc)
+
+
+async def memory_extraction(state: GraphState) -> GraphState:
+    """모임 종료(maedeup_card_creation) 직후 transcript에서 멤버별 personal data 추출.
+
+    Write 정책 (디자인 P5):
+    - User 필드가 비어있으면 → setattr + is_ai_filled[cat]=True (Case A)
+    - User 필드가 AI로 채워진 적 있으면 → 새 값으로 update + is_ai_filled[cat]=True (Case B)
+    - User 필드를 사용자가 직접 입력했으면 → User 건드리지 않음, AIMemory만 status='superseded_by_manual' (Case C)
+
+    매 추출에 대해 AIMemory row INSERT (값 동일해도 — 시점 기록 가치).
+    실패는 log only — 모임 자체를 깨뜨리지 않음.
+    """
+    _t0 = time.monotonic()
+    try:
+        if _has_node_error(state):
+            return state
+        if not state.get("maedeup_card_payload"):
+            # 매듭 카드가 안 만들어졌으면 모임이 종결된 게 아니므로 skip
+            return state
+
+        room_id_raw = state.get("room_id")
+        try:
+            room_id = int(room_id_raw)
+        except (TypeError, ValueError):
+            logger.warning("memory_extraction: invalid room_id=%r", room_id_raw)
+            return state
+
+        db: AsyncSession = state["db"]
+
+        # 1. room members
+        member_rows = (
+            await db.execute(
+                select(RoomMember).where(RoomMember.room_id == room_id)
+            )
+        ).scalars().all()
+        member_ids: list[int] = [m.user_id for m in member_rows]
+        if not member_ids:
+            logger.info("memory_extraction: room=%s has no members, skip", room_id)
+            return state
+
+        # 2. transcript — 사용자 발화만 (assistant/system 제외, social pane만)
+        transcript_rows = (
+            await db.execute(
+                select(ChatMessage)
+                .where(ChatMessage.room_id == room_id)
+                .where(ChatMessage.pane_type == PaneType.social.value)
+                .where(ChatMessage.role == "user")
+                .order_by(ChatMessage.created_at.asc())
+            )
+        ).scalars().all()
+        if not transcript_rows:
+            logger.info("memory_extraction: room=%s has no user messages, skip", room_id)
+            return state
+
+        # 3. extract (Gemini 또는 canned fallback)
+        try:
+            extractions = await extract_personal_data(
+                transcript=transcript_rows,
+                member_ids=member_ids,
+                db=db,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("memory_extraction: extract failed: %s", exc)
+            return state
+
+        # 4. write — 단일 트랜잭션. 부분 실패 시 롤백, 부분 상태 금지.
+        affected_user_ids: list[int] = []
+        try:
+            users_by_id = {
+                u.id: u
+                for u in (
+                    await db.execute(select(User).where(User.id.in_(member_ids)))
+                ).scalars().all()
+            }
+
+            for member_id, cat_results in extractions.items():
+                if not cat_results:
+                    continue
+                user = users_by_id.get(member_id)
+                if user is None:
+                    continue
+
+                user_changed = False
+                is_ai_filled = dict(user.is_ai_filled or {})
+
+                for category, ext in cat_results.items():
+                    current_value = getattr(user, category, None)
+                    already_ai = bool(is_ai_filled.get(category, False))
+
+                    if _is_empty_personal_data(current_value):
+                        # Case A
+                        setattr(user, category, ext.value)
+                        is_ai_filled[category] = True
+                        status = "active"
+                        user_changed = True
+                    elif already_ai:
+                        # Case B
+                        setattr(user, category, ext.value)
+                        is_ai_filled[category] = True
+                        status = "active"
+                        user_changed = True
+                    else:
+                        # Case C — manual entry, do not overwrite
+                        status = "superseded_by_manual"
+
+                    content_payload = {
+                        "value": ext.value,
+                        "confidence": ext.confidence,
+                        "source_quote": ext.source_quote,
+                        "status": status,
+                    }
+                    db.add(
+                        AIMemory(
+                            user_id=member_id,
+                            memory_type=category,
+                            content=json.dumps(content_payload, ensure_ascii=False),
+                            source_room_id=room_id,
+                            source_message_id=ext.source_message_id,
+                        )
+                    )
+
+                if user_changed:
+                    user.is_ai_filled = is_ai_filled
+                    db.add(user)
+                    affected_user_ids.append(member_id)
+
+            await db.commit()
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("memory_extraction: write failed, rolling back: %s", exc)
+            await db.rollback()
+            return state
+
+        # 5. Redis publish (트랜잭션 성공 후)
+        await _publish_personal_data_updates(affected_user_ids)
+
+        logger.info(
+            "[TIMING] memory_extraction: %.2fs (room=%s, %d users affected)",
+            time.monotonic() - _t0,
+            room_id,
+            len(affected_user_ids),
+        )
+        return state
+    except Exception as exc:
+        logger.exception("memory_extraction unexpected failure: %s", exc)
+        return state
+
+
 def _route_after_intent(state: GraphState) -> Literal["entity_extraction", "general_response"]:
     """general 의도이고 슬롯 필링 진행 중이 아니면 일반 응답으로 분기."""
     if _has_node_error(state):
@@ -2253,6 +2448,7 @@ def _build_graph() -> Any:
     graph.add_node("vote_card_creation", vote_card_creation)
     graph.add_node("place_recommendation", place_recommendation)
     graph.add_node("maedeup_card_creation", maedeup_card_creation)
+    graph.add_node("memory_extraction", memory_extraction)
 
     graph.add_edge(START, "intent_detection")
     graph.add_conditional_edges(
@@ -2300,7 +2496,10 @@ def _build_graph() -> Any:
             END: END,
         },
     )
-    graph.add_edge("maedeup_card_creation", END)
+    # 매듭 카드 생성 후 personal data 추출 → 그 후 종결.
+    # extraction 실패는 graph를 깨지 않음 (memory_extraction 내부에서 흡수).
+    graph.add_edge("maedeup_card_creation", "memory_extraction")
+    graph.add_edge("memory_extraction", END)
     return graph.compile()
 
 

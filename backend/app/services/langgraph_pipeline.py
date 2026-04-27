@@ -1339,18 +1339,27 @@ async def _get_room_member_constraints(state: GraphState) -> dict[str, list[str]
         constraints[category].append(v)
 
     for user in users:
-        for item in user.food_restrictions or []:
-            _push("food_restrictions", str(item))
-        for item in user.food_preferences or []:
-            _push("food_preferences", str(item))
-        for item in user.liked_areas or []:
-            _push("liked_areas", str(item))
-        for item in user.disliked_areas or []:
-            _push("disliked_areas", str(item))
-        if user.time_preference:
-            _push("time_preference", user.time_preference)
-        if user.transport_mode:
-            _push("transport_mode", user.transport_mode)
+        # QuickPreferences 토글 respect — OFF면 해당 카테고리 skip.
+        # opt-out 모델이므로 None이면 True로 간주 (기존 row backfill 안 됐어도 안전).
+        share_food = bool(getattr(user, "share_food_data", True) if getattr(user, "share_food_data", True) is not None else True)
+        share_location = bool(getattr(user, "share_location_data", True) if getattr(user, "share_location_data", True) is not None else True)
+        share_schedule = bool(getattr(user, "share_schedule_data", True) if getattr(user, "share_schedule_data", True) is not None else True)
+
+        if share_food:
+            for item in user.food_restrictions or []:
+                _push("food_restrictions", str(item))
+            for item in user.food_preferences or []:
+                _push("food_preferences", str(item))
+        if share_location:
+            for item in user.liked_areas or []:
+                _push("liked_areas", str(item))
+            for item in user.disliked_areas or []:
+                _push("disliked_areas", str(item))
+        if share_schedule:
+            if user.time_preference:
+                _push("time_preference", user.time_preference)
+            if user.transport_mode:
+                _push("transport_mode", user.transport_mode)
 
     return constraints
 

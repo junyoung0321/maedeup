@@ -90,6 +90,10 @@ class UserProfileResponse(BaseModel):
     transport_mode: Optional[str] = None
     is_ai_filled: dict[str, bool] = Field(default_factory=dict)
     calendar_consent: bool
+    # QuickPreferences 토글 상태 — opt-out 모델, 기본 True.
+    share_food_data: bool = True
+    share_location_data: bool = True
+    share_schedule_data: bool = True
 
 
 class UserPreferencesUpdate(BaseModel):
@@ -102,6 +106,10 @@ class UserPreferencesUpdate(BaseModel):
     disliked_areas: Optional[list[str]] = None
     time_preference: Optional[str] = Field(default=None, max_length=255)
     transport_mode: Optional[str] = Field(default=None, max_length=32)
+    # QuickPreferences 토글 (개인 데이터와 별도 — share consent만 변경, ✨에 영향 없음).
+    share_food_data: Optional[bool] = None
+    share_location_data: Optional[bool] = None
+    share_schedule_data: Optional[bool] = None
 
 
 class PersonalDataSourceResponse(BaseModel):

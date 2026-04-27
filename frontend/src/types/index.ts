@@ -47,6 +47,11 @@ export interface UserProfile {
   // category_name → AI가 채웠는지. 사용자 수동 수정 시 false. ✨ 마크 결정.
   is_ai_filled?: Record<string, boolean>;
   calendar_consent: boolean;
+  // QuickPreferences 토글 — opt-out 모델, 기본 true. OFF면 해당 카테고리는
+  // group recommendation 합성에서 제외.
+  share_food_data?: boolean;
+  share_location_data?: boolean;
+  share_schedule_data?: boolean;
 }
 
 // PersonalData ✨ 클릭 시 받는 receipts.

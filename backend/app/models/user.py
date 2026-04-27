@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import JSON, Column, Text
+from sqlalchemy import JSON, Column, Text, text
 from sqlmodel import Field, SQLModel
 
 
@@ -15,6 +15,21 @@ class User(SQLModel, table=True):
     home_base: Optional[str] = Field(default=None, max_length=128)
     food_preferences: Optional[list[str]] = Field(default=None, sa_column=Column(JSON(), nullable=True))
     food_preference_note: Optional[str] = Field(default=None, max_length=255)
+
+    # Personal data extension. AI가 모임 종료 시 chat에서 추출, 또는 사용자가
+    # /settings에서 직접 입력. 둘 다 같은 칼럼에 저장됨.
+    food_restrictions: Optional[list[str]] = Field(default=None, sa_column=Column(JSON(), nullable=True))
+    liked_areas: Optional[list[str]] = Field(default=None, sa_column=Column(JSON(), nullable=True))
+    disliked_areas: Optional[list[str]] = Field(default=None, sa_column=Column(JSON(), nullable=True))
+    time_preference: Optional[str] = Field(default=None, max_length=255)
+    transport_mode: Optional[str] = Field(default=None, max_length=32)
+    # category_name(str) → AI가 채웠는지 여부(bool). 사용자 수동 수정 시 False.
+    # 홈 PersonalData UI의 ✨ 마크 결정에 사용.
+    is_ai_filled: dict[str, bool] = Field(
+        default_factory=dict,
+        sa_column=Column(JSON(), nullable=False, server_default=text("'{}'::json")),
+    )
+
     google_access_token: Optional[str] = Field(default=None, sa_column=Column(Text(), nullable=True))
     google_refresh_token: Optional[str] = Field(default=None, sa_column=Column(Text(), nullable=True))
     calendar_consent: bool = Field(default=False, index=True)

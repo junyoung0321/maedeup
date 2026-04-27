@@ -1,5 +1,6 @@
+import json
 from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
@@ -9,11 +10,27 @@ from sqlmodel import select
 
 from app.core.security import AuthUser, get_current_user, issue_jwt
 from app.db.session import get_session
+from app.models.ai_memory import AIMemory
 from app.models.friendship import Friendship, FriendshipStatus
+from app.models.room import Room
 from app.models.user import User
 from app.services.notify import notify
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+# AI가 채울 수 있고 사용자도 직접 수정할 수 있는 personal data 카테고리.
+# PATCH /me/preferences가 이 중 한 카테고리에 대해 update를 받으면
+# is_ai_filled[category] = False로 마크 (사용자 수동 입력 = ✨ 안 보임).
+PERSONAL_DATA_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "food_restrictions",
+        "food_preferences",
+        "liked_areas",
+        "disliked_areas",
+        "time_preference",
+        "transport_mode",
+    }
+)
 
 
 class ConsentUpdate(BaseModel):
@@ -65,6 +82,13 @@ class UserProfileResponse(BaseModel):
     home_base: Optional[str]
     food_preferences: Optional[list[str]]
     food_preference_note: Optional[str]
+    # Personal data extension — 홈 PersonalData UI가 fetch.
+    food_restrictions: Optional[list[str]] = None
+    liked_areas: Optional[list[str]] = None
+    disliked_areas: Optional[list[str]] = None
+    time_preference: Optional[str] = None
+    transport_mode: Optional[str] = None
+    is_ai_filled: dict[str, bool] = Field(default_factory=dict)
     calendar_consent: bool
 
 
@@ -72,6 +96,23 @@ class UserPreferencesUpdate(BaseModel):
     home_base: Optional[str] = Field(default=None, max_length=128)
     food_preferences: Optional[list[str]] = None
     food_preference_note: Optional[str] = Field(default=None, max_length=255)
+    # Personal data extension. 사용자가 직접 수정한 필드는 is_ai_filled[cat]=False로 마크.
+    food_restrictions: Optional[list[str]] = None
+    liked_areas: Optional[list[str]] = None
+    disliked_areas: Optional[list[str]] = None
+    time_preference: Optional[str] = Field(default=None, max_length=255)
+    transport_mode: Optional[str] = Field(default=None, max_length=32)
+
+
+class PersonalDataSourceResponse(BaseModel):
+    """✨ 클릭 시 받는 receipts 데이터."""
+
+    memory_type: str
+    content: dict[str, Any]
+    source_room_id: Optional[int]
+    source_room_name: Optional[str]
+    source_message_id: Optional[int]
+    created_at: datetime
 
 
 @router.patch("/me/consent", response_model=ConsentResponse)
@@ -123,13 +164,84 @@ async def update_preferences(
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
 
     updates = body.model_dump(exclude_unset=True)
+
+    # personal data 카테고리에 해당하는 필드를 사용자가 수동 수정하면
+    # is_ai_filled[category] = False로 마크 (✨ 사라짐).
+    is_ai_filled = dict(user.is_ai_filled or {})
     for field_name, value in updates.items():
         setattr(user, field_name, value)
+        if field_name in PERSONAL_DATA_CATEGORIES:
+            is_ai_filled[field_name] = False
+    user.is_ai_filled = is_ai_filled
 
     session.add(user)
     await session.commit()
     await session.refresh(user)
     return user
+
+
+@router.get(
+    "/me/personal-data/source/{category}",
+    response_model=Optional[PersonalDataSourceResponse],
+)
+async def get_personal_data_source(
+    category: str,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    홈 PersonalData UI에서 ✨ 아이콘 클릭 시 호출.
+    해당 카테고리의 가장 최신 active AIMemory row를 반환.
+
+    `superseded_by_manual` 상태 row는 제외 — 그 row의 값은 User 필드에 반영되지
+    않았으므로 receipts에 노출하면 사용자 혼동 (가짜 출처처럼 보임).
+
+    매칭되는 active row가 없으면 None 반환 (예: AI가 추출한 적 없는 카테고리).
+    """
+    if category not in PERSONAL_DATA_CATEGORIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown personal data category: {category}",
+        )
+
+    user_id = int(current_user.sub)
+
+    # 최신 순으로 최대 20개 fetch — 그 중 status='active'인 첫 row를 반환.
+    # active 비율이 압도적으로 높으므로 보통 첫 row에서 끝남.
+    result = await session.execute(
+        select(AIMemory)
+        .where(AIMemory.user_id == user_id)
+        .where(AIMemory.memory_type == category)
+        .order_by(AIMemory.created_at.desc())
+        .limit(20)
+    )
+    memories = result.scalars().all()
+
+    for memory in memories:
+        try:
+            content_dict = json.loads(memory.content) if memory.content else {}
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if content_dict.get("status", "active") != "active":
+            continue
+
+        # source room name lookup (tooltip 표시용)
+        room_name: Optional[str] = None
+        if memory.source_room_id is not None:
+            room = await session.get(Room, memory.source_room_id)
+            if room is not None:
+                room_name = room.name
+
+        return PersonalDataSourceResponse(
+            memory_type=memory.memory_type,
+            content=content_dict,
+            source_room_id=memory.source_room_id,
+            source_room_name=room_name,
+            source_message_id=memory.source_message_id,
+            created_at=memory.created_at,
+        )
+
+    return None
 
 
 @router.get("/friends", response_model=list[FriendInfo])

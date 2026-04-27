@@ -19,25 +19,21 @@ export default function Header({ showSteps = false, currentStep = "schedule" }: 
   return (
     <header>
       <div className="h-[64px] sm:h-[79px] bg-primary-600 flex items-center justify-between px-4 sm:px-7 relative">
-        <span
-          className="text-white text-[18px] sm:text-[24px] lg:text-[30px] font-normal tracking-wide truncate"
+        <Link
+          href="/"
+          className="text-white text-[18px] sm:text-[24px] lg:text-[30px] font-normal tracking-wide truncate transition-opacity hover:opacity-80 cursor-pointer"
           style={{ fontFamily: "Pretendard, sans-serif" }}
+          aria-label="홈으로 이동"
         >
           <span className="lg:hidden">매듭</span>
           <span className="hidden lg:inline">매듭 : AI 모임 플래너</span>
-        </span>
+        </Link>
         {showSteps && (
           <div className="absolute left-1/2 -translate-x-1/2 hidden lg:block">
             <StepIndicator currentStep={currentStep} />
           </div>
         )}
         <div className="flex items-center gap-2 sm:gap-3">
-          <Link
-            href="/settings"
-            className="hidden sm:inline-flex rounded-full border border-white/20 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-white/80 transition hover:border-white/40 hover:text-white"
-          >
-            설정
-          </Link>
           <Bell
             className="w-7 h-7 sm:w-9 sm:h-9 lg:w-10 lg:h-10 text-white/70 cursor-pointer hover:text-white"
             onClick={() => { setNotifOpen(!notifOpen); setProfileOpen(false); }}

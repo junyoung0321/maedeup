@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     KAKAO_API_KEY: str = ""
     KAKAO_REST_API_KEY: str = ""
 
+    # 시연용 fallback. true면 personal_data_extractor가 Gemini 호출을 skip하고
+    # backend/data/demo_extraction_canned.json을 사용. 졸업 시연 단일 최대 실패점인
+    # 라이브 Gemini 호출에 대한 안전망.
+    DEMO_FALLBACK_ENABLED: bool = False
+
     def required_env_fields(self) -> list[str]:
         required = [
             "GEMINI_API_KEY",

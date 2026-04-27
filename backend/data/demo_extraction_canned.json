@@ -1,0 +1,48 @@
+{
+  "scenario": "graduation_demo_v1",
+  "_comment": "졸업 시연용 canned extraction. 6 카테고리 모두 cover. user_email은 seed 스크립트가 생성하는 demo 계정과 일치해야 함. value/source_quote/confidence는 시연 chat transcript의 발화와 verbatim 매칭.",
+  "extractions": [
+    {
+      "user_email": "demo-a@maedeup.app",
+      "category": "food_restrictions",
+      "value": ["갑각류 알레르기"],
+      "confidence": 1.0,
+      "source_quote": "나 갑각류 못 먹어"
+    },
+    {
+      "user_email": "demo-a@maedeup.app",
+      "category": "disliked_areas",
+      "value": ["강남"],
+      "confidence": 0.85,
+      "source_quote": "강남은 좀 멀어"
+    },
+    {
+      "user_email": "demo-a@maedeup.app",
+      "category": "transport_mode",
+      "value": "대중교통",
+      "confidence": 0.9,
+      "source_quote": "지하철 타고 갈게"
+    },
+    {
+      "user_email": "demo-b@maedeup.app",
+      "category": "food_preferences",
+      "value": ["한식", "일식"],
+      "confidence": 0.9,
+      "source_quote": "나는 일식 좋아해"
+    },
+    {
+      "user_email": "demo-b@maedeup.app",
+      "category": "liked_areas",
+      "value": ["홍대"],
+      "confidence": 0.85,
+      "source_quote": "홍대 자주 가"
+    },
+    {
+      "user_email": "demo-b@maedeup.app",
+      "category": "time_preference",
+      "value": "주말 오후",
+      "confidence": 0.8,
+      "source_quote": "주말 오후가 편해"
+    }
+  ]
+}

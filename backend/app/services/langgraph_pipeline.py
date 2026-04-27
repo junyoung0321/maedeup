@@ -1293,6 +1293,95 @@ async def _get_room_member_food_preferences(state: GraphState) -> list[str]:
     return disliked_foods
 
 
+async def _get_room_member_constraints(state: GraphState) -> dict[str, list[str]]:
+    """모임 멤버 전체의 6 카테고리 personal data를 합성.
+
+    프라이버시 모델 (디자인 P1, P2): 누가 어떤 값을 가지는지 식별 가능한 형태로
+    반환하지 않음. 모든 멤버의 값을 union해서 익명 합산만 노출. 호출자는 이걸
+    Gemini prompt에 컨텍스트로 넘기거나 reasoning summary 합성에 쓴다.
+
+    반환 dict의 키는 6 카테고리 이름. 값은 누적 string list (deduplicated).
+    time_preference / transport_mode는 단일 string 칼럼이지만 멤버별로 다를 수
+    있으므로 list로 모음.
+    """
+    db = state["db"]
+    room_pk = _room_id_as_int(state["room_id"])
+    empty: dict[str, list[str]] = {
+        "food_restrictions": [],
+        "food_preferences": [],
+        "liked_areas": [],
+        "disliked_areas": [],
+        "time_preference": [],
+        "transport_mode": [],
+    }
+    if room_pk is None:
+        return empty
+
+    member_result = await db.execute(
+        select(RoomMember).where(RoomMember.room_id == room_pk)
+    )
+    members = member_result.scalars().all()
+    user_ids = [member.user_id for member in members]
+    if not user_ids:
+        return empty
+
+    user_result = await db.execute(select(User).where(User.id.in_(user_ids)))
+    users = user_result.scalars().all()
+
+    constraints: dict[str, list[str]] = {k: [] for k in empty}
+    seen: dict[str, set[str]] = {k: set() for k in empty}
+
+    def _push(category: str, value: str) -> None:
+        v = str(value or "").strip()
+        if not v or v in seen[category]:
+            return
+        seen[category].add(v)
+        constraints[category].append(v)
+
+    for user in users:
+        for item in user.food_restrictions or []:
+            _push("food_restrictions", str(item))
+        for item in user.food_preferences or []:
+            _push("food_preferences", str(item))
+        for item in user.liked_areas or []:
+            _push("liked_areas", str(item))
+        for item in user.disliked_areas or []:
+            _push("disliked_areas", str(item))
+        if user.time_preference:
+            _push("time_preference", user.time_preference)
+        if user.transport_mode:
+            _push("transport_mode", user.transport_mode)
+
+    return constraints
+
+
+def _build_group_constraints_summary(constraints: dict[str, list[str]]) -> str:
+    """추천 reasoning에 붙는 익명 group constraint 요약 (디자인 P2 가운데 톤).
+
+    Count 없음, 누구인지도 없음. 멤버 수가 0이면 빈 문자열.
+    예: "모임 멤버 중 갑각류 회피 / 강남 회피 / 대중교통 선호 고려"
+    """
+    parts: list[str] = []
+    if constraints.get("food_restrictions"):
+        joined = ", ".join(constraints["food_restrictions"])
+        parts.append(f"{joined} 회피")
+    if constraints.get("disliked_areas"):
+        joined = ", ".join(constraints["disliked_areas"])
+        parts.append(f"{joined} 지역 회피")
+    if constraints.get("liked_areas"):
+        joined = ", ".join(constraints["liked_areas"])
+        parts.append(f"{joined} 지역 선호")
+    if constraints.get("time_preference"):
+        joined = " · ".join(constraints["time_preference"])
+        parts.append(f"선호 시간대: {joined}")
+    if constraints.get("transport_mode"):
+        joined = ", ".join(constraints["transport_mode"])
+        parts.append(f"이동수단: {joined}")
+    if not parts:
+        return ""
+    return "모임 멤버 중 " + " / ".join(parts) + " 고려"
+
+
 def _contains_disliked_keyword(category: str, disliked_foods: list[str]) -> str | None:
     normalized_category = str(category or "").strip().lower()
     for keyword in disliked_foods:
@@ -2037,6 +2126,9 @@ async def place_recommendation(state: GraphState) -> GraphState:
         place_results = list(state.get("place_search_results", []))
         ranked_places = place_results
         disliked_foods = await _get_room_member_food_preferences(state)
+        # 6 카테고리 personal data 합산 (privacy-preserving — 누가 어떤 값인지 X).
+        member_constraints = await _get_room_member_constraints(state)
+        group_constraints_summary = _build_group_constraints_summary(member_constraints)
 
         if place_results:
             top_candidates = place_results[:10]
@@ -2090,6 +2182,29 @@ async def place_recommendation(state: GraphState) -> GraphState:
                         f"멤버 중 {', '.join(disliked_foods)}을(를) 못 먹는 사람이 있으니 "
                         "해당 카테고리 장소 점수를 낮춰줘.\n"
                     )
+                # 6 카테고리 personal data를 prompt에 추가 — 익명 합산 형태.
+                constraints_context = ""
+                if member_constraints.get("food_restrictions"):
+                    constraints_context += (
+                        f"멤버 중 {', '.join(member_constraints['food_restrictions'])} "
+                        "회피가 있으니 해당 음식 식당 점수를 강하게 낮춰줘.\n"
+                    )
+                if member_constraints.get("disliked_areas"):
+                    constraints_context += (
+                        f"멤버 중 {', '.join(member_constraints['disliked_areas'])} "
+                        "지역을 회피하는 사람이 있으니 해당 지역 점수를 낮춰줘.\n"
+                    )
+                if member_constraints.get("liked_areas"):
+                    constraints_context += (
+                        f"멤버 중 {', '.join(member_constraints['liked_areas'])} "
+                        "지역을 선호하는 사람이 있으니 해당 지역 점수를 살짝 올려줘.\n"
+                    )
+                if member_constraints.get("transport_mode"):
+                    transports = ", ".join(member_constraints["transport_mode"])
+                    constraints_context += (
+                        f"멤버 이동수단: {transports}. 대중교통이 있으면 역세권을, "
+                        "도보가 있으면 가까운 곳을 우선.\n"
+                    )
                 scoring_prompt = (
                     "당신은 매듭 AI입니다. 한국인들의 모임 일정과 장소 조율을 돕는 "
                     "어시스턴트입니다.\n"
@@ -2097,6 +2212,7 @@ async def place_recommendation(state: GraphState) -> GraphState:
                     "0부터 1 사이 점수로 평가하세요.\n"
                     f"{time_context}"
                     f"{dislike_context}"
+                    f"{constraints_context}"
                     "반드시 JSON 배열만 반환하세요.\n"
                     '형식: [{\"place_id\": \"...\", \"score\": 0.9}]\n'
                     "place_id는 입력과 동일해야 하며, 모든 후보를 빠짐없이 포함하세요.\n\n"
@@ -2149,6 +2265,9 @@ async def place_recommendation(state: GraphState) -> GraphState:
             "room_id": state["room_id"],
             "place_hint": state.get("place_hint"),
             "recommendations": ranked_places[:5],
+            # 익명 group constraint 요약 (디자인 P2). 누가 어떤 값을 가졌는지는
+            # 식별되지 않음. 프론트는 추천 카드 옆에 이 문장을 reasoning으로 노출.
+            "group_constraints_summary": group_constraints_summary,
         }
         state["status"] = "place_recommended"
         logger.info("[TIMING] place_recommendation: %.2fs", time.monotonic() - _t0)

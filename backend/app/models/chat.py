@@ -9,6 +9,9 @@ from sqlmodel import Field, SQLModel
 class PaneType(str, Enum):
     social = "social"
     agent = "agent"
+    # 홈 화면 비서 어시스턴트 — room_id NULL, 사용자 단위 1:1 대화.
+    # `agent`(룸 내부)와 구분하기 위해 별도 값.
+    personal_assistant = "personal_assistant"
 
 
 class ChatMessage(SQLModel, table=True):

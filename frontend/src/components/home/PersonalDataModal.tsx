@@ -211,14 +211,13 @@ export default function PersonalDataModal({
   return (
     <div
       onClick={() => onClose(false)}
-      className="fixed inset-0 z-[100] flex items-center justify-center"
+      className="fixed inset-0 z-[100] flex items-center justify-center px-4 sm:px-0"
       style={{ background: "rgba(0,0,0,0.35)" }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden"
+        className="bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden w-full max-w-[560px]"
         style={{
-          width: 560,
           maxHeight: "85vh",
           fontFamily: "Pretendard Variable, Pretendard, sans-serif",
         }}

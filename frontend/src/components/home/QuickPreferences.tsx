@@ -135,8 +135,8 @@ export default function QuickPreferences() {
 
   return (
     <div
-      className="bg-white rounded-[20px] p-6 flex flex-col h-full border border-[#e2e8f0] shadow-[0_4px_10.5px_rgba(0,0,0,0.08)]"
-      style={{ width: 414, minHeight: 490 }}
+      className="bg-white rounded-[20px] p-4 sm:p-6 flex flex-col h-full border border-[#e2e8f0] shadow-[0_4px_10.5px_rgba(0,0,0,0.08)] w-full max-w-full lg:max-w-[414px]"
+      style={{ minHeight: 490 }}
     >
       {/* Header */}
       <div className="flex items-center gap-2 mb-1">

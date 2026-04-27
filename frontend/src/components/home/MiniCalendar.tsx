@@ -172,8 +172,7 @@ export default function MiniCalendar() {
 
   return (
     <div
-      className="bg-white rounded-[20px] flex flex-col border border-[#e2e8f0] shadow-[0_4px_3px_rgba(0,0,0,0.25)]"
-      style={{ height: 620 }}
+      className="bg-white rounded-[20px] flex flex-col border border-[#e2e8f0] shadow-[0_4px_3px_rgba(0,0,0,0.25)] h-auto lg:h-[620px] min-h-[420px] w-full"
     >
       {/* Month navigation */}
       <div className="flex items-center justify-between px-5 py-4">

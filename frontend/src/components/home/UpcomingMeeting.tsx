@@ -59,7 +59,7 @@ export default function UpcomingMeeting() {
 
   if (loading) {
     return (
-      <div className="relative" style={{ width: 569 }}>
+      <div className="relative w-full max-w-full">
         <div className="border border-[#e5e7eb] rounded-[24px] p-6 flex items-center justify-center shadow-sm" style={{ height: 320, background: "#f9fafb" }}>
           <span className="text-[#94a3b8] text-sm">불러오는 중...</span>
         </div>
@@ -69,7 +69,7 @@ export default function UpcomingMeeting() {
 
   if (!meeting) {
     return (
-      <div className="relative" style={{ width: 569 }}>
+      <div className="relative w-full max-w-full">
         <div className="border border-[#e5e7eb] rounded-[24px] p-6 flex flex-col items-center justify-center gap-3" style={{ height: 320, background: "linear-gradient(to bottom, #ffffff, #f5f3ff)" }}>
           <span className="text-[22px] font-semibold text-[#94a3b8]">예정된 모임이 없어요</span>
           <button
@@ -88,7 +88,7 @@ export default function UpcomingMeeting() {
   const remainingTime = timeLeft ?? { h: 0, m: 0, s: 0 };
 
   return (
-    <div className="relative" style={{ width: 569 }}>
+    <div className="relative w-full max-w-full">
       {/* Pink callout bubble */}
       <div
         className="absolute -top-12 left-6 px-5 py-2.5 rounded-[20px] text-white text-[20px] font-semibold whitespace-nowrap z-10 animate-float"

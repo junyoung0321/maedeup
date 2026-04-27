@@ -222,8 +222,8 @@ export default function PersonalData() {
   return (
     <>
       <div
-        className="bg-white rounded-[20px] p-5 flex flex-col h-full border border-[#e2e8f0] shadow-[0_4px_10.5px_rgba(0,0,0,0.08)] relative"
-        style={{ width: 414, minHeight: 490 }}
+        className="bg-white rounded-[20px] p-4 sm:p-5 flex flex-col h-full border border-[#e2e8f0] shadow-[0_4px_10.5px_rgba(0,0,0,0.08)] relative w-full max-w-full lg:max-w-[414px]"
+        style={{ minHeight: 490 }}
       >
         {/* Header */}
         <div className="flex items-center justify-between mb-1">
@@ -406,12 +406,12 @@ export default function PersonalData() {
       {receiptsCategory && (
         <div
           onClick={closeReceipts}
-          className="fixed inset-0 z-[120] flex items-center justify-center"
+          className="fixed inset-0 z-[120] flex items-center justify-center px-4 sm:px-0"
           style={{ background: "rgba(0,0,0,0.35)" }}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white rounded-2xl shadow-2xl w-[420px] p-5 relative"
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-[420px] p-5 relative"
           >
             <button
               onClick={closeReceipts}

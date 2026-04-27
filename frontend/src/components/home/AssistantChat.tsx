@@ -101,8 +101,8 @@ export default function AssistantChat() {
 
   return (
     <div
-      className="bg-white rounded-[20px] flex flex-col h-full overflow-hidden border border-[#e2e8f0] shadow-[0_4px_10.5px_rgba(0,0,0,0.08)]"
-      style={{ width: 414, minHeight: 490 }}
+      className="bg-white rounded-[20px] flex flex-col h-full overflow-hidden border border-[#e2e8f0] shadow-[0_4px_10.5px_rgba(0,0,0,0.08)] w-full max-w-full lg:max-w-[414px]"
+      style={{ minHeight: 490 }}
     >
       {/* Purple gradient header */}
       <div

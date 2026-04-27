@@ -99,11 +99,11 @@ export default function AiRecommendCard() {
   return (
     <>
       <div
-        className="bg-white rounded-[24px] p-6 border border-[#e5e7eb] shadow-[0_4px_3px_rgba(0,0,0,0.25)]"
-        style={{ width: 728, minHeight: 419 }}
+        className="bg-white rounded-[24px] p-4 sm:p-6 border border-[#e5e7eb] shadow-[0_4px_3px_rgba(0,0,0,0.25)] w-full"
+        style={{ minHeight: 419 }}
       >
-        <h2 className="text-[28px] font-semibold text-[#111827]">AI 추천</h2>
-        <p className="text-[18px] text-[#6b7280] mt-1 mb-5">
+        <h2 className="text-[22px] sm:text-[28px] font-semibold text-[#111827]">AI 추천</h2>
+        <p className="text-[14px] sm:text-[18px] text-[#6b7280] mt-1 mb-5">
           지금 상황에 맞는 모임을 바로 시작해보세요
         </p>
 

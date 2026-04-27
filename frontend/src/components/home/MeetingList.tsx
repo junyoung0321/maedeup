@@ -43,7 +43,7 @@ export default function MeetingList() {
   }, []);
 
   return (
-    <div className="bg-white rounded-[20px] p-5 flex flex-col border border-[#e2e8f0] shadow-[0_4px_2.7px_rgba(0,0,0,0.25)]" style={{ height: 620 }}>
+    <div className="bg-white rounded-[20px] p-4 sm:p-5 flex flex-col border border-[#e2e8f0] shadow-[0_4px_2.7px_rgba(0,0,0,0.25)] h-auto lg:h-[620px] min-h-[420px] w-full">
       {/* Header */}
       <h3 className="text-[27px] font-medium text-black">참여중인 모임</h3>
       <p className="text-[18px] font-medium text-[#9f9f9f] mt-1 mb-5">

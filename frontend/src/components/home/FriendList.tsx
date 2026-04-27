@@ -100,7 +100,7 @@ export default function FriendList() {
 
   return (
     <>
-      <div className="bg-white rounded-[20px] p-5 flex flex-col border border-[#e2e8f0] shadow-[0_4px_2.7px_rgba(0,0,0,0.25)]" style={{ height: 620 }}>
+      <div className="bg-white rounded-[20px] p-4 sm:p-5 flex flex-col border border-[#e2e8f0] shadow-[0_4px_2.7px_rgba(0,0,0,0.25)] h-auto lg:h-[620px] min-h-[420px] w-full">
         {/* Header */}
         <div className="flex items-start justify-between">
           <div>

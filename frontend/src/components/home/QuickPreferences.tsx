@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   SlidersHorizontal,
   Shield,
@@ -9,7 +8,6 @@ import {
   Utensils,
   MapPin,
   Clock,
-  ExternalLink,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import type { UserProfile } from "@/types";
@@ -27,7 +25,7 @@ interface ToggleConfig {
   iconColor: string;
 }
 
-// 4개 토글: 1개는 calendar_consent (read-only redirect), 3개는 share consent (PATCH).
+// 4개 토글: 1개는 calendar_consent (PATCH /me/consent + JWT 갱신), 3개는 share consent (PATCH /me/preferences).
 const SHARE_TOGGLES: ToggleConfig[] = [
   {
     field: "share_food_data",
@@ -53,11 +51,12 @@ const SHARE_TOGGLES: ToggleConfig[] = [
 ];
 
 export default function QuickPreferences() {
-  const router = useRouter();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [pendingField, setPendingField] = useState<ShareToggleField | null>(null);
+  const [pendingField, setPendingField] = useState<
+    ShareToggleField | "calendar_consent" | null
+  >(null);
 
   const fetchProfile = useCallback(async () => {
     try {
@@ -101,7 +100,38 @@ export default function QuickPreferences() {
     }
   };
 
+  // 캘린더 consent: PATCH /me/consent — 응답으로 새 JWT가 와서 localStorage 갱신.
+  // calendar_consent는 JWT payload에 박혀있어서 토큰을 갱신해야 다른 페이지가 새 상태를 본다.
+  const handleCalendarToggle = async () => {
+    if (!profile || pendingField !== null) return;
+    const current = Boolean(profile.calendar_consent);
+    const next = !current;
+
+    setProfile({ ...profile, calendar_consent: next });
+    setPendingField("calendar_consent");
+    try {
+      const resp = await apiFetch<{ token: string; calendar_consent: boolean }>(
+        "/api/v1/users/me/consent",
+        {
+          method: "PATCH",
+          body: JSON.stringify({ calendar_consent: next }),
+        },
+      );
+      if (typeof window !== "undefined" && resp.token) {
+        window.localStorage.setItem("auth_token", resp.token);
+      }
+      // 서버가 반환한 값으로 정규화 (혹시 next와 달라졌을 경우 대비)
+      setProfile((p) => (p ? { ...p, calendar_consent: resp.calendar_consent } : p));
+    } catch (e) {
+      setProfile((p) => (p ? { ...p, calendar_consent: current } : p));
+      setError(e instanceof Error ? e.message : "저장 실패");
+    } finally {
+      setPendingField(null);
+    }
+  };
+
   const calendarOn = Boolean(profile?.calendar_consent);
+  const calendarPending = pendingField === "calendar_consent";
 
   return (
     <div
@@ -134,40 +164,40 @@ export default function QuickPreferences() {
 
       {!loading && !error && profile && (
         <div className="flex flex-col gap-4 flex-1">
-          {/* Calendar — read-only state + click to settings (OAuth flow) */}
-          <button
-            onClick={() => router.push("/settings")}
-            className="flex items-center justify-between text-left hover:bg-[#f8faff] -mx-2 px-2 py-1 rounded-lg transition-colors"
-          >
+          {/* Calendar — PATCH /me/consent (JWT 갱신 포함) */}
+          <div className="flex items-center justify-between">
             <div className="flex items-start gap-2.5">
               <Calendar
                 className="w-4 h-4 mt-0.5 shrink-0"
                 style={{ color: "#7c3aed" }}
               />
               <div>
-                <p className="text-[13px] font-semibold text-[#1e293b] flex items-center gap-1">
+                <p className="text-[13px] font-semibold text-[#1e293b]">
                   캘린더 자동 동기화
-                  <ExternalLink className="w-3 h-3 text-[#94a3b8]" />
                 </p>
                 <p className="text-[11px] text-[#94a3b8]">
                   {calendarOn
-                    ? "구글 캘린더 연동됨 — 일정 자동 참고"
-                    : "미연동 — 클릭해서 설정에서 연결"}
+                    ? "구글 캘린더 일정 → AI 추천에 반영"
+                    : "AI 추천 시 캘린더 미참고"}
                 </p>
               </div>
             </div>
-            <div
-              className="relative w-11 h-6 rounded-full shrink-0 ml-3"
+            <button
+              onClick={handleCalendarToggle}
+              disabled={calendarPending}
+              className="relative w-11 h-6 rounded-full transition-colors duration-200 shrink-0 ml-3 disabled:opacity-60"
               style={{ backgroundColor: calendarOn ? "#4f46e5" : "#e2e8f0" }}
+              aria-pressed={calendarOn}
+              aria-label={`캘린더 자동 동기화 ${calendarOn ? "끄기" : "켜기"}`}
             >
               <div
-                className="absolute top-0.5 w-5 h-5 rounded-full bg-white shadow"
+                className="absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200"
                 style={{
                   transform: calendarOn ? "translateX(22px)" : "translateX(2px)",
                 }}
               />
-            </div>
-          </button>
+            </button>
+          </div>
 
           {/* 3 share toggles */}
           {SHARE_TOGGLES.map((cfg) => {

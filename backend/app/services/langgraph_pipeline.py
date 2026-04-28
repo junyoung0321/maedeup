@@ -16,7 +16,11 @@ from sqlmodel import select
 
 import holidays
 
+import redis.asyncio as aioredis
+from sqlalchemy import func as sa_func
+
 from app.core.config import settings
+from app.services import scheduling_round as sr
 from app.models.chat import ChatMessage, PaneType
 from app.models.meeting import MeetingSchedule
 from app.models.meeting_preference import MeetingPreference
@@ -71,6 +75,10 @@ class GraphState(TypedDict, total=False):
     message_records: list[MessageRecord]
     recent_messages: list[str]
     conversation_summary: str
+    # 방의 소셜(전체 공개) 채팅 최근 N개 + 그 이전 대화 요약.
+    # entity_extraction / general_response 가 AI 패널 컨텍스트에 덧붙여 사용.
+    social_recent: list[str]
+    social_summary: str
     seen_message_ids: list[int]
     new_assistant_messages: list[dict[str, Any]]
     intent: str
@@ -144,6 +152,8 @@ def _default_state(
         "message_records": normalized_messages,
         "recent_messages": recent_messages,
         "conversation_summary": conversation_summary,
+        "social_recent": [],
+        "social_summary": "",
         "seen_message_ids": seen_ids,
         "new_assistant_messages": [],
         "viewer_user_id": viewer_user_id,
@@ -239,8 +249,12 @@ def _serialize_context(state: GraphState) -> str:
         parts.append(f"[summary]\n{state['conversation_summary']}")
     if state.get("meeting_history_context"):
         parts.append(f"[모임 히스토리]\n{state['meeting_history_context']}")
+    if state.get("social_summary"):
+        parts.append(f"[방 채팅 요약]\n{state['social_summary']}")
+    if state.get("social_recent"):
+        parts.append("[방 채팅 최근]\n" + "\n".join(state["social_recent"]))
     if state.get("recent_messages"):
-        parts.append("\n".join(state["recent_messages"]))
+        parts.append("[AI 대화]\n" + "\n".join(state["recent_messages"]))
     return "\n\n".join(part for part in parts if part).strip()
 
 
@@ -962,15 +976,23 @@ async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
         "'YYYY-MM-DD~YYYY-MM-DD'\n"
         "date_hints: 여러 날짜가 선택지로 제시된 경우 모든 날짜 표현의 배열. "
         "예: '목요일에 볼까 금요일에 볼까' → [\"목요일\", \"금요일\"]\n"
-        "place_hint: 장소 힌트. 한국 지명(동, 구, 역, 로, 길 등)이나 "
-        "잘 알려진 지역명(강남, 홍대, 건대, 이태원, 명동, 합정, 신촌 등)을 "
-        "반드시 추출하세요. 문맥에서 장소를 나타내는 명사를 놓치지 마세요.\n"
-        "  예시:\n"
+        "place_hint: 구체적 한국 지명(동/구/역/로/길 등)이나 잘 알려진 지역명"
+        "(강남, 홍대, 건대, 이태원, 명동, 합정, 신촌 등)이 **실제로 명시된 경우에만** "
+        "추출하세요. 명확한 장소 단어가 없거나 재시도 지시어/모호한 표현이면 "
+        "반드시 null을 반환하세요. 억지로 뽑지 말 것.\n"
+        "  긍정 예시 (추출):\n"
         '  - "역삼동에서 만나자" → place_hint: "역삼동"\n'
         '  - "홍대 맛집 추천해줘" → place_hint: "홍대"\n'
         '  - "강남역 근처 카페" → place_hint: "강남역"\n'
         '  - "서울숲 쪽에서 보자" → place_hint: "서울숲"\n'
         '  - "을지로 맛집" → place_hint: "을지로"\n'
+        "  부정 예시 (반드시 null — 장소 아님):\n"
+        '  - "다시 추천해줘" → null (재시도 지시어, 장소 아님)\n'
+        '  - "안되는 날짜 고려해서 다시 해봐" → null\n'
+        '  - "아무데나 괜찮아" → null (모호, 지역 미지정)\n'
+        '  - "어디든 상관없어" → null\n'
+        '  - "또 해봐" / "한번 더" → null (재시도)\n'
+        '  - "그냥 추천해" → null\n'
         "headcount: 예상 인원 수\n"
         "meeting_type: 모임 종류 (맛집, 카페, 술집 등 키워드가 있으면 반영)\n\n"
         "conflict_detected: 대화에서 멤버 간 의견 충돌이 감지되면 true\n"
@@ -1016,6 +1038,8 @@ async def _emit_assistant_message(
     db: AsyncSession,
     content: str,
     state: GraphState,
+    *,
+    shared: bool = False,
 ) -> None:
     room_pk = _room_id_as_int(room_id)
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -1033,14 +1057,20 @@ async def _emit_assistant_message(
         return
 
     viewer_user_id = state.get("viewer_user_id")
+    if shared:
+        vis = "shared"
+        uid = None
+    else:
+        vis = "private" if viewer_user_id is not None else "shared"
+        uid = viewer_user_id
     message = ChatMessage(
         pane_type=PaneType.agent,
         role="assistant",
         content=content,
         sender="매듭 AI",
         room_id=room_pk,
-        user_id=viewer_user_id,
-        visibility="private" if viewer_user_id is not None else "shared",
+        user_id=uid,
+        visibility=vis,
     )
     db.add(message)
     await db.commit()
@@ -1059,6 +1089,8 @@ async def _emit_assistant_message(
                 "content": message.content,
                 "sender": message.sender,
                 "created_at": message.created_at.isoformat(),
+                "visibility": message.visibility,
+                "user_id": message.user_id,
             }
         )
 
@@ -1199,13 +1231,175 @@ def _find_free_slots(
     return free_slots
 
 
+_SOCIAL_RECENT_LIMIT = 10
+_SOCIAL_SUMMARY_THRESHOLD = 15  # 이 이상 누적되면 이전 부분을 요약
+
+
+async def _load_social_context(
+    db: AsyncSession, room_pk: Optional[int]
+) -> tuple[list[str], str]:
+    """방의 소셜 채팅 최근 N개 + 더 오래된 메시지가 충분하면 Redis-캐시된 요약을 반환.
+    실패해도 pipeline은 계속 — 빈 값 반환."""
+    if room_pk is None:
+        return [], ""
+    try:
+        result = await db.execute(
+            select(ChatMessage)
+            .where(
+                ChatMessage.room_id == room_pk,
+                ChatMessage.pane_type == PaneType.social,
+            )
+            .order_by(ChatMessage.created_at.desc())
+            .limit(_SOCIAL_RECENT_LIMIT)
+        )
+        recent_rows = list(reversed(result.scalars().all()))
+    except Exception:
+        logger.debug("social recent load failed room=%s", room_pk, exc_info=True)
+        return [], ""
+
+    recent_lines = [
+        f"{m.sender or '익명'}: {m.content}"
+        for m in recent_rows if m.content and m.content.strip()
+    ]
+
+    summary = ""
+    try:
+        total_result = await db.execute(
+            select(sa_func.count())
+            .select_from(ChatMessage)
+            .where(
+                ChatMessage.room_id == room_pk,
+                ChatMessage.pane_type == PaneType.social,
+            )
+        )
+        total = int(total_result.scalar() or 0)
+    except Exception:
+        total = 0
+
+    if total >= _SOCIAL_SUMMARY_THRESHOLD and recent_rows:
+        # Redis 캐시: last_id 기준으로 10개 이상 밀렸을 때만 재생성
+        try:
+            r = aioredis.from_url(
+                settings.REDIS_URL, decode_responses=True,
+                socket_connect_timeout=1, socket_timeout=1,
+            )
+        except Exception:
+            r = None
+
+        cache_key = f"social_summary:{room_pk}"
+        oldest_recent_id = recent_rows[0].id or 0
+        cached = None
+        if r is not None:
+            try:
+                raw = await r.get(cache_key)
+                if raw:
+                    cached = json.loads(raw)
+            except Exception:
+                cached = None
+
+        if (
+            cached
+            and isinstance(cached, dict)
+            and cached.get("summary")
+            and int(cached.get("boundary_id") or 0) >= oldest_recent_id
+        ):
+            summary = str(cached["summary"]).strip()
+        else:
+            # 최근 N개보다 오래된 메시지를 모아 요약.
+            try:
+                older_res = await db.execute(
+                    select(ChatMessage)
+                    .where(
+                        ChatMessage.room_id == room_pk,
+                        ChatMessage.pane_type == PaneType.social,
+                        ChatMessage.id < oldest_recent_id,
+                    )
+                    .order_by(ChatMessage.created_at)
+                )
+                older = older_res.scalars().all()
+            except Exception:
+                older = []
+
+            joined = "\n".join(
+                f"{m.sender or '익명'}: {m.content}"
+                for m in older
+                if m.content and m.content.strip()
+            )
+            if joined.strip():
+                prompt = (
+                    "다음은 모임 채팅방의 과거 대화입니다. 합의/진행 중인 결정/"
+                    "멤버 선호·불만을 3줄 이내로 간결히 요약하세요. 가십 제외.\n\n"
+                    f"{joined}"
+                )
+                try:
+                    summary = (await call_gemini(prompt) or "").strip()
+                except Exception:
+                    summary = ""
+
+            if r is not None and summary:
+                try:
+                    await r.setex(
+                        cache_key,
+                        6 * 3600,
+                        json.dumps({"summary": summary, "boundary_id": oldest_recent_id}),
+                    )
+                except Exception:
+                    pass
+
+        if r is not None:
+            try:
+                await r.aclose()
+            except Exception:
+                pass
+
+    return recent_lines, summary
+
+
+async def _load_blocked_dates(room_pk: Optional[int]) -> set[str]:
+    """방의 '불가능 날짜' 집합을 Redis에서 조회. 한 명이라도 불가능이면 해당 날짜 제외.
+    Redis 실패 시 빈 set 반환 (pipeline은 graceful degradation)."""
+    if room_pk is None:
+        return set()
+    try:
+        r = aioredis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+        try:
+            unavail = await sr.load_room_unavailability(r, room_id=room_pk)
+        finally:
+            await r.aclose()
+    except Exception:
+        return set()
+    blocked: set[str] = set()
+    for dates in unavail.values():
+        for d in dates:
+            if isinstance(d, str):
+                blocked.add(d)
+    return blocked
+
+
+def _filter_out_blocked(
+    slots: list[dict[str, Any]], blocked_dates: set[str]
+) -> list[dict[str, Any]]:
+    if not blocked_dates:
+        return slots
+    return [
+        s for s in slots
+        if isinstance(s.get("start_at"), str) and s["start_at"][:10] not in blocked_dates
+    ]
+
+
 async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
-    """구글 캘린더 API로 룸 멤버 전원의 빈 시간대를 조회합니다."""
+    """구글 캘린더 API로 룸 멤버 전원의 빈 시간대를 조회합니다.
+    불가능 날짜(방 내 누군가 명시한 날)는 결과에서 제외."""
     db = state["db"]
     room_pk = _room_id_as_int(state["room_id"])
+    blocked_dates = await _load_blocked_dates(room_pk)
 
     if room_pk is None or not settings.GOOGLE_CLIENT_ID:
-        # 설정 없으면 더미 슬롯 3개 반환
         now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
         base = now + timedelta(days=2, hours=10)
         return [
@@ -1219,7 +1413,6 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
             for i in range(3)
         ]
 
-    # 룸 멤버 조회
     member_result = await db.execute(
         select(RoomMember).where(RoomMember.room_id == room_pk)
     )
@@ -1239,8 +1432,54 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
     ]
 
     now = datetime.now(timezone.utc)
-    time_min = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-    time_max = time_min + timedelta(days=14)
+    date_hint = state.get("date_hint")
+
+    # 멤버 날짜 선택을 Redis에서 읽어 활용 (캘린더 클릭 + 시간바 선택 모두)
+    user_dates: dict[str, str] = {}
+    if not date_hint and room_pk is not None:
+        try:
+            r = aioredis.from_url(settings.REDIS_URL, decode_responses=True, socket_connect_timeout=1, socket_timeout=1)
+            try:
+                date_sels = await sr.load_room_date_selections(r, room_id=room_pk)
+                for uid, d in date_sels.items():
+                    if d:
+                        user_dates[str(uid)] = d
+                avail = await sr.load_room_availability(r, room_id=room_pk)
+                for uid, entries in avail.items():
+                    for entry in entries:
+                        d = entry.get("date")
+                        if d:
+                            user_dates[str(uid)] = d
+            finally:
+                await r.aclose()
+        except Exception:
+            logger.debug("Failed to read member selections from Redis", exc_info=True)
+
+    if not date_hint and not user_dates:
+        state["no_date_selection"] = True
+        return []
+
+    if not date_hint and user_dates:
+        from collections import Counter
+        date_counts = Counter(user_dates.values())
+        most_common_date, count = date_counts.most_common(1)[0]
+
+        date_hint = most_common_date
+        state["date_hint"] = date_hint
+        if len(date_counts) > 1:
+            state["date_conflict"] = True
+            state["date_selection_summary"] = dict(date_counts)
+            logger.info("Date conflict: %s (picked %s with %d/%d)", dict(date_counts), date_hint, count, len(user_dates))
+        else:
+            logger.info("All %d members selected %s", len(user_dates), date_hint)
+
+    if date_hint and re.match(r"\d{4}-\d{2}-\d{2}", str(date_hint)):
+        hint_date = datetime.fromisoformat(str(date_hint)).replace(tzinfo=timezone.utc)
+        time_min = hint_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        time_max = time_min + timedelta(days=1)
+    else:
+        time_min = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        time_max = time_min + timedelta(days=14)
 
     busy_by_user: dict[str, list[dict[str, Any]]] = {}
     for user in consenting_users:
@@ -1256,6 +1495,7 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
         minimum_available=len(busy_by_user),
         require_exact_absent_count=0,
     )
+    full_slots = _filter_out_blocked(full_slots, blocked_dates)
     if full_slots:
         state["calendar_strategy"] = "all_members_available"
         return full_slots
@@ -1267,6 +1507,7 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
         minimum_available=max(len(busy_by_user) - 1, 1),
         require_exact_absent_count=1 if len(busy_by_user) > 1 else 0,
     )
+    n_minus_one_slots = _filter_out_blocked(n_minus_one_slots, blocked_dates)
     if n_minus_one_slots:
         state["calendar_strategy"] = "n_minus_one"
         return n_minus_one_slots
@@ -1288,6 +1529,7 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
         minimum_available=len(refreshed_busy_by_user),
         require_exact_absent_count=0,
     )
+    extended_full_slots = _filter_out_blocked(extended_full_slots, blocked_dates)
     if extended_full_slots:
         state["calendar_strategy"] = "all_members_available_extended"
         return extended_full_slots
@@ -1299,6 +1541,7 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
         minimum_available=max(len(refreshed_busy_by_user) - 1, 1),
         require_exact_absent_count=1 if len(refreshed_busy_by_user) > 1 else 0,
     )
+    final_slots = _filter_out_blocked(final_slots, blocked_dates)
     if final_slots:
         state["calendar_strategy"] = "n_minus_one_extended"
     return final_slots
@@ -1696,33 +1939,37 @@ async def intent_detection(state: GraphState) -> GraphState:
                 latest_user_message = message["content"]
                 break
 
-        if state.get("conversation_summary"):
-            intent_input = (
-                f"[이전 대화 요약]: {state['conversation_summary']}\n"
-                f"[현재 메시지]: {latest_user_message or _serialize_context(state)}"
-            )
-        else:
-            intent_input = latest_user_message or _serialize_context(state)
-
-        intent_result = await classify_intent(intent_input)
-        state["intent"] = str(intent_result.get("intent", "general"))
-        state["intent_confidence"] = float(intent_result.get("confidence", 0.0))
-        state["confidence_score"] = state["intent_confidence"]
-
-        # 패턴 기반 intent 오버라이드: 여러 날짜 선택지 제시 → meeting_schedule
-        if latest_user_message and _detect_multi_date_options(latest_user_message):
-            state["intent"] = "meeting_schedule"
-            state["confidence_score"] = max(state["confidence_score"], 0.9)
-            logger.info("[INTENT] Multi-date option pattern detected, overriding to meeting_schedule")
-
-        # 패턴 기반 intent 오버라이드: 선호 정보 기반 추천 요청 → meeting_schedule
+        # ── Fast-path: 명확한 패턴이 보이면 Gemini 의도 분류 생략 (−3~5s).
+        pref_keywords = ["선호 정보", "선호정보", "추천해줘", "추천해", "최적", "일정.*추천", "장소.*추천"]
+        fast_path_hit = False
         if latest_user_message:
             msg_lower = latest_user_message.lower()
-            pref_keywords = ["선호 정보", "선호정보", "추천해줘", "추천해", "최적", "일정.*추천", "장소.*추천"]
-            if any(re.search(kw, msg_lower) for kw in pref_keywords):
+            if _detect_multi_date_options(latest_user_message):
                 state["intent"] = "meeting_schedule"
-                state["confidence_score"] = max(state["confidence_score"], 0.95)
-                logger.info("[INTENT] Preference-based recommendation request detected, overriding to meeting_schedule")
+                state["intent_confidence"] = 0.9
+                state["confidence_score"] = 0.9
+                fast_path_hit = True
+                logger.info("[INTENT] fast-path: multi-date pattern → meeting_schedule (skip Gemini)")
+            elif any(re.search(kw, msg_lower) for kw in pref_keywords):
+                state["intent"] = "meeting_schedule"
+                state["intent_confidence"] = 0.95
+                state["confidence_score"] = 0.95
+                fast_path_hit = True
+                logger.info("[INTENT] fast-path: pref recommendation pattern → meeting_schedule (skip Gemini)")
+
+        if not fast_path_hit:
+            if state.get("conversation_summary"):
+                intent_input = (
+                    f"[이전 대화 요약]: {state['conversation_summary']}\n"
+                    f"[현재 메시지]: {latest_user_message or _serialize_context(state)}"
+                )
+            else:
+                intent_input = latest_user_message or _serialize_context(state)
+
+            intent_result = await classify_intent(intent_input)
+            state["intent"] = str(intent_result.get("intent", "general"))
+            state["intent_confidence"] = float(intent_result.get("confidence", 0.0))
+            state["confidence_score"] = state["intent_confidence"]
 
         state["status"] = "intent_detected"
         logger.info("[TIMING] intent_detection: %.2fs", time.monotonic() - _t0)
@@ -1736,6 +1983,40 @@ async def entity_extraction(state: GraphState) -> GraphState:
     try:
         if _has_node_error(state):
             return state
+
+        # ── Fast-skip: 명령형 추천 요청("일정 추천해줘" 등)은 뽑을 엔티티가 없음 → Gemini 호출 생략 (−3~4s).
+        # 숫자·월/일·지명 흔적이 없고 짧으면 빈 결과로 처리. 이후 slot_filling에서 선호 데이터가 채움.
+        latest_msg = ""
+        for m in reversed(state["message_records"]):
+            if m.get("role") == "user" and m.get("content"):
+                latest_msg = m["content"].strip()
+                break
+        is_short_cmd = (
+            latest_msg
+            and len(latest_msg) <= 20
+            and not re.search(r"\d", latest_msg)
+            and not re.search(r"(월|일|시|분|주말|평일|내일|모레|오늘|다음주|이번주)", latest_msg)
+            and re.search(r"(추천|정리|제안|뽑아|추려)", latest_msg)
+        )
+        if is_short_cmd:
+            logger.info("[ENTITY] fast-skip: short recommendation command, skipping Gemini extraction")
+            extracted: dict[str, Any] = {
+                "date_hint": None,
+                "date_hints": [],
+                "place_hint": None,
+                "headcount": None,
+                "meeting_type": None,
+                "parsed_time_hint": None,
+                "date_is_flexible": False,
+                "date_hint_source_text": None,
+            }
+            state["extracted_entities"] = extracted
+            _update_slot_state(state, extracted)
+            state["is_location_first"] = False
+            state["status"] = "entities_extracted"
+            logger.info("[TIMING] entity_extraction (fast-skip): %.2fs", time.monotonic() - _t0)
+            return state
+
         extracted = await _extract_entities_from_context(state)
         raw_date_hint = extracted.get("date_hint")
         raw_date_hints = extracted.get("date_hints") or []
@@ -1811,7 +2092,13 @@ async def entity_extraction(state: GraphState) -> GraphState:
         place_coord = await _resolve_place_coord(state.get("place_hint"))
         if place_coord:
             state["place_coord"] = place_coord
-        state["is_location_first"] = bool(state.get("place_hint")) and not bool(state.get("date_hint"))
+        # intent가 명시적 meeting_schedule이면 장소가 있어도 location-first로 강등 금지.
+        # — 사용자가 '일정 추천'을 요구한 경우 투표 카드(시간)가 메인이어야 함.
+        state["is_location_first"] = (
+            bool(state.get("place_hint"))
+            and not bool(state.get("date_hint"))
+            and state.get("intent") != "meeting_schedule"
+        )
         state["status"] = "entities_extracted"
         logger.info("[TIMING] entity_extraction: %.2fs", time.monotonic() - _t0)
         return state
@@ -1868,7 +2155,11 @@ async def slot_filling(state: GraphState) -> GraphState:
                     else:
                         logger.info("[PREF] All preferences submitted. Auto-suggesting (no place hint, time-only)")
 
-        state["is_location_first"] = bool(state.get("place_hint")) and not bool(state.get("date_hint"))
+        state["is_location_first"] = (
+            bool(state.get("place_hint"))
+            and not bool(state.get("date_hint"))
+            and state.get("intent") != "meeting_schedule"
+        )
         state["time_options"] = _build_flexible_time_options(state)
 
         # 교착 감지 → 선호 정보 기반 중재 메시지 + 투표 카드 생성
@@ -2010,7 +2301,8 @@ async def slot_filling(state: GraphState) -> GraphState:
             return state
 
         # place만 있음 → 장소 확인 + 추천 시작
-        if has_place and not has_date:
+        # 단, intent가 meeting_schedule이면 일정 추천이 우선 — location-first 전환 금지.
+        if has_place and not has_date and state.get("intent") != "meeting_schedule":
             state["slot_filling_turns"] += 1
             if state["slot_filling_turns"] <= 1:
                 place_display = state.get("place_hint", "")
@@ -2102,11 +2394,14 @@ def _build_multi_date_slots(state: GraphState) -> list[dict[str, Any]]:
 
 def _build_preference_time_slots(
     state: GraphState, pref_times: list[str],
+    blocked_dates: Optional[set[str]] = None,
 ) -> list[dict[str, Any]]:
-    """선호 시간대 기반으로 이번 주/다음 주 투표용 슬롯을 생성합니다."""
+    """선호 시간대 기반으로 이번 주/다음 주 투표용 슬롯을 생성합니다.
+    blocked_dates에 있는 날짜는 애초에 생성하지 않음 (뒤에서 잘라내면 5개 미만 위험)."""
     now_kst = datetime.now(KST)
     slots: list[dict[str, Any]] = []
     slot_index = 0
+    _blocked = blocked_dates or set()
 
     # 시간대 → (시작 시, 종료 시) 매핑
     time_map = {
@@ -2119,10 +2414,12 @@ def _build_preference_time_slots(
     }
 
     # 이번 주 + 다음 주 날짜 중 선호 시간대에 맞는 슬롯 생성
-    for day_offset in range(1, 22):  # 향후 3주 (충분한 슬롯 확보)
+    for day_offset in range(1, 29):  # 향후 4주 (불가능 날짜 많아도 여유 확보)
         target = now_kst + timedelta(days=day_offset)
         weekday = target.weekday()  # 0=월 6=일
         is_weekend = weekday >= 5
+        if target.strftime("%Y-%m-%d") in _blocked:
+            continue
 
         for pref_time in pref_times:
             # 평일/주말 필터
@@ -2167,17 +2464,20 @@ def _build_preference_time_slots(
 
     # 최소 3개 슬롯 보장: 선호 시간대가 좁아서 슬롯이 부족하면 기본 슬롯 추가
     if len(slots) < 3:
-        for day_offset in range(1, 15):
+        for day_offset in range(1, 29):
             if len(slots) >= 3:
                 break
             target = now_kst + timedelta(days=day_offset)
+            date_str = target.strftime("%Y-%m-%d")
+            if date_str in _blocked:
+                continue
             start_at = target.replace(hour=19, minute=0, second=0, microsecond=0)
             if start_at <= now_kst:
                 continue
             end_at = start_at + timedelta(hours=2)
             # 중복 날짜 체크
             existing_dates = {s["start_at"][:10] for s in slots}
-            if start_at.strftime("%Y-%m-%d") in existing_dates:
+            if date_str in existing_dates:
                 continue
             holiday = _get_korean_holiday(target)
             slot_index += 1
@@ -2205,10 +2505,24 @@ async def function_calling(state: GraphState) -> GraphState:
             return state
         state["blocker_notification_payload"] = None
 
+        # entity_extraction이 "다시 추천해줘" 같은 재시도 지시어에서 "다시"를
+        # place_hint로 잘못 뽑는 경우 있음 — 카카오맵 검색이 무의미해지니 스킵.
+        _NOISE_PLACE_HINTS = {
+            "다시", "재시도", "또", "한번더", "한 번 더", "다시해봐", "다시 해줘",
+            "다시 해", "재추천", "추천", "다시추천",
+        }
+        pl = state.get("place_hint")
+        if isinstance(pl, str) and pl.strip() in _NOISE_PLACE_HINTS:
+            state["place_hint"] = None
+
+        # 방의 '불가능 날짜' — 모든 경로의 최종 후보에서 제외.
+        room_pk = _room_id_as_int(state["room_id"])
+        blocked_dates = await _load_blocked_dates(room_pk)
+
         # 여러 날짜 선택지 → 각 날짜별 슬롯 생성
         multi_date_hints = state.get("date_hints") or []
         if len(multi_date_hints) >= 2:
-            multi_slots = _build_multi_date_slots(state)
+            multi_slots = _filter_out_blocked(_build_multi_date_slots(state), blocked_dates)
             if multi_slots:
                 state["calendar_free_slots"] = multi_slots
                 state["calendar_strategy"] = "multi_date_vote"
@@ -2221,7 +2535,8 @@ async def function_calling(state: GraphState) -> GraphState:
         # 선호 데이터 기반 자동 제안: preference_common_times로 슬롯 생성
         pref_times = state.get("preference_common_times") or []
         if pref_times and not state.get("date_hint"):
-            pref_slots = _build_preference_time_slots(state, pref_times)
+            # 생성 단계부터 blocked_dates를 제외하면서 만들어야 5개 채우기 가능.
+            pref_slots = _build_preference_time_slots(state, pref_times, blocked_dates)
             state["calendar_free_slots"] = pref_slots
             state["calendar_strategy"] = "preference_based"
             place_results = await search_place(state)
@@ -2234,7 +2549,9 @@ async def function_calling(state: GraphState) -> GraphState:
             state["calendar_free_slots"] = []
             place_results = await search_place(state)
         elif state.get("time_options"):
-            state["calendar_free_slots"] = _build_time_option_slots(state)
+            state["calendar_free_slots"] = _filter_out_blocked(
+                _build_time_option_slots(state), blocked_dates,
+            )
             state["calendar_strategy"] = "natural_language_time_options"
             place_results = await search_place(state)
         else:
@@ -2242,7 +2559,8 @@ async def function_calling(state: GraphState) -> GraphState:
                 get_free_slots(state),
                 search_place(state),
             )
-            state["calendar_free_slots"] = free_slots
+            # get_free_slots에서 이미 필터링되지만, 이중 방어.
+            state["calendar_free_slots"] = _filter_out_blocked(free_slots, blocked_dates)
             blocker_counts: dict[str, int] = {}
             if free_slots and any(slot.get("has_conflict") for slot in free_slots):
                 for slot in free_slots:
@@ -2315,9 +2633,18 @@ async def supervisor_validation(state: GraphState) -> GraphState:
                 continue
             valid_places.append(place)
 
+        is_preference_based = state.get("calendar_strategy") == "preference_based"
+
         if not valid_slots and not is_location_first:
             errors.append("no valid free time slots available")
-        if not valid_places and not is_location_first and not is_multi_date_vote:
+        # preference_based 추천은 시간 후보가 주된 결과물 — 장소 검색이 실패해도
+        # 일정 투표 카드라도 내보내기 위해 통과.
+        if (
+            not valid_places
+            and not is_location_first
+            and not is_multi_date_vote
+            and not is_preference_based
+        ):
             errors.append("no place recommendations satisfy the headcount")
 
         state["calendar_free_slots"] = valid_slots
@@ -2354,6 +2681,15 @@ async def vote_card_creation(state: GraphState) -> GraphState:
     try:
         if _has_node_error(state):
             return state
+
+        if state.get("no_date_selection"):
+            narrator = "먼저 오른쪽 캘린더에서 가능한 날짜를 선택해주세요. 멤버들이 날짜를 선택하면 최적 시간대를 추천해드릴게요. 📅"
+            async with AsyncSessionLocal() as db:
+                await _emit_assistant_message(state["room_id"], db, narrator, state, shared=True)
+            state["status"] = "vote_card_skipped"
+            logger.info("[TIMING] vote_card_creation: skipped (no date selection) %.2fs", time.monotonic() - _t0)
+            return state
+
         selected_slot = state["calendar_free_slots"][0] if state.get("calendar_free_slots") else {}
         start_at = _parse_iso_datetime(selected_slot.get("start_at")) if selected_slot else None
         meeting_id = selected_slot.get("meeting_id") or selected_slot.get("id")
@@ -2434,14 +2770,42 @@ async def vote_card_creation(state: GraphState) -> GraphState:
         }
         state["status"] = "vote_card_created"
 
-        # Narrator: 카드만 띄우고 조용히 끝내면 사용자가 "AI가 대답 안 했나?" 헷갈림.
-        # 다중 후보 안내 한 문장을 함께 띄움.
+        # ── 투표 카드 + Narrator 선발행: 장소 추천(7~12s)이 끝나기 전에 클라이언트로 먼저 보냄.
+        # agent.py는 vote_card_emitted_early / emitted_early 플래그를 보고 중복 발행을 스킵함.
         try:
-            narrator = "투표 카드를 준비했어요! 아래에서 가능한 시간대를 골라주세요. 📅"
+            best_label = state.get("calendar_free_slots", [{}])[0].get("label", "")
+            if state.get("date_conflict"):
+                summary = state.get("date_selection_summary", {})
+                parts = [f"{d}: {c}명" for d, c in sorted(summary.items(), key=lambda x: -x[1])]
+                narrator = f"날짜가 엇갈리네요 ({', '.join(parts)}). 가장 많이 선택된 날짜 기준으로 {best_label}을(를) 추천드려요. 📅"
+            else:
+                narrator = f"캘린더 확인 결과, {best_label}을(를) 추천드려요. 📅 아래에서 확인해주세요."
             async with AsyncSessionLocal() as db:
-                await _emit_assistant_message(state["room_id"], db, narrator, state)
+                await _emit_assistant_message(state["room_id"], db, narrator, state, shared=True)
         except Exception:
             logger.debug("vote_card narrator emit failed", exc_info=True)
+
+        try:
+            r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+            try:
+                channel = f"agent:{state['room_id']}"
+                # 1) Narrator 메시지 선발행 — 방금 큐에 들어간 마지막 항목을 즉시 publish
+                new_msgs = state.get("new_assistant_messages") or []  # type: ignore[typeddict-item]
+                if new_msgs:
+                    last_msg = new_msgs[-1]
+                    last_msg["emitted_early"] = True  # agent.py가 스킵하도록 표식
+                    await r.publish(channel, json.dumps(last_msg, ensure_ascii=False))
+                # 2) 투표 카드 선발행
+                await r.publish(
+                    channel,
+                    json.dumps(state["vote_card_payload"], ensure_ascii=False),
+                )
+                state["vote_card_emitted_early"] = True  # type: ignore[typeddict-unknown-key]
+                logger.info("[EARLY-EMIT] narrator + vote_card published to %s", channel)
+            finally:
+                await r.aclose()
+        except Exception:
+            logger.debug("vote_card early emit failed", exc_info=True)
 
         logger.info("[TIMING] vote_card_creation: %.2fs", time.monotonic() - _t0)
         return state
@@ -2598,6 +2962,20 @@ async def place_recommendation(state: GraphState) -> GraphState:
         }
         state["status"] = "place_recommended"
 
+        # 새로고침 복구용 — 장소 추천 페이로드를 Redis에 캐시 (24h TTL).
+        try:
+            r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+            try:
+                await r.set(
+                    f"room_place_rec:{state['room_id']}",
+                    json.dumps(state["place_recommendation_payload"], ensure_ascii=False),
+                    ex=86400,
+                )
+            finally:
+                await r.aclose()
+        except Exception:
+            logger.debug("place_rec cache failed", exc_info=True)
+
         # Narrator: 카드만 띄우고 끝내면 사용자가 "AI가 대답 안 했나?" 헷갈림.
         try:
             count = len(ranked_places[:5])
@@ -2608,7 +2986,7 @@ async def place_recommendation(state: GraphState) -> GraphState:
                 else "추천 장소를 정리해봤어요. 📍 아래 카드를 확인해 주세요."
             )
             async with AsyncSessionLocal() as db:
-                await _emit_assistant_message(state["room_id"], db, narrator, state)
+                await _emit_assistant_message(state["room_id"], db, narrator, state, shared=True)
         except Exception:
             logger.debug("place_recommendation narrator emit failed", exc_info=True)
 
@@ -2702,9 +3080,8 @@ def _route_after_vote_card_creation(state: GraphState) -> Literal["place_recomme
         return END
     if state.get("confirmed_place"):
         return "maedeup_card_creation"
-    # 장소 힌트가 있을 때만 장소 추천 진행, 없으면 투표 카드만 보내고 끝
-    if state.get("place_hint"):
-        return "place_recommendation"
+    # 일정 추천 카드를 보여준 뒤 사용자가 확정할 때까지 대기.
+    # 장소 추천은 사용자가 시간을 확정한 뒤 별도 메시지로 트리거됨.
     return END
 
 
@@ -2764,6 +3141,7 @@ def _build_graph() -> Any:
         {
             "place_recommendation": "place_recommendation",
             "maedeup_card_creation": "maedeup_card_creation",
+            END: END,
         },
     )
     graph.add_conditional_edges(
@@ -2803,6 +3181,14 @@ async def run_pipeline(
         viewer_user_id=context.viewer_user_id,
     )
     await _compress_message_history(initial_state)
+    # 소셜(방 전체) 채팅 컨텍스트 preload — entity/general 노드가 _serialize_context로 읽음.
+    try:
+        room_pk = _room_id_as_int(room_id)
+        social_recent, social_summary = await _load_social_context(db, room_pk)
+        initial_state["social_recent"] = social_recent
+        initial_state["social_summary"] = social_summary
+    except Exception:
+        logger.debug("social context preload failed room=%s", room_id, exc_info=True)
     final_state = await GRAPH.ainvoke(initial_state)
     logger.info(
         "[TIMING] run_pipeline TOTAL: %.2fs | intent=%s status=%s",
@@ -2820,6 +3206,7 @@ async def run_pipeline(
         "awaiting_user_reply": final_state.get("awaiting_user_reply", False),
         "validation_errors": final_state.get("validation_errors", []),
         "vote_card_payload": final_state.get("vote_card_payload"),
+        "vote_card_emitted_early": final_state.get("vote_card_emitted_early", False),
         "place_recommendation_payload": final_state.get("place_recommendation_payload"),
         "maedeup_card_payload": final_state.get("maedeup_card_payload"),
         "calendar_registration": final_state.get("calendar_registration"),

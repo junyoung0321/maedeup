@@ -290,6 +290,39 @@ async def agent_ws(
             except Exception:
                 logger.warning("Meeting summary extraction failed for room %s", room_id, exc_info=True)
 
+            # 전원 선택 완료 시 AI 안내 메시지를 먼저 발행
+            trigger_reason = trigger.get("trigger_reason", "")
+            if trigger_reason == "all_members_selected":
+                try:
+                    async with AsyncSessionLocal() as sess:
+                        greeting = ChatMessage(
+                            pane_type=PaneType.agent,
+                            role="assistant",
+                            content="모두 시간대를 선택했어요! 일정을 조율해볼게요 📅",
+                            sender="매듭 AI",
+                            room_id=int(room_id) if room_id else None,
+                            user_id=None,
+                            visibility=Visibility.shared.value,
+                        )
+                        sess.add(greeting)
+                        await sess.commit()
+                        await sess.refresh(greeting)
+                    await _publish_agent_message(
+                        r, shared_channel,
+                        json.dumps({
+                            "id": greeting.id,
+                            "pane_type": greeting.pane_type,
+                            "role": greeting.role,
+                            "content": greeting.content,
+                            "sender": greeting.sender,
+                            "created_at": greeting.created_at.isoformat(),
+                            "visibility": greeting.visibility,
+                            "user_id": greeting.user_id,
+                        }, ensure_ascii=False),
+                    )
+                except Exception:
+                    logger.debug("Failed to emit greeting for all_members_selected", exc_info=True)
+
             # 의도에 맞는 프롬프트 생성
             if trigger_intent == "meeting_schedule":
                 prompt = f"채팅방에서 모임 일정 관련 대화가 감지되었어요: \"{trigger_content}\"\n모임 일정 조율을 시작해줘"
@@ -353,15 +386,17 @@ async def agent_ws(
 
                 # 어시스턴트 응답 메시지 발행
                 for new_msg in result.get("new_assistant_messages", []):
+                    if new_msg.get("emitted_early"):
+                        continue
                     await _publish_agent_message(
                         r,
                         channel,
                         json.dumps(new_msg, ensure_ascii=False),
                     )
 
-                # 투표 카드 등 추가 페이로드 발행
+                # 투표 카드 등 추가 페이로드 발행 (파이프라인에서 선발행되었으면 스킵)
                 vote_card_payload = result.get("vote_card_payload")
-                if vote_card_payload:
+                if vote_card_payload and not result.get("vote_card_emitted_early"):
                     await _publish_agent_message(
                         r,
                         channel,
@@ -467,6 +502,8 @@ async def agent_ws(
                             slot_context[key] = result[key]
 
                     for new_msg in result.get("new_assistant_messages", []):
+                        if new_msg.get("emitted_early"):
+                            continue
                         await _publish_agent_message(
                             r, user_channel, json.dumps(new_msg, ensure_ascii=False),
                         )
@@ -626,11 +663,14 @@ async def agent_ws(
                     result.get("intent"),
                 )
 
-                # 파이프라인이 발행한 어시스턴트 메시지(슬롯 질문, 오류, 일반 응답 등) — user 전용
+                # 파이프라인이 발행한 어시스턴트 메시지 — shared는 전체, private는 user 전용
                 for new_msg in result.get("new_assistant_messages", []):
+                    if new_msg.get("emitted_early"):
+                        continue
+                    target_ch = shared_channel if new_msg.get("visibility") == "shared" else user_channel
                     await _publish_agent_message(
                         r,
-                        user_channel,
+                        target_ch,
                         json.dumps(new_msg, ensure_ascii=False),
                     )
 
@@ -675,7 +715,7 @@ async def agent_ws(
                 })
 
                 vote_card_payload = result.get("vote_card_payload")
-                if vote_card_payload:
+                if vote_card_payload and not result.get("vote_card_emitted_early"):
                     # 모임 일정 투표는 방 전체 공유 — 방장 혼자 본다면 투표 자체가 성립 안 함.
                     await _publish_agent_message(
                         r,
@@ -685,6 +725,7 @@ async def agent_ws(
                             ensure_ascii=False,
                         ),
                     )
+                if vote_card_payload:
                     blocker_notification_payload = result.get("blocker_notification_payload")
                     if blocker_notification_payload:
                         async with AsyncSessionLocal() as session:

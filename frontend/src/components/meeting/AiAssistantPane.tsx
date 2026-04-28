@@ -2,6 +2,7 @@
 
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Sparkles, Send, Square, MessageCircle, CalendarDays, MapPin, Users, CheckCircle2, ClipboardList, Share2, Check, AlertCircle } from "lucide-react";
+import ScheduleRecommendationCard from "./ScheduleRecommendationCard";
 import { useAgentWebSocket } from "@/hooks/useAgentWebSocket";
 import { useAuth } from "@/hooks/useAuth";
 import { MeetingContext } from "@/contexts/MeetingContext";
@@ -451,24 +452,9 @@ export default function AiAssistantPane() {
           </div>
         )}
 
-        {/* Vote card stub - actual cards now rendered in InfoPane's VoteCardSection */}
-        {(voteCard || placeRecommendation) && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              padding: "12px 16px",
-              borderRadius: 14,
-              background: "#eef2ff",
-              border: "1px solid #c7d2fe",
-            }}
-          >
-            <CalendarDays style={{ width: 18, height: 18, color: "#4f46e5" }} />
-            <span style={{ fontSize: fs(14, 12), fontWeight: 500, color: "#4f46e5", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}>
-              {voteCard ? "투표가 진행 중입니다" : "장소 추천이 도착했습니다"} — 오른쪽 캘린더 탭에서 확인하세요
-            </span>
-          </div>
+        {/* AI schedule recommendation */}
+        {voteCard && (
+          <ScheduleRecommendationCard />
         )}
 
         {maedeupCard && (() => {

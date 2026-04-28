@@ -157,6 +157,82 @@ async def get_upcoming_meeting(
     )
 
 
+@router.get("/rooms/{room_id}/pending-place")
+async def get_pending_place_recommendation(
+    room_id: int,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """방의 가장 최근 장소 추천 payload를 Redis에서 반환. 새로고침 복구용."""
+    user_id = int(current_user.sub)
+    member_check = await session.execute(
+        select(RoomMember).where(
+            RoomMember.room_id == room_id,
+            RoomMember.user_id == user_id,
+        )
+    )
+    if member_check.scalar_one_or_none() is None:
+        raise HTTPException(status_code=403, detail="Not a room member")
+
+    try:
+        r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        try:
+            raw = await r.get(f"room_place_rec:{room_id}")
+        finally:
+            await r.aclose()
+    except Exception:
+        raw = None
+
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+@router.get("/rooms/{room_id}/pending-vote")
+async def get_pending_vote_card(
+    room_id: int,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """방의 가장 최근 pending MeetingSchedule을 vote_card payload 형태로 반환합니다.
+    새로고침 후 투표 카드 복구용 — WebSocket은 휘발성이므로 pending 상태를 DB에서 읽음."""
+    user_id = int(current_user.sub)
+    member_check = await session.execute(
+        select(RoomMember).where(
+            RoomMember.room_id == room_id,
+            RoomMember.user_id == user_id,
+        )
+    )
+    if member_check.scalar_one_or_none() is None:
+        raise HTTPException(status_code=403, detail="Not a room member")
+
+    result = await session.execute(
+        select(MeetingSchedule)
+        .where(
+            MeetingSchedule.room_id == room_id,
+            MeetingSchedule.status == MeetingStatus.pending,
+        )
+        .order_by(MeetingSchedule.created_at.desc())
+        .limit(1)
+    )
+    meeting = result.scalar_one_or_none()
+    if meeting is None or not meeting.vote_options:
+        return None
+
+    return {
+        "type": "vote_card",
+        "title": meeting.title,
+        "room_id": str(meeting.room_id),
+        "meeting_id": meeting.id,
+        "time_options": meeting.vote_options,
+        "headcount": None,
+        "votes": meeting.votes or {},
+    }
+
+
 @router.post("/confirm", response_model=ConfirmMeetingResponse, status_code=201)
 async def confirm_meeting(
     body: ConfirmMeetingRequest,
@@ -169,19 +245,14 @@ async def confirm_meeting(
     if not body.title.strip():
         raise HTTPException(status_code=400, detail="title must not be empty")
 
-    # Host-auth guard: only the room creator (rooms.created_by) may confirm.
-    # This protects against non-host members curling the endpoint directly.
     room_row = await session.execute(
         select(Room).where(Room.id == body.room_id)
     )
     room = room_row.scalar_one_or_none()
     if room is None:
         raise HTTPException(status_code=404, detail="Room not found")
-    if room.created_by != int(current_user.sub):
-        raise HTTPException(status_code=403, detail="Only the room host can confirm")
 
-    # Membership check stays as defense-in-depth (host should always be a member,
-    # but keep the invariant explicit).
+    # 멤버라면 누구나 확정 가능.
     member_result = await session.execute(
         select(RoomMember).where(
             RoomMember.user_id == int(current_user.sub),

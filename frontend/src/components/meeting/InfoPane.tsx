@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronUp, CalendarDays } from "lucide-react";
 import CalendarPane from "@/components/meeting/CalendarPane";
 import FinalizationProposalCard from "@/components/meeting/FinalizationProposalCard";
 import PlaceDetailPane from "@/components/meeting/PlaceDetailPane";
@@ -57,6 +57,8 @@ export default function InfoPane() {
 
   const currentUserId = useMemo(() => getCurrentUserIdFromToken(), []);
 
+  const [calendarCollapsed, setCalendarCollapsed] = useState(false);
+
   const hasSelectedPlace = selectedPlace !== null;
   // Non-phased flow: place-only (no vote card, just place recommendation, not manually started)
   const isPlaceOnlyFlow = !voteCard && placeRecommendation !== null && infoPanePhase === "idle";
@@ -94,10 +96,6 @@ export default function InfoPane() {
       });
       confirmTime(startAt, endAt, result.id);
       refreshCalendar();
-      // Auto-trigger place recommendation
-      if (sendMessageToAi) {
-        sendMessageToAi("일정이 확정되었습니다. 장소를 추천해주세요");
-      }
     } catch (error) {
       console.error("Failed to confirm meeting:", error);
     }
@@ -127,9 +125,6 @@ export default function InfoPane() {
     });
     confirmTime(slot.start_at, slot.end_at, result.id);
     refreshCalendar();
-    if (sendMessageToAi) {
-      sendMessageToAi("일정이 확정되었습니다. 장소를 추천해주세요");
-    }
   };
 
   return (
@@ -184,21 +179,39 @@ export default function InfoPane() {
         </>
       ) : (
         <>
-          {/* AI finalization proposal sits above the calendar whenever present */}
-          {(finalizationProposal !== null || finalizationPending) && (
-            <div style={{ padding: "8px 0" }}>
-              <FinalizationProposalCard
-                proposal={finalizationProposal}
-                pending={finalizationPending}
-                currentUserId={currentUserId}
-                roomId={roomId}
-                onConfirm={handleFinalizationConfirm}
-              />
-            </div>
-          )}
-
-          {/* Calendar always on top */}
-          <CalendarPane />
+          {/* Calendar — collapsible. 장소 카드가 뜨면 기본 접힘. */}
+          <div style={{ margin: "0 4px" }}>
+            <button
+              type="button"
+              onClick={() => setCalendarCollapsed((v) => !v)}
+              style={{
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "8px 14px",
+                borderRadius: 12,
+                border: "1px solid #e2e8f0",
+                background: "#f8fafc",
+                cursor: "pointer",
+                marginBottom: calendarCollapsed ? 0 : 8,
+                fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+              }}
+              aria-expanded={!calendarCollapsed}
+              aria-label={calendarCollapsed ? "캘린더 펼치기" : "캘린더 접기"}
+            >
+              <span style={{ display: "flex", alignItems: "center", gap: 8, color: "#334155", fontSize: fs(13, 11), fontWeight: 600 }}>
+                <CalendarDays style={{ width: 16, height: 16 }} />
+                캘린더
+              </span>
+              {calendarCollapsed ? (
+                <ChevronDown style={{ width: 16, height: 16, color: "#64748b" }} />
+              ) : (
+                <ChevronUp style={{ width: 16, height: 16, color: "#64748b" }} />
+              )}
+            </button>
+            {!calendarCollapsed && <CalendarPane />}
+          </div>
 
           {/* Phase-based content below calendar */}
           {isPhasedFlow ? (
@@ -291,7 +304,7 @@ export default function InfoPane() {
           ) : isPlaceOnlyFlow ? (
             /* Non-phased: place-only flow */
             <div style={{ padding: "8px 0" }}>
-              <VoteCardSection />
+              <VoteCardSection mode="place-only" />
             </div>
           ) : null}
         </>

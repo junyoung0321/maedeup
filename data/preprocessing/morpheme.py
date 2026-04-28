@@ -11,6 +11,7 @@ import json
 import os
 import logging
 from kiwipiepy import Kiwi
+from preprocessing.io_utils import save_versioned
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +160,7 @@ def process_all_morphemes(
     existing.update(results)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(existing, f, ensure_ascii=False, indent=2)
+    save_versioned(output_path)
 
     avg_morph = total_morphemes / total_reviews if total_reviews else 0
     logger.info(

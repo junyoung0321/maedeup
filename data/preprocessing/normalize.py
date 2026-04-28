@@ -11,6 +11,7 @@ import re
 import logging
 
 from soynlp.normalizer import emoticon_normalize, repeat_normalize
+from preprocessing.io_utils import save_versioned
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,7 @@ def process_all_reviews(
     existing.update(results)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(existing, f, ensure_ascii=False, indent=2)
+    save_versioned(output_path)
 
     logger.info(
         f"정규화 완료: 신규 {len(results)}곳 + 기존 {len(existing) - len(results)}곳 = 총 {len(existing)}곳, "

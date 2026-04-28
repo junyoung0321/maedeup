@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlmodel import Field, SQLModel
@@ -13,14 +13,14 @@ class Event(SQLModel, table=True):
     location_name: Optional[str] = Field(default=None, max_length=255)
     latitude: Optional[float] = None
     longitude: Optional[float] = None
-    starts_at: datetime
+    starts_at: datetime = Field(index=True)
     ends_at: Optional[datetime] = None
     kakao_place_id: Optional[str] = Field(default=None, max_length=64)
     kakao_place_url: Optional[str] = Field(default=None, max_length=512)
     room_id: Optional[int] = Field(default=None, foreign_key="rooms.id", index=True)
-    meeting_id: Optional[int] = Field(default=None, foreign_key="meeting_schedules.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    meeting_id: Optional[int] = Field(default=None, foreign_key="meeting_schedules.id", index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class EventCreate(SQLModel):
@@ -33,6 +33,7 @@ class EventCreate(SQLModel):
     ends_at: Optional[datetime] = None
     kakao_place_id: Optional[str] = None
     kakao_place_url: Optional[str] = None
+    room_id: int
 
 
 class EventRead(SQLModel):

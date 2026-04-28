@@ -1,7 +1,9 @@
-interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+import type { ButtonHTMLAttributes, PropsWithChildren } from "react";
+
+type ButtonProps = PropsWithChildren<ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "primary" | "secondary" | "ghost";
   size?: "sm" | "md" | "lg";
-}
+}>;
 
 const variantMap = {
   primary: "bg-primary-600 text-white hover:bg-primary-500",

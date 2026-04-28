@@ -3,8 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { RefreshCw, Users } from "lucide-react";
-import { apiFetchWithFallback } from "@/lib/api";
-import { mockMeetings } from "@/mocks/meetings";
+import { apiFetch } from "@/lib/api";
 import type { Room, MeetingItem } from "@/types";
 import EmptyState from "@/components/ui/EmptyState";
 
@@ -20,7 +19,7 @@ function mapRoom(room: Room): MeetingItem {
   return {
     id: String(room.id),
     name: room.name,
-    schedule: room.description ?? "일정 미정",
+    schedule: room.description ?? "일정 조율중",
     badge: cat?.badge ?? "진행중",
     badgeColor: cat?.badgeColor ?? "#4f46e5",
   };
@@ -33,16 +32,19 @@ export default function MeetingList() {
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    const fallback: MeetingItem[] = mockMeetings.map((m) => ({ id: m.id, name: m.name, schedule: m.schedule, badge: m.badge, badgeColor: m.badgeColor }));
-    apiFetchWithFallback<Room[]>("/api/v1/rooms/", [])
+    apiFetch<Room[]>("/api/v1/rooms/")
       .then((data) => {
-        setMeetings(data.length > 0 ? data.map(mapRoom) : fallback);
+        setMeetings(data.map(mapRoom));
+        setLoading(false);
+      })
+      .catch(() => {
+        setError(true);
         setLoading(false);
       });
   }, []);
 
   return (
-    <div className="bg-white rounded-[20px] p-5 flex flex-col border border-[#e2e8f0] shadow-[0_4px_2.7px_rgba(0,0,0,0.25)]" style={{ height: 620 }}>
+    <div className="bg-white rounded-[20px] p-4 sm:p-5 flex flex-col border border-[#e2e8f0] shadow-[0_4px_2.7px_rgba(0,0,0,0.25)] h-auto lg:h-[620px] min-h-[420px] w-full">
       {/* Header */}
       <h3 className="text-[27px] font-medium text-black">참여중인 모임</h3>
       <p className="text-[18px] font-medium text-[#9f9f9f] mt-1 mb-5">

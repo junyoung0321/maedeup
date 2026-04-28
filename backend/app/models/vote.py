@@ -1,7 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
+import sqlalchemy as sa
 from sqlmodel import Field, SQLModel
 
 
@@ -22,11 +23,11 @@ class Vote(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     room_id: int = Field(foreign_key="rooms.id", index=True)
     title: str = Field(max_length=255)
-    vote_type: VoteType
-    status: VoteStatus = Field(default=VoteStatus.open)
+    vote_type: str = Field(sa_column=sa.Column(sa.String(32), nullable=False))
+    status: str = Field(sa_column=sa.Column(sa.String(32), nullable=False, server_default="open"))
     created_by: int = Field(foreign_key="users.id")
     ends_at: Optional[datetime] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class VoteOption(SQLModel, table=True):
@@ -43,6 +44,6 @@ class VoteResponse(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     vote_id: int = Field(foreign_key="votes.id", index=True)
-    option_id: int = Field(foreign_key="vote_options.id")
+    option_id: int = Field(foreign_key="vote_options.id", index=True)
     user_id: int = Field(foreign_key="users.id", index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))

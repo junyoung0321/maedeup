@@ -2,67 +2,35 @@
 
 import { useEffect } from "react";
 
-interface Props {
+export default function GlobalError({
+  error,
+  reset,
+}: {
   error: Error & { digest?: string };
   reset: () => void;
-}
-
-export default function GlobalError({ error, reset }: Props) {
+}) {
   useEffect(() => {
-    console.error("[GlobalError]", error);
+    console.error("Unhandled error:", error);
   }, [error]);
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 16,
-        background: "#f8fafc",
-        fontFamily: "Pretendard, sans-serif",
-      }}
-    >
-      <span style={{ fontSize: 56, lineHeight: 1 }}>😵</span>
-      <h1 style={{ fontSize: 22, fontWeight: 700, color: "#111827", margin: 0 }}>
-        오류가 발생했어요
-      </h1>
-      <p style={{ fontSize: 14, color: "#94a3b8", margin: 0, textAlign: "center" }}>
-        일시적인 문제일 수 있어요. 다시 시도해 보세요.
-      </p>
-      <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+    <div className="min-h-screen flex items-center justify-center bg-slate-50">
+      <div className="text-center max-w-md mx-auto px-6">
+        <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-red-100 flex items-center justify-center">
+          <span className="text-2xl">!</span>
+        </div>
+        <h2 className="text-xl font-semibold text-slate-900 mb-2">
+          문제가 발생했어요
+        </h2>
+        <p className="text-sm text-slate-500 mb-6">
+          일시적인 오류일 수 있어요. 다시 시도해 주세요.
+        </p>
         <button
           onClick={reset}
-          style={{
-            padding: "10px 24px",
-            borderRadius: 10,
-            background: "#4f46e5",
-            color: "#ffffff",
-            fontSize: 14,
-            fontWeight: 600,
-            border: "none",
-            cursor: "pointer",
-          }}
+          className="px-6 py-2.5 rounded-full bg-[#4f46e5] text-white text-sm font-semibold hover:bg-[#4338ca] transition-colors"
         >
           다시 시도
         </button>
-        <a
-          href="/"
-          style={{
-            padding: "10px 24px",
-            borderRadius: 10,
-            background: "#ffffff",
-            color: "#4f46e5",
-            fontSize: 14,
-            fontWeight: 600,
-            border: "1px solid #e2e8f0",
-            textDecoration: "none",
-          }}
-        >
-          홈으로
-        </a>
       </div>
     </div>
   );

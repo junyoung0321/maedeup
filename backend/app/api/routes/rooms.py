@@ -21,7 +21,7 @@ class CreateRoomRequest(BaseModel):
     name: str
     description: Optional[str] = None
     category: Optional[str] = None
-    member_names: list[str] = []
+    member_emails: list[str] = []
 
 
 class RoomResponse(BaseModel):
@@ -57,10 +57,10 @@ async def create_room(
     # 생성자를 owner로 등록
     session.add(RoomMember(room_id=room.id, user_id=creator_id, role=MemberRole.owner))
 
-    # 초대 멤버를 이름으로 조회 후 member로 등록
-    if body.member_names:
+    # 초대 멤버를 이메일로 조회 후 member로 등록
+    if body.member_emails:
         result = await session.execute(
-            select(User).where(User.name.in_(body.member_names))
+            select(User).where(User.email.in_(body.member_emails))
         )
         for user in result.scalars().all():
             if user.id != creator_id:

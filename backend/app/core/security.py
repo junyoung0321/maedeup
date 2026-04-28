@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import Depends, HTTPException, status
@@ -17,6 +18,25 @@ class AuthUser:
     name: str
     picture: Optional[str]
     calendar_consent: bool = False
+
+
+def issue_jwt(
+    *,
+    user_id: int,
+    email: str,
+    name: str,
+    picture: Optional[str],
+    calendar_consent: bool,
+) -> str:
+    payload = {
+        "sub": str(user_id),
+        "email": email,
+        "name": name,
+        "picture": picture,
+        "calendar_consent": calendar_consent,
+        "exp": datetime.now(timezone.utc) + timedelta(days=7),
+    }
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm="HS256")
 
 
 def verify_token(token: str) -> dict:

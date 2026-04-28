@@ -2,18 +2,29 @@
 
 import { useParams } from "next/navigation";
 import Header from "@/components/layout/Header";
+import type { Step } from "@/components/layout/StepIndicator";
 import ChatPane from "@/components/meeting/ChatPane";
 import AiAssistantPane from "@/components/meeting/AiAssistantPane";
-import CalendarPane from "@/components/meeting/CalendarPane";
-import PlaceAiPane from "@/components/meeting/PlaceAiPane";
-import PlaceDetailPane from "@/components/meeting/PlaceDetailPane";
 import CompletionPage from "@/components/meeting/CompletionPage";
-import { CalendarDays, MapPin, CheckCircle2 } from "lucide-react";
+import InfoPane from "@/components/meeting/InfoPane";
 import { MeetingProvider, useMeeting } from "@/contexts/MeetingContext";
 
+function getSingleParamValue(value: string | string[] | undefined): string | null {
+  if (typeof value === "string" && value.trim()) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const first = value[0];
+    if (typeof first === "string" && first.trim()) {
+      return first;
+    }
+  }
+  return null;
+}
+
 export default function MeetingPage() {
-  const params = useParams();
-  const roomId = typeof params.id === "string" ? params.id : "1";
+  const params = useParams<{ id?: string | string[] }>();
+  const roomId = getSingleParamValue(params?.id) ?? "1";
 
   return (
     <MeetingProvider initialRoomId={roomId}>
@@ -23,7 +34,8 @@ export default function MeetingPage() {
 }
 
 function MeetingPageInner() {
-  const { contextMode, setContextMode, selectedPlace, setSelectedPlace } = useMeeting();
+  const { contextMode, setContextMode } = useMeeting();
+  const currentStep: Step = contextMode === "agent" ? "schedule" : contextMode;
 
   if (contextMode === "done") {
     return (
@@ -36,38 +48,37 @@ function MeetingPageInner() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#ffffff", fontFamily: "Pretendard, sans-serif" }}>
-      <Header showSteps currentStep={contextMode} />
+      <Header showSteps currentStep={currentStep} />
 
-      {/* Context Mode Switcher */}
       <div
         style={{
           display: "flex",
-          justifyContent: "center",
-          gap: 8,
-          padding: "16px 0 0",
+          justifyContent: "flex-end",
+          padding: "16px 48px 0",
         }}
       >
-        <ModeTab
-          active={contextMode === "schedule" || contextMode === "agent"}
-          icon={<CalendarDays size={16} />}
-          label="일정 조율"
-          onClick={() => setContextMode("schedule")}
-        />
-        <ModeTab
-          active={contextMode === "place"}
-          icon={<MapPin size={16} />}
-          label="장소 조율"
-          onClick={() => setContextMode("place")}
-        />
-        <ModeTab
-          active={false}
-          icon={<CheckCircle2 size={16} />}
-          label="생성 완료"
+        <button
           onClick={() => setContextMode("done")}
-        />
+          type="button"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            padding: "8px 20px",
+            borderRadius: 24,
+            border: "1px solid #4f46e5",
+            background: "#4f46e5",
+            color: "#ffffff",
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: "pointer",
+            fontFamily: "Pretendard, sans-serif",
+            transition: "all 0.2s",
+          }}
+        >
+          생성 완료
+        </button>
       </div>
 
-      {/* 3-Panel Layout */}
       <main
         style={{
           display: "flex",
@@ -80,56 +91,9 @@ function MeetingPageInner() {
         }}
       >
         <ChatPane />
-
-        {(contextMode === "schedule" || contextMode === "agent") && (
-          <>
-            <AiAssistantPane />
-            <CalendarPane />
-          </>
-        )}
-        {contextMode === "place" && (
-          <>
-            <PlaceAiPane onSelectPlace={setSelectedPlace} />
-            <PlaceDetailPane place={selectedPlace} />
-          </>
-        )}
+        <AiAssistantPane />
+        <InfoPane />
       </main>
     </div>
-  );
-}
-
-function ModeTab({
-  active,
-  icon,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  icon: React.ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "8px 20px",
-        borderRadius: 24,
-        border: active ? "2px solid #4f46e5" : "1px solid #e2e8f0",
-        background: active ? "#eef2ff" : "#ffffff",
-        color: active ? "#4f46e5" : "#64748b",
-        fontSize: 14,
-        fontWeight: active ? 600 : 400,
-        cursor: "pointer",
-        fontFamily: "Pretendard, sans-serif",
-        transition: "all 0.2s",
-      }}
-    >
-      {icon}
-      {label}
-    </button>
   );
 }

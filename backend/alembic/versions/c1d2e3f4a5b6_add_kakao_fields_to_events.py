@@ -18,10 +18,24 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("events", sa.Column("kakao_place_id", sa.String(length=64), nullable=True))
-    op.add_column("events", sa.Column("kakao_place_url", sa.String(length=512), nullable=True))
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if not inspector.has_table("events"):
+        return
+    cols = [c["name"] for c in inspector.get_columns("events")]
+    if "kakao_place_id" not in cols:
+        op.add_column("events", sa.Column("kakao_place_id", sa.String(length=64), nullable=True))
+    if "kakao_place_url" not in cols:
+        op.add_column("events", sa.Column("kakao_place_url", sa.String(length=512), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("events", "kakao_place_url")
-    op.drop_column("events", "kakao_place_id")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if not inspector.has_table("events"):
+        return
+    cols = [c["name"] for c in inspector.get_columns("events")]
+    if "kakao_place_url" in cols:
+        op.drop_column("events", "kakao_place_url")
+    if "kakao_place_id" in cols:
+        op.drop_column("events", "kakao_place_id")

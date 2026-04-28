@@ -1,61 +1,69 @@
 import asyncio
+import os
 from logging.config import fileConfig
 
 from sqlalchemy import pool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context
-from sqlmodel import SQLModel
-
-# 모든 모델 import — autogenerate가 테이블 변경을 감지하려면 필수
-import app.models.chat  # noqa: F401
-import app.models.event  # noqa: F401
-import app.models.user  # noqa: F401
-
-from app.core.config import settings
 
 config = context.config
-
-# alembic.ini의 sqlalchemy.url을 settings 값으로 덮어씀
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
-
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+from sqlmodel import SQLModel
+import app.models  # noqa
 target_metadata = SQLModel.metadata
 
 
-def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
-    context.configure(
-        url=url,
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
-    )
+def normalize_database_url(url: str | None, *, async_mode: bool) -> str | None:
+    if not url:
+        return url
+    if async_mode:
+        if url.startswith("postgresql://"):
+            return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if url.startswith("postgresql+psycopg2://"):
+            return url.replace("postgresql+psycopg2://", "postgresql+asyncpg://", 1)
+    else:
+        if url.startswith("postgresql+asyncpg://"):
+            return url.replace("postgresql+asyncpg://", "postgresql://", 1)
+        if url.startswith("postgresql+psycopg2://"):
+            return url.replace("postgresql+psycopg2://", "postgresql://", 1)
+    return url
+
+
+def get_url(*, async_mode: bool):
+    url = os.environ.get("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
+    return normalize_database_url(url, async_mode=async_mode)
+
+
+def do_run_migrations(connection):
+    context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
     with context.begin_transaction():
         context.run_migrations()
 
 
-def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-async def run_async_migrations() -> None:
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+async def run_async_migrations():
+    connectable = create_async_engine(get_url(async_mode=True), poolclass=pool.NullPool)
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()
 
 
-def run_migrations_online() -> None:
+def run_migrations_offline():
+    url = get_url(async_mode=False)
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+        compare_type=True,
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def run_migrations_online():
     asyncio.run(run_async_migrations())
 
 

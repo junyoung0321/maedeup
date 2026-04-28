@@ -1,16 +1,50 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { User, Send, X, Calendar, MapPin } from "lucide-react";
 import { useSocialWebSocket } from "@/hooks/useSocialWebSocket";
-import { useMeeting } from "@/contexts/MeetingContext";
+import { MeetingContext } from "@/contexts/MeetingContext";
 
 function getNameFromToken(): string {
   try {
     const token = localStorage.getItem("auth_token");
-    if (!token) return "익명";
-    const payload = JSON.parse(atob(token.split(".")[1]));
-    return payload.name ?? "익명";
+    if (!token) {
+      return "익명";
+    }
+
+    const payload = token.split(".")[1];
+    if (!payload) {
+      return "익명";
+    }
+
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+
+    let decodedPayload = "";
+    try {
+      decodedPayload = atob(padded);
+    } catch {
+      return "익명";
+    }
+
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(decodedPayload);
+    } catch {
+      return "익명";
+    }
+
+    if (
+      decoded &&
+      typeof decoded === "object" &&
+      "name" in decoded &&
+      typeof decoded.name === "string" &&
+      decoded.name.trim()
+    ) {
+      return decoded.name;
+    }
+
+    return "익명";
   } catch {
     return "익명";
   }
@@ -18,7 +52,7 @@ function getNameFromToken(): string {
 
 const INTENT_BANNER: Record<
   string,
-  { icon: React.ReactNode; message: string; color: string }
+  { icon: ReactNode; message: string; color: string }
 > = {
   meeting_schedule: {
     icon: <Calendar style={{ width: 14, height: 14 }} />,
@@ -36,20 +70,19 @@ export default function ChatPane() {
   const [input, setInput] = useState("");
   const [currentUserName, setCurrentUserName] = useState<string>("익명");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const meetingContext = useContext(MeetingContext);
 
   useEffect(() => {
     setCurrentUserName(getNameFromToken());
   }, []);
 
-  let roomId = "room-1";
-  let setAiTriggerIntent: ((intent: string | null) => void) | undefined;
-  try {
-    const ctx = useMeeting();
-    roomId = ctx.roomId || "room-1";
-    setAiTriggerIntent = ctx.setAiTriggerIntent;
-  } catch { /* not in provider */ }
+  const roomId = useMemo(() => {
+    const candidate = meetingContext?.roomId?.trim();
+    return candidate && candidate.length > 0 ? candidate : "1";
+  }, [meetingContext?.roomId]);
+  const setAiTriggerIntent = meetingContext?.setAiTriggerIntent;
 
-  const { messages, sendMessage, detectedIntent, dismissIntent } =
+  const { messages, sendMessage, status, detectedIntent, dismissIntent } =
     useSocialWebSocket(roomId, currentUserName);
 
   useEffect(() => {
@@ -57,15 +90,17 @@ export default function ChatPane() {
   }, [messages]);
 
   const handleSend = () => {
-    if (!input.trim()) return;
-    sendMessage(input.trim());
+    const nextInput = input.trim();
+    if (!nextInput || status !== "open") {
+      return;
+    }
+
+    sendMessage(nextInput);
     setInput("");
   };
 
-  const banner =
-    detectedIntent && INTENT_BANNER[detectedIntent.intent]
-      ? INTENT_BANNER[detectedIntent.intent]
-      : null;
+  // 감지 배너 비활성화 — AI가 조용히 관찰하다 필요할 때만 개입
+  const banner = null;
 
   return (
     <div
@@ -82,7 +117,6 @@ export default function ChatPane() {
         fontFamily: "Pretendard Variable, Pretendard, sans-serif",
       }}
     >
-      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -106,65 +140,8 @@ export default function ChatPane() {
         <User style={{ width: 20, height: 20, color: "#94a3b8" }} />
       </div>
 
-      {/* 의도 감지 배너 */}
-      {banner && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "8px 16px",
-            background: banner.color,
-            color: "#fff",
-            fontSize: 13,
-            fontWeight: 400,
-            gap: 8,
-          }}
-        >
-          <button
-            onClick={() => {
-              if (detectedIntent && setAiTriggerIntent) {
-                setAiTriggerIntent(detectedIntent.intent);
-              }
-              dismissIntent();
-            }}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              flex: 1,
-              background: "none",
-              border: "none",
-              color: "#fff",
-              cursor: "pointer",
-              padding: 0,
-              textAlign: "left",
-            }}
-          >
-            {banner.icon}
-            <span>{banner.message}</span>
-            <span style={{ marginLeft: 4, fontWeight: 600, textDecoration: "underline" }}>
-              AI로 일정 잡기 →
-            </span>
-          </button>
-          <button
-            onClick={dismissIntent}
-            style={{
-              background: "none",
-              border: "none",
-              color: "#fff",
-              cursor: "pointer",
-              padding: 0,
-              display: "flex",
-              alignItems: "center",
-            }}
-          >
-            <X style={{ width: 14, height: 14 }} />
-          </button>
-        </div>
-      )}
+      {/* 감지 배너 제거됨 — AI가 조용히 관찰 후 필요시에만 개입 */}
 
-      {/* Messages */}
       <div
         ref={scrollRef}
         style={{
@@ -249,7 +226,6 @@ export default function ChatPane() {
         })}
       </div>
 
-      {/* Input */}
       <div
         style={{
           display: "flex",
@@ -263,9 +239,11 @@ export default function ChatPane() {
         <input
           type="text"
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
-          placeholder="메세지를 입력하세요"
+          maxLength={2000}
+          onChange={(event) => setInput(event.target.value)}
+          onKeyDown={(event) => event.key === "Enter" && !event.shiftKey && handleSend()}
+          placeholder={status === "open" ? "메세지를 입력하세요" : "연결 중입니다"}
+          disabled={status !== "open"}
           style={{
             flex: 1,
             padding: "10px 16px",
@@ -281,16 +259,17 @@ export default function ChatPane() {
         />
         <button
           onClick={handleSend}
+          disabled={status !== "open"}
           style={{
             width: 40,
             height: 40,
             borderRadius: "50%",
-            background: "#4f46e5",
+            background: status === "open" ? "#4f46e5" : "#cbd5e1",
             border: "none",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            cursor: "pointer",
+            cursor: status === "open" ? "pointer" : "not-allowed",
             flexShrink: 0,
           }}
         >

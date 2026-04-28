@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   fastapi-app:
     build:
@@ -11,8 +9,16 @@ services:
     env_file:
       - .env
     environment:
+      APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: postgresql+asyncpg://maedeup:maedeup@postgres-db:5432/maedeup
       REDIS_URL: redis://redis-broker:6379/0
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}
+      JWT_SECRET: ${JWT_SECRET}
+      FRONTEND_URL: ${FRONTEND_URL}
+      KAKAO_API_KEY: ${KAKAO_API_KEY}
       KAKAO_REST_API_KEY: ${KAKAO_REST_API_KEY}
     depends_on:
       postgres-db:
@@ -21,6 +27,12 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
   frontend:
@@ -28,20 +40,29 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        BACKEND_URL: http://fastapi-app:8000
+        BACKEND_URL: ${BACKEND_URL:-http://fastapi-app:8000}
         NEXT_PUBLIC_KAKAO_MAP_KEY: ${NEXT_PUBLIC_KAKAO_MAP_KEY}
-        NEXT_PUBLIC_API_URL: http://localhost:8000
-        NEXT_PUBLIC_WS_URL: ws://localhost:8000
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
     container_name: maedeup-frontend
     ports:
       - "3000:3000"
+    env_file:
+      - .env
     environment:
-      BACKEND_URL: http://fastapi-app:8000
+      BACKEND_URL: ${BACKEND_URL:-http://fastapi-app:8000}
       NEXT_PUBLIC_KAKAO_MAP_KEY: ${NEXT_PUBLIC_KAKAO_MAP_KEY}
-      NEXT_PUBLIC_API_URL: http://localhost:8000
-      NEXT_PUBLIC_WS_URL: ws://localhost:8000
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
     depends_on:
-      - fastapi-app
+      fastapi-app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
   postgres-db:
@@ -50,13 +71,13 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: maedeup
-      POSTGRES_PASSWORD: maedeup
-      POSTGRES_DB: maedeup
+      POSTGRES_USER: ${POSTGRES_USER:-maedeup}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-maedeup}
+      POSTGRES_DB: ${POSTGRES_DB:-maedeup}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U maedeup"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5

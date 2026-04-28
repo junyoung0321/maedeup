@@ -1,6 +1,6 @@
 from typing import Dict, Set
 
-from fastapi import WebSocket
+from fastapi import WebSocket, WebSocketDisconnect
 
 
 class ConnectionManager:
@@ -20,7 +20,10 @@ class ConnectionManager:
     async def broadcast(self, room_id: str, message: str) -> None:
         room = self.rooms.get(room_id, set())
         for ws in list(room):
-            await ws.send_text(message)
+            try:
+                await ws.send_text(message)
+            except (WebSocketDisconnect, RuntimeError):
+                self.remove(room_id, ws)
 
 
 manager = ConnectionManager()

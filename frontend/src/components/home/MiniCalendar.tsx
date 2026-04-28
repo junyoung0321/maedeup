@@ -1,13 +1,107 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { mockCalendarEvents } from "@/mocks/calendar";
+import { apiFetch } from "@/lib/api";
+import { parseServerDate } from "@/lib/datetime";
+
+interface EventRead {
+  id: number;
+  title: string;
+  starts_at: string;
+}
+
+interface MyCalendarEvent {
+  id: string;
+  title: string;
+  starts_at: string;
+  ends_at: string;
+  all_day: boolean;
+}
+
+interface MyCalendarResponse {
+  events: MyCalendarEvent[];
+  connected: boolean;
+}
+
+type EventSource = "app" | "google";
+
+interface CalendarEvent {
+  id: string;
+  title: string;
+  date: string;
+  color: string;
+  source: EventSource;
+}
+
+const EVENT_PALETTE = [
+  "#4f46e5", "#7c3aed", "#0891b2", "#059669",
+  "#ea580c", "#dc2626", "#16a34a", "#db2777",
+];
+
+function colorForTitle(title: string): string {
+  let hash = 0;
+  for (let i = 0; i < title.length; i++) {
+    hash = (hash * 31 + title.charCodeAt(i)) >>> 0;
+  }
+  return EVENT_PALETTE[hash % EVENT_PALETTE.length];
+}
+
+function toLocalDateString(iso: string): string {
+  const d = parseServerDate(iso);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
 export default function MiniCalendar() {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
+  const [appEvents, setAppEvents] = useState<CalendarEvent[]>([]);
+  const [gcalEvents, setGcalEvents] = useState<CalendarEvent[]>([]);
+  const [gcalConnected, setGcalConnected] = useState<boolean | null>(null);
+
+  // App events: fetched once
+  useEffect(() => {
+    apiFetch<EventRead[]>("/api/v1/events/")
+      .then((data) => {
+        setAppEvents(
+          data.map((ev) => ({
+            id: `app-${ev.id}`,
+            title: ev.title,
+            date: toLocalDateString(ev.starts_at),
+            color: colorForTitle(ev.title),
+            source: "app",
+          })),
+        );
+      })
+      .catch(() => setAppEvents([]));
+  }, []);
+
+  // Google Calendar events: refetch on month change
+  useEffect(() => {
+    apiFetch<MyCalendarResponse>(`/api/v1/calendar/my-events?year=${year}&month=${month}`)
+      .then((res) => {
+        setGcalConnected(res.connected);
+        setGcalEvents(
+          res.events.map((ev) => ({
+            id: `gcal-${ev.id}`,
+            title: ev.title,
+            date: toLocalDateString(ev.starts_at),
+            color: colorForTitle(ev.title),
+            source: "google",
+          })),
+        );
+      })
+      .catch(() => {
+        setGcalConnected(false);
+        setGcalEvents([]);
+      });
+  }, [year, month]);
+
+  const events = useMemo(() => [...appEvents, ...gcalEvents], [appEvents, gcalEvents]);
 
   const daysInMonth = new Date(year, month, 0).getDate();
   const firstDay = new Date(year, month - 1, 1).getDay();
@@ -37,15 +131,18 @@ export default function MiniCalendar() {
   const nextDaysCount = totalCells % 7 === 0 ? 0 : 7 - (totalCells % 7);
   const nextDays = Array.from({ length: nextDaysCount }, (_, i) => i + 1);
 
-  const eventsByDay: Record<number, { title: string; color: string }[]> = {};
-  mockCalendarEvents.forEach((ev) => {
-    const [evYear, evMonth, evDayStr] = ev.date.split("-");
-    if (Number(evYear) === year && Number(evMonth) === month) {
-      const d = parseInt(evDayStr, 10);
-      if (!eventsByDay[d]) eventsByDay[d] = [];
-      eventsByDay[d].push({ title: ev.title, color: ev.color });
-    }
-  });
+  const eventsByDay = useMemo(() => {
+    const map: Record<number, { title: string; color: string }[]> = {};
+    events.forEach((ev) => {
+      const [evYear, evMonth, evDayStr] = ev.date.split("-");
+      if (Number(evYear) === year && Number(evMonth) === month) {
+        const d = parseInt(evDayStr, 10);
+        if (!map[d]) map[d] = [];
+        map[d].push({ title: ev.title, color: ev.color });
+      }
+    });
+    return map;
+  }, [events, year, month]);
 
   const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
 
@@ -75,8 +172,7 @@ export default function MiniCalendar() {
 
   return (
     <div
-      className="bg-white rounded-[20px] flex flex-col border border-[#e2e8f0] shadow-[0_4px_3px_rgba(0,0,0,0.25)]"
-      style={{ height: 620 }}
+      className="bg-white rounded-[20px] flex flex-col border border-[#e2e8f0] shadow-[0_4px_3px_rgba(0,0,0,0.25)] h-auto lg:h-[620px] min-h-[420px] w-full"
     >
       {/* Month navigation */}
       <div className="flex items-center justify-between px-5 py-4">

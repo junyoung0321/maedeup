@@ -2,40 +2,22 @@ import Link from "next/link";
 
 export default function NotFound() {
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 16,
-        background: "#f8fafc",
-        fontFamily: "Pretendard, sans-serif",
-      }}
-    >
-      <span style={{ fontSize: 56, lineHeight: 1 }}>🪢</span>
-      <h1 style={{ fontSize: 22, fontWeight: 700, color: "#111827", margin: 0 }}>
-        페이지를 찾을 수 없어요
-      </h1>
-      <p style={{ fontSize: 14, color: "#94a3b8", margin: 0, textAlign: "center" }}>
-        주소가 잘못됐거나 삭제된 페이지예요
-      </p>
-      <Link
-        href="/"
-        style={{
-          marginTop: 8,
-          padding: "10px 24px",
-          borderRadius: 10,
-          background: "#4f46e5",
-          color: "#ffffff",
-          fontSize: 14,
-          fontWeight: 600,
-          textDecoration: "none",
-        }}
-      >
-        홈으로 돌아가기
-      </Link>
+    <div className="min-h-screen flex items-center justify-center bg-slate-50">
+      <div className="text-center max-w-md mx-auto px-6">
+        <p className="text-6xl font-bold text-[#4f46e5] mb-4">404</p>
+        <h2 className="text-xl font-semibold text-slate-900 mb-2">
+          페이지를 찾을 수 없어요
+        </h2>
+        <p className="text-sm text-slate-500 mb-6">
+          요청하신 페이지가 존재하지 않거나 이동되었을 수 있어요.
+        </p>
+        <Link
+          href="/"
+          className="inline-block px-6 py-2.5 rounded-full bg-[#4f46e5] text-white text-sm font-semibold hover:bg-[#4338ca] transition-colors"
+        >
+          홈으로 돌아가기
+        </Link>
+      </div>
     </div>
   );
 }

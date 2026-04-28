@@ -1,284 +1,371 @@
 "use client";
 
-import { useState } from "react";
-import { X, Clock, MapPin, UtensilsCrossed, Car } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  X,
+  AlertCircle,
+  Utensils,
+  MapPin,
+  MapPinOff,
+  Clock,
+  Car,
+} from "lucide-react";
+import { apiFetch } from "@/lib/api";
+import type { PersonalDataCategory, UserProfile } from "@/types";
+import {
+  ChipListEditor,
+  FreeformTextEditor,
+  PresetMultiSelect,
+  PresetSingleSelect,
+} from "@/components/personal-data/Editors";
 
-type Category = "선호 시간" | "선호 장소" | "음식 취향" | "이동 수단";
+const FOOD_PREFERENCE_OPTIONS = [
+  "한식",
+  "양식",
+  "일식",
+  "중식",
+  "카페",
+  "술집",
+  "기타",
+] as const;
 
-const categories: { key: Category; label: string; icon: typeof Clock; color: string; bgColor: string; borderColor: string }[] = [
-  { key: "선호 시간", label: "선호 시간", icon: Clock, color: "#4f46e5", bgColor: "#eef2ff", borderColor: "#4f46e5" },
-  { key: "선호 장소", label: "선호 장소", icon: MapPin, color: "#16a34a", bgColor: "#f0fdf4", borderColor: "#22c55e" },
-  { key: "음식 취향", label: "음식 취향", icon: UtensilsCrossed, color: "#eab308", bgColor: "#fefce8", borderColor: "#eab308" },
-  { key: "이동 수단", label: "이동 수단", icon: Car, color: "#64748b", bgColor: "#f8fafc", borderColor: "#94a3b8" },
+const TRANSPORT_OPTIONS = ["대중교통", "자차", "도보", "기타"] as const;
+
+const TABS: {
+  key: PersonalDataCategory;
+  label: string;
+  icon: typeof AlertCircle;
+  color: string;
+  bgColor: string;
+  borderColor: string;
+}[] = [
+  {
+    key: "food_restrictions",
+    label: "음식 제한",
+    icon: AlertCircle,
+    color: "#dc2626",
+    bgColor: "#fee2e2",
+    borderColor: "#dc2626",
+  },
+  {
+    key: "food_preferences",
+    label: "음식 취향",
+    icon: Utensils,
+    color: "#d97706",
+    bgColor: "#fef3c7",
+    borderColor: "#eab308",
+  },
+  {
+    key: "liked_areas",
+    label: "선호 지역",
+    icon: MapPin,
+    color: "#16a34a",
+    bgColor: "#f0fdf4",
+    borderColor: "#22c55e",
+  },
+  {
+    key: "disliked_areas",
+    label: "회피 지역",
+    icon: MapPinOff,
+    color: "#64748b",
+    bgColor: "#f1f5f9",
+    borderColor: "#94a3b8",
+  },
+  {
+    key: "time_preference",
+    label: "선호 시간",
+    icon: Clock,
+    color: "#4f46e5",
+    bgColor: "#eef2ff",
+    borderColor: "#4f46e5",
+  },
+  {
+    key: "transport_mode",
+    label: "이동 수단",
+    icon: Car,
+    color: "#2563eb",
+    bgColor: "#e0f2fe",
+    borderColor: "#2563eb",
+  },
 ];
 
-const days = ["월", "화", "수", "목", "금", "토", "일"];
+type FormState = {
+  food_restrictions: string[];
+  food_preferences: string[];
+  liked_areas: string[];
+  disliked_areas: string[];
+  time_preference: string;
+  transport_mode: string;
+};
 
 interface Props {
   open: boolean;
-  onClose: () => void;
+  onClose: (didSave: boolean) => void;
+  initialProfile: UserProfile;
+  focusCategory: PersonalDataCategory | null;
 }
 
-export default function PersonalDataModal({ open, onClose }: Props) {
-  const [activeCategory, setActiveCategory] = useState<Category>("선호 시간");
-  const [selectedDays, setSelectedDays] = useState<Set<string>>(new Set(["월", "수", "금"]));
-  const [startTime, setStartTime] = useState("오후 2:00");
-  const [endTime, setEndTime] = useState("오후 6:00");
-  const [memo, setMemo] = useState("");
+function buildFormState(profile: UserProfile): FormState {
+  return {
+    food_restrictions: profile.food_restrictions ?? [],
+    food_preferences: profile.food_preferences ?? [],
+    liked_areas: profile.liked_areas ?? [],
+    disliked_areas: profile.disliked_areas ?? [],
+    time_preference: profile.time_preference ?? "",
+    transport_mode: profile.transport_mode ?? "",
+  };
+}
+
+function arrayEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+export default function PersonalDataModal({
+  open,
+  onClose,
+  initialProfile,
+  focusCategory,
+}: Props) {
+  const [activeCategory, setActiveCategory] = useState<PersonalDataCategory>(
+    "food_restrictions",
+  );
+  const [form, setForm] = useState<FormState>(() => buildFormState(initialProfile));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const initialFormRef = useRef<FormState>(buildFormState(initialProfile));
+
+  // Modal이 열릴 때 form/activeCategory를 reset.
+  useEffect(() => {
+    if (!open) return;
+    const fresh = buildFormState(initialProfile);
+    setForm(fresh);
+    initialFormRef.current = fresh;
+    setActiveCategory(focusCategory ?? "food_restrictions");
+    setError(null);
+  }, [open, initialProfile, focusCategory]);
+
+  const changedFields = useMemo(() => {
+    const initial = initialFormRef.current;
+    const out: Partial<FormState> = {};
+    if (!arrayEqual(form.food_restrictions, initial.food_restrictions))
+      out.food_restrictions = form.food_restrictions;
+    if (!arrayEqual(form.food_preferences, initial.food_preferences))
+      out.food_preferences = form.food_preferences;
+    if (!arrayEqual(form.liked_areas, initial.liked_areas))
+      out.liked_areas = form.liked_areas;
+    if (!arrayEqual(form.disliked_areas, initial.disliked_areas))
+      out.disliked_areas = form.disliked_areas;
+    if (form.time_preference !== initial.time_preference)
+      out.time_preference = form.time_preference;
+    if (form.transport_mode !== initial.transport_mode)
+      out.transport_mode = form.transport_mode;
+    return out;
+  }, [form]);
+
+  const hasChanges = Object.keys(changedFields).length > 0;
+
+  const updateList = (
+    cat: "food_restrictions" | "liked_areas" | "disliked_areas",
+    next: string[],
+  ) => setForm((s) => ({ ...s, [cat]: next }));
+
+  const toggleFoodPreference = (value: string) => {
+    setForm((s) => ({
+      ...s,
+      food_preferences: s.food_preferences.includes(value)
+        ? s.food_preferences.filter((x) => x !== value)
+        : [...s.food_preferences, value],
+    }));
+  };
+
+  const setTimePreference = (v: string) =>
+    setForm((s) => ({ ...s, time_preference: v }));
+
+  const setTransportMode = (v: string) =>
+    setForm((s) => ({ ...s, transport_mode: v }));
+
+  const handleSave = async () => {
+    if (saving) return;
+    if (!hasChanges) {
+      onClose(false);
+      return;
+    }
+    try {
+      setSaving(true);
+      setError(null);
+      await apiFetch("/api/v1/users/me/preferences", {
+        method: "PATCH",
+        body: JSON.stringify(changedFields),
+      });
+      onClose(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "저장 실패");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   if (!open) return null;
 
-  const toggleDay = (day: string) => {
-    setSelectedDays((prev) => {
-      const next = new Set(prev);
-      if (next.has(day)) next.delete(day);
-      else next.add(day);
-      return next;
-    });
-  };
+  const activeTab = TABS.find((t) => t.key === activeCategory) ?? TABS[0];
 
   return (
     <div
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 100,
-        background: "rgba(0,0,0,0.35)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
+      onClick={() => onClose(false)}
+      className="fixed inset-0 z-[100] flex items-center justify-center px-4 sm:px-0"
+      style={{ background: "rgba(0,0,0,0.35)" }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        className="bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden w-full max-w-[560px]"
         style={{
-          width: 520,
-          borderRadius: 24,
-          background: "#ffffff",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
+          maxHeight: "85vh",
           fontFamily: "Pretendard Variable, Pretendard, sans-serif",
         }}
       >
         {/* Header */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "20px 24px",
-            borderBottom: "1px solid #f1f5f9",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Clock style={{ width: 22, height: 22, color: "#4f46e5" }} />
-            <span style={{ fontSize: 20, fontWeight: 600, color: "#111827" }}>개인 데이터 추가</span>
+        <div className="flex items-center justify-between px-6 py-5 border-b border-[#f1f5f9]">
+          <div className="flex items-center gap-2.5">
+            <activeTab.icon
+              className="w-5 h-5"
+              style={{ color: activeTab.color }}
+            />
+            <span className="text-[19px] font-bold text-[#111827]">
+              개인 데이터 편집
+            </span>
           </div>
           <button
-            onClick={onClose}
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: "50%",
-              border: "none",
-              background: "#f1f5f9",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "pointer",
-            }}
+            onClick={() => onClose(false)}
+            aria-label="close"
+            className="w-8 h-8 rounded-full bg-[#f1f5f9] flex items-center justify-center hover:bg-[#e2e8f0]"
           >
-            <X style={{ width: 16, height: 16, color: "#64748b" }} />
+            <X className="w-4 h-4 text-[#64748b]" />
           </button>
         </div>
 
-        {/* Content */}
-        <div style={{ padding: "24px", display: "flex", flexDirection: "column", gap: 24 }}>
-          {/* 카테고리 선택 */}
-          <div>
-            <span style={{ fontSize: 14, fontWeight: 700, color: "#111827", marginBottom: 12, display: "block" }}>
-              카테고리 선택
-            </span>
-            <div style={{ display: "flex", gap: 10 }}>
-              {categories.map((cat) => {
-                const isActive = activeCategory === cat.key;
-                const Icon = cat.icon;
-                return (
-                  <button
-                    key={cat.key}
-                    onClick={() => setActiveCategory(cat.key)}
-                    style={{
-                      flex: 1,
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 6,
-                      padding: "12px 0",
-                      borderRadius: 14,
-                      border: isActive ? `2px solid ${cat.borderColor}` : "1px solid #e2e8f0",
-                      background: isActive ? cat.bgColor : "#ffffff",
-                      cursor: "pointer",
-                      fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                    }}
-                  >
-                    <Icon style={{ width: 24, height: 24, color: cat.color }} />
-                    <span style={{ fontSize: 13, fontWeight: 500, color: cat.color }}>
-                      {cat.label}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* 선호 시간 추가 */}
-          <div>
-            <span style={{ fontSize: 14, fontWeight: 700, color: "#111827", marginBottom: 12, display: "block" }}>
-              선호 시간 추가
-            </span>
-
-            {/* 요일 선택 */}
-            <div style={{ marginBottom: 16 }}>
-              <span style={{ fontSize: 12, fontWeight: 500, color: "#94a3b8", marginBottom: 8, display: "block" }}>
-                요일 선택
-              </span>
-              <div style={{ display: "flex", gap: 8 }}>
-                {days.map((day) => {
-                  const isSelected = selectedDays.has(day);
-                  return (
-                    <button
-                      key={day}
-                      onClick={() => toggleDay(day)}
-                      style={{
-                        flex: 1,
-                        height: 36,
-                        borderRadius: 20,
-                        border: "none",
-                        background: isSelected ? "#4f46e5" : "#f1f5f9",
-                        color: isSelected ? "#ffffff" : "#64748b",
-                        fontSize: 13,
-                        fontWeight: 500,
-                        cursor: "pointer",
-                        fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                      }}
-                    >
-                      {day}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* 시간대 선택 */}
-            <div style={{ marginBottom: 16 }}>
-              <span style={{ fontSize: 12, fontWeight: 500, color: "#94a3b8", marginBottom: 8, display: "block" }}>
-                시간대 선택
-              </span>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <input
-                  value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
+        {/* Tabs */}
+        <div className="px-6 pt-4 pb-2 border-b border-[#f1f5f9]">
+          <div className="grid grid-cols-3 gap-2">
+            {TABS.map((tab) => {
+              const Icon = tab.icon;
+              const active = activeCategory === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveCategory(tab.key)}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl border transition-colors text-[12.5px] font-semibold"
                   style={{
-                    flex: 1,
-                    padding: "10px 14px",
-                    borderRadius: 12,
-                    border: "1px solid #e2e8f0",
-                    outline: "none",
-                    fontSize: 14,
-                    fontWeight: 500,
-                    color: "#111827",
-                    fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                    borderColor: active ? tab.borderColor : "#e2e8f0",
+                    backgroundColor: active ? tab.bgColor : "#ffffff",
+                    color: active ? tab.color : "#64748b",
+                    borderWidth: active ? 2 : 1,
                   }}
-                />
-                <span style={{ fontSize: 14, color: "#94a3b8" }}>~</span>
-                <input
-                  value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
-                  style={{
-                    flex: 1,
-                    padding: "10px 14px",
-                    borderRadius: 12,
-                    border: "1px solid #e2e8f0",
-                    outline: "none",
-                    fontSize: 14,
-                    fontWeight: 500,
-                    color: "#111827",
-                    fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* 메모 */}
-            <div>
-              <span style={{ fontSize: 12, fontWeight: 500, color: "#94a3b8", marginBottom: 8, display: "block" }}>
-                메모 (선택)
-              </span>
-              <input
-                value={memo}
-                onChange={(e) => setMemo(e.target.value)}
-                placeholder="예: 점심시간 이후 선호"
-                style={{
-                  width: "100%",
-                  padding: "10px 14px",
-                  borderRadius: 12,
-                  border: "1px solid #e2e8f0",
-                  outline: "none",
-                  fontSize: 14,
-                  color: "#374151",
-                  fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
+                >
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  {tab.label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {/* Footer buttons */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "flex-end",
-            gap: 12,
-            padding: "16px 24px 24px",
-            borderTop: "1px solid #f1f5f9",
-          }}
-        >
-          <button
-            onClick={onClose}
-            style={{
-              padding: "10px 20px",
-              borderRadius: 12,
-              border: "1px solid #e2e8f0",
-              background: "#ffffff",
-              color: "#64748b",
-              fontSize: 14,
-              fontWeight: 500,
-              cursor: "pointer",
-              fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-            }}
-          >
-            취소
-          </button>
-          <button
-            style={{
-              padding: "10px 24px",
-              borderRadius: 12,
-              border: "none",
-              background: "#4f46e5",
-              color: "#ffffff",
-              fontSize: 14,
-              fontWeight: 500,
-              cursor: "pointer",
-              fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-            }}
-          >
-            저장하기
-          </button>
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          {activeCategory === "food_restrictions" && (
+            <ChipListEditor
+              label="알레르기 / 못 먹는 음식"
+              hint="예: 갑각류 알레르기, 매운 거, 회"
+              values={form.food_restrictions}
+              onChange={(next) => updateList("food_restrictions", next)}
+              accentColor="#dc2626"
+            />
+          )}
+
+          {activeCategory === "food_preferences" && (
+            <PresetMultiSelect
+              label="좋아하는 음식 카테고리"
+              options={FOOD_PREFERENCE_OPTIONS as readonly string[]}
+              values={form.food_preferences}
+              onToggle={toggleFoodPreference}
+              accentColor="#d97706"
+              accentBg="#fef3c7"
+            />
+          )}
+
+          {activeCategory === "liked_areas" && (
+            <ChipListEditor
+              label="자주 가고 싶은 동네/지역"
+              hint="예: 강남, 홍대, 신촌"
+              values={form.liked_areas}
+              onChange={(next) => updateList("liked_areas", next)}
+              accentColor="#16a34a"
+            />
+          )}
+
+          {activeCategory === "disliked_areas" && (
+            <ChipListEditor
+              label="멀어서 / 안 가고 싶은 지역"
+              hint="예: 분당, 일산"
+              values={form.disliked_areas}
+              onChange={(next) => updateList("disliked_areas", next)}
+              accentColor="#64748b"
+            />
+          )}
+
+          {activeCategory === "time_preference" && (
+            <FreeformTextEditor
+              label="선호 시간대"
+              hint='예: "주말 오후", "평일 저녁 7시 이후", "월수금 점심"'
+              value={form.time_preference}
+              onChange={setTimePreference}
+              accentColor="#4f46e5"
+            />
+          )}
+
+          {activeCategory === "transport_mode" && (
+            <PresetSingleSelect
+              label="이동 수단"
+              options={TRANSPORT_OPTIONS as readonly string[]}
+              value={form.transport_mode}
+              onChange={setTransportMode}
+              accentColor="#2563eb"
+              accentBg="#e0f2fe"
+            />
+          )}
+        </div>
+
+        {error && (
+          <div className="px-6 pb-2">
+            <p className="text-[12px] text-[#dc2626]">{error}</p>
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="flex items-center justify-between px-6 py-4 border-t border-[#f1f5f9]">
+          <p className="text-[11px] text-[#94a3b8]">
+            {hasChanges
+              ? `${Object.keys(changedFields).length}개 항목 변경 — 직접 수정한 항목은 ✨가 사라집니다`
+              : "변경 사항 없음"}
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => onClose(false)}
+              disabled={saving}
+              className="px-5 py-2 rounded-xl border border-[#e2e8f0] bg-white text-[14px] font-medium text-[#64748b] hover:bg-[#f8fafc] disabled:opacity-50"
+            >
+              취소
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving || !hasChanges}
+              className="px-6 py-2 rounded-xl bg-[#4f46e5] text-white text-[14px] font-medium hover:bg-[#4338ca] disabled:bg-[#c7d2fe] disabled:cursor-not-allowed"
+            >
+              {saving ? "저장 중…" : "저장하기"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

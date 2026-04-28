@@ -199,17 +199,24 @@ def _compute_dates(
     busy_by_user: dict[str, list[dict]],
     start_date: date,
     lookahead_days: int = LOOKAHEAD_DAYS,
-    unconnected_names: list[str] | None = None,
+    unconnected_keys: list[str] | None = None,
     blocked_by_date: dict[str, set[str]] | None = None,
 ) -> dict[str, DayInfo]:
     """날짜별 가용 인원(count/total) 및 멤버별 가능/불가능 목록을 계산합니다.
 
-    `blocked_by_date`: ISO 날짜 문자열 → 해당 날 "불가능"으로 표시한 display_name 집합.
+    모든 키는 `_calendar_user_key()` 포맷(`"{id}:{name}"`)이어야 동일 이름 멤버
+    중복 제거 및 차단 충돌을 피할 수 있습니다.
+
+    - `busy_by_user`: 캘린더 동의 멤버 user_key → busy periods
+    - `unconnected_keys`: 캘린더 미연동 멤버(게스트 포함) user_key 리스트 — 기본 "가능"
+    - `blocked_by_date`: ISO 날짜 → 해당 날 "불가능 토글" 한 user_key 집합
+
     명시적 불가능 표시는 캘린더 일정보다 우선시되어, available에서 제거되고
     blocked 카테고리로 분리됨. unconnected 유저도 같은 규칙 적용.
+    응답에는 display name으로 변환되어 노출.
     """
-    total = len(busy_by_user)
-    unconnected = unconnected_names or []
+    unconnected = unconnected_keys or []
+    total = len(busy_by_user) + len(unconnected)
     blocked_map = blocked_by_date or {}
     result: dict[str, DayInfo] = {}
     for offset in range(lookahead_days):
@@ -217,28 +224,26 @@ def _compute_dates(
         iso = kst_date.isoformat()
         blocked_today = blocked_map.get(iso, set())
 
-        available_names = [
-            _calendar_display_name(name)
-            for name, periods in busy_by_user.items()
+        available_keys = [
+            key for key, periods in busy_by_user.items()
             if not _has_event_on_day(periods, kst_date)
-            and _calendar_display_name(name) not in blocked_today
+            and key not in blocked_today
         ]
-        busy_names = [
-            _calendar_display_name(name)
-            for name, periods in busy_by_user.items()
+        busy_keys = [
+            key for key, periods in busy_by_user.items()
             if _has_event_on_day(periods, kst_date)
-            and _calendar_display_name(name) not in blocked_today
+            and key not in blocked_today
         ]
-        unconnected_today = [n for n in unconnected if n not in blocked_today]
-        blocked_names = sorted(blocked_today)
+        unconnected_today_keys = [k for k in unconnected if k not in blocked_today]
+        blocked_today_keys = sorted(blocked_today)
 
         result[iso] = DayInfo(
-            count=len(available_names),
+            count=len(available_keys) + len(unconnected_today_keys),
             total=total,
-            available=available_names,
-            busy=busy_names,
-            unconnected=unconnected_today,
-            blocked=blocked_names,
+            available=[_calendar_display_name(k) for k in available_keys + unconnected_today_keys],
+            busy=[_calendar_display_name(k) for k in busy_keys],
+            unconnected=[_calendar_display_name(k) for k in unconnected_today_keys],
+            blocked=[_calendar_display_name(k) for k in blocked_today_keys],
         )
     return result
 
@@ -247,8 +252,19 @@ def _compute_free_slots(
     busy_by_user: dict[str, list[dict]],
     time_min: datetime,
     time_max: datetime,
+    unconnected_keys: list[str] | None = None,
+    blocked_by_date: dict[str, set[str]] | None = None,
 ) -> list[FreeSlot]:
-    total = len(busy_by_user)
+    """시간 슬롯별 가용 인원을 계산합니다.
+
+    모든 키는 `_calendar_user_key()` 포맷(`"{id}:{name}"`)이어야 합니다.
+    캘린더 미연동 멤버(게스트 포함)는 기본 "가능"으로 간주하며,
+    명시적 "불가능 날짜"를 토글한 경우 해당 날의 모든 슬롯에서 제외됩니다.
+    동의자도 본인이 표시한 불가능 날짜에서는 제외됩니다.
+    """
+    unconnected = unconnected_keys or []
+    blocked_map = blocked_by_date or {}
+    total = len(busy_by_user) + len(unconnected)
     slots: list[dict] = []
     current = time_min
 
@@ -259,10 +275,17 @@ def _compute_free_slots(
             current = slot_end
             continue
 
-        available_count = sum(
-            1 for periods in busy_by_user.values()
-            if not any(bp["start"] < slot_end and bp["end"] > current for bp in periods)
+        slot_iso_date = current_kst.date().isoformat()
+        blocked_today = blocked_map.get(slot_iso_date, set())
+
+        connected_available = sum(
+            1
+            for user_key, periods in busy_by_user.items()
+            if user_key not in blocked_today
+            and not any(bp["start"] < slot_end and bp["end"] > current for bp in periods)
         )
+        unconnected_available = sum(1 for key in unconnected if key not in blocked_today)
+        available_count = connected_available + unconnected_available
 
         if available_count > 0:
             slots.append({"start": current, "end": slot_end, "available_count": available_count})
@@ -348,6 +371,7 @@ async def get_free_slots(
         select(User)
         .join(RoomMember, RoomMember.user_id == User.id)
         .where(RoomMember.room_id == room_pk)
+        .order_by(User.id)
     )
     all_users: list[User] = list(member_result.scalars().all())
 
@@ -356,19 +380,20 @@ async def get_free_slots(
         if user.calendar_consent and (user.google_access_token or user.google_refresh_token)
     ]
     consenting_ids = {user.id for user in consenting}
-    unconnected_names = list({
-        user.name
+    # 동일 이름 게스트가 여러 명일 수 있으므로 user_key(`id:name`) 기반으로 카운트
+    unconnected_keys = [
+        _calendar_user_key(user)
         for user in all_users
         if user.id not in consenting_ids
-    })
+    ]
 
     # 동의 유저별 바쁜 시간대 수집 (제목/내용 없이 시간만)
     busy_by_user: dict[str, list[dict]] = {}
     for user in consenting:
         busy_by_user[_calendar_user_key(user)] = await _get_busy_periods(user, time_min, time_max, session)
 
-    # Redis에 저장된 방별 "불가능 날짜" 집계 (user_id → [dates]) → display_name 기준으로 매핑.
-    user_name_by_id = {user.id: user.name for user in all_users}
+    # Redis에 저장된 방별 "불가능 날짜" 집계 (user_id → [dates]) → user_key 기준으로 매핑.
+    user_by_id = {user.id: user for user in all_users}
     blocked_by_date: dict[str, set[str]] = {}
     try:
         redis_client = aioredis.from_url(
@@ -380,21 +405,27 @@ async def get_free_slots(
         try:
             blocks = await sr.load_room_unavailability(redis_client, room_id=room_pk)
             for uid, dates_list in blocks.items():
-                name = user_name_by_id.get(uid)
-                if not name:
+                user = user_by_id.get(uid)
+                if user is None:
                     continue
+                user_key = _calendar_user_key(user)
                 for d in dates_list:
-                    blocked_by_date.setdefault(d, set()).add(name)
+                    blocked_by_date.setdefault(d, set()).add(user_key)
         finally:
             await redis_client.aclose()
     except Exception:
         logger.debug("Unavailability load skipped for room %s", room_pk, exc_info=True)
 
     dates = _compute_dates(
-        busy_by_user, start_date, lookahead, unconnected_names,
+        busy_by_user, start_date, lookahead,
+        unconnected_keys=unconnected_keys,
         blocked_by_date=blocked_by_date,
     )
-    free_slots = _compute_free_slots(busy_by_user, time_min, time_max)
+    free_slots = _compute_free_slots(
+        busy_by_user, time_min, time_max,
+        unconnected_keys=unconnected_keys,
+        blocked_by_date=blocked_by_date,
+    )
 
     # detail_date: 특정 날짜의 멤버별 바쁜 시간대 조회
     member_busy_periods: dict[str, list[MemberBusyPeriod]] | None = None
@@ -420,9 +451,10 @@ async def get_free_slots(
                     ))
             member_busy_periods[display_name] = busy_list
 
-        # 캘린더 미연동 멤버는 빈 리스트로 포함
-        for name in unconnected_names:
-            if name not in member_busy_periods:
-                member_busy_periods[name] = []
+        # 캘린더 미연동 멤버는 빈 리스트로 포함 (동일 display name 충돌 시 한쪽만 노출 — 응답 키가 name 기반)
+        for key in unconnected_keys:
+            display_name = _calendar_display_name(key)
+            if display_name not in member_busy_periods:
+                member_busy_periods[display_name] = []
 
     return FreeSlotsResponse(free_slots=free_slots, dates=dates, member_busy_periods=member_busy_periods)

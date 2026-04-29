@@ -83,8 +83,37 @@ export default function ChatPane() {
   }, [meetingContext?.roomId]);
   const setAiTriggerIntent = meetingContext?.setAiTriggerIntent;
 
-  const { messages, sendMessage, status, detectedIntent, dismissIntent } =
-    useSocialWebSocket(roomId, currentUserName);
+  const {
+    messages,
+    sendMessage,
+    sendDateSelection,
+    sendTimeSelection,
+    status,
+    detectedIntent,
+    dismissIntent,
+    peerSelections,
+    peerTimeSelections,
+  } = useSocialWebSocket(roomId, currentUserName);
+
+  // Bridge: socket의 peerSelections/sendDateSelection을 MeetingContext로 노출
+  const setPeerDateSelections = meetingContext?.setPeerDateSelections;
+  const setSendDateSelection = meetingContext?.setSendDateSelection;
+  const setPeerTimeSelections = meetingContext?.setPeerTimeSelections;
+  const setSendTimeSelection = meetingContext?.setSendTimeSelection;
+  useEffect(() => {
+    setPeerDateSelections?.(peerSelections);
+  }, [peerSelections, setPeerDateSelections]);
+  useEffect(() => {
+    setSendDateSelection?.(sendDateSelection);
+    return () => setSendDateSelection?.(null);
+  }, [sendDateSelection, setSendDateSelection]);
+  useEffect(() => {
+    setPeerTimeSelections?.(peerTimeSelections);
+  }, [peerTimeSelections, setPeerTimeSelections]);
+  useEffect(() => {
+    setSendTimeSelection?.(sendTimeSelection);
+    return () => setSendTimeSelection?.(null);
+  }, [sendTimeSelection, setSendTimeSelection]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });

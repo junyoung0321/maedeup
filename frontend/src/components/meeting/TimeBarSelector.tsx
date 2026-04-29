@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronLeft, Clock } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
+import { useMeetingOptional } from "@/contexts/MeetingContext";
 
 const HOUR_START = 9;
 const HOUR_END = 22;
@@ -11,8 +13,22 @@ const TOTAL_SLOTS = ((HOUR_END - HOUR_START) * 60) / SLOT_MINUTES; // 26 slots
 
 const CELL_WIDTH = 12;
 const CELL_HEIGHT = 28;
-const NAME_WIDTH = 56;
-const HEADER_HEIGHT = 20;
+const NAME_WIDTH = 64;
+
+// TODO(tech-debt): hex 색상 → 디자인 토큰(Tailwind theme) 이관 예정
+const COLOR_BUSY = "#e2e8f0";
+const COLOR_AVAILABLE_IDLE = "#dcfce7";     // 미선택 가능 (연한 초록)
+const COLOR_MY_PICK = "#6366f1";            // 내가 고른 시간 (인디고)
+const COLOR_PEERS_BASE = "#fb923c";         // 다른 분들 집계 기본 (주황). alpha로 빈도 표현
+const COLOR_EVERYONE_AGREE = "#22c55e";     // 전원 row: 나 + 남 모두 고른 시간 (초록)
+const COLOR_RECOMMEND_OUTLINE = "#3B82F6";
+const COLOR_SELECTION_BORDER = "#4f46e5";
+
+function isSlotInRange(slotIdx: number, start: number | null, end: number | null): boolean {
+  if (start === null) return false;
+  const hi = end ?? start;
+  return slotIdx >= Math.min(start, hi) && slotIdx <= Math.max(start, hi);
+}
 
 interface MemberBusyPeriod {
   start: string;
@@ -78,6 +94,12 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
   const [selectionEnd, setSelectionEnd] = useState<number | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
 
+  const { user } = useAuth();
+  const myName = user?.name ?? "나";
+  const meeting = useMeetingOptional();
+  const peerTimeSelections = meeting?.peerTimeSelections ?? {};
+  const sendTimeSelection = meeting?.sendTimeSelection ?? null;
+
   // Fetch member busy periods for the specific date
   useEffect(() => {
     let cancelled = false;
@@ -115,13 +137,51 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
     return Object.entries(memberData).map(([name, periods]) => ({ name, periods }));
   }, [memberData]);
 
-  // Compute "전원" aggregate row
+  // 내 busy 시간 (외부 캘린더 기반). 이름 match 안 되면 빈 배열
+  const myBusyPeriods = useMemo(
+    () => memberData?.[myName] ?? [],
+    [memberData, myName],
+  );
+
+  // 전원 기준 가용성 (모두의 외부 캘린더가 비어있는 slot)
   const aggregateAvailability = useMemo(() => {
     if (members.length === 0) return Array(TOTAL_SLOTS).fill(true);
     return Array.from({ length: TOTAL_SLOTS }, (_, slotIdx) =>
       members.every((m) => !isBusyAtSlot(m.periods, date, slotIdx))
     );
   }, [members, date]);
+
+  // 해당 날짜에 다른 참여자들이 선택한 범위들. peer별 slot 포함 여부 집계
+  const peerSelectionStats = useMemo(() => {
+    const relevant = Object.values(peerTimeSelections).filter((p) => p.date === date);
+    const counts = new Array(TOTAL_SLOTS).fill(0);
+    relevant.forEach((p) => {
+      const lo = Math.min(p.start, p.end);
+      const hi = Math.max(p.start, p.end);
+      for (let i = lo; i <= hi; i++) {
+        if (i >= 0 && i < TOTAL_SLOTS) counts[i] += 1;
+      }
+    });
+    return { counts, totalPeers: relevant.length };
+  }, [peerTimeSelections, date]);
+
+  // 내 선택 변경 시 브로드캐스트
+  useEffect(() => {
+    if (!sendTimeSelection) return;
+    if (selectionStart === null) {
+      sendTimeSelection(date, null, null);
+      return;
+    }
+    // 끝 선택 전 (단일 slot)도 실시간으로 보여줌
+    const endVal = selectionEnd ?? selectionStart;
+    sendTimeSelection(date, selectionStart, endVal);
+  }, [selectionStart, selectionEnd, date, sendTimeSelection]);
+
+  // 날짜 바뀌면 현재 선택 리셋 (이전 날짜의 선택이 새 날짜에 이어지지 않게)
+  useEffect(() => {
+    setSelectionStart(null);
+    setSelectionEnd(null);
+  }, [date]);
 
   // AI recommended range: longest streak where all members are available
   // Only show if there are actual members with calendar data, and cap at 4 hours (8 slots)
@@ -203,6 +263,15 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
   const dayOfWeek = ["일", "월", "화", "수", "목", "금", "토"][new Date(date).getDay()];
   const dateLabel = `${Number(monthStr)}월 ${Number(dayStr)}일 (${dayOfWeek})`;
 
+  // aria-activedescendant: 스크린리더가 현재 활성 슬롯을 알 수 있도록 aggregate row cell에 id 부여.
+  // aggregate row는 members.length > 0 일 때만 렌더되므로, 없을 때 id 참조가 DOM에 존재하지 않게 가드.
+  const gridId = `timebar-${date.replace(/-/g, "")}`;
+  const activeSlotIdx = selectionEnd ?? selectionStart;
+  const activeDescendantId =
+    activeSlotIdx !== null && members.length > 0
+      ? `${gridId}-agg-${activeSlotIdx}`
+      : undefined;
+
   if (loading) {
     return (
       <div style={{
@@ -252,8 +321,6 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
         border: "1px solid #cbd5e1",
         fontFamily: "Pretendard Variable, Pretendard, sans-serif",
       }}
-      onKeyDown={handleKeyDown}
-      tabIndex={0}
     >
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -276,9 +343,16 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
 
       {/* Time grid */}
       <div style={{ overflowX: "auto", paddingBottom: 4 }}>
-        <div style={{ display: "inline-block", minWidth: "100%" }}>
-          {/* Hour labels */}
-          <div style={{ display: "flex", marginLeft: NAME_WIDTH, marginBottom: 2 }}>
+        <div
+          style={{ display: "inline-block", minWidth: "100%" }}
+          role="grid"
+          aria-label={`${dateLabel} 시간 선택`}
+          aria-activedescendant={activeDescendantId}
+          tabIndex={0}
+          onKeyDown={handleKeyDown}
+        >
+          {/* Hour labels — 시각적 눈금. 스크린리더는 cell aria-label이 시간을 이미 포함하므로 숨김 */}
+          <div aria-hidden="true" style={{ display: "flex", marginLeft: NAME_WIDTH, marginBottom: 2 }}>
             {Array.from({ length: HOUR_END - HOUR_START }, (_, i) => (
               <div
                 key={i}
@@ -296,107 +370,185 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
             ))}
           </div>
 
-          {/* Member rows */}
-          {members.map((member) => (
-            <div key={member.name} style={{ display: "flex", alignItems: "center", marginBottom: 2 }}>
-              <div style={{
+          {/* Row 1: 내 시간 — 내 외부 캘린더 busy 회색 + 내가 고른 시간 인디고. 클릭 토글 */}
+          <div role="row" style={{ display: "flex", alignItems: "center", marginBottom: 2 }}>
+            <div
+              role="rowheader"
+              style={{
                 width: NAME_WIDTH,
                 fontSize: 11,
-                fontWeight: 500,
-                color: "#475569",
+                fontWeight: 600,
+                color: "#4f46e5",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
                 flexShrink: 0,
                 paddingRight: 4,
-              }}>
-                {member.name}
-              </div>
-              <div style={{ display: "flex" }}>
-                {Array.from({ length: TOTAL_SLOTS }, (_, slotIdx) => {
-                  const isBusy = isBusyAtSlot(member.periods, date, slotIdx);
-                  const isInSelection = selectionStart !== null &&
-                    ((selectionEnd !== null && slotIdx >= selectionStart && slotIdx <= selectionEnd) ||
-                     (selectionEnd === null && slotIdx === selectionStart));
-                  const isRecommended = recommendedRange &&
-                    slotIdx >= recommendedRange.start && slotIdx <= recommendedRange.end;
-
-                  return (
-                    <div
-                      key={slotIdx}
-                      onClick={() => handleSlotClick(slotIdx)}
-                      style={{
-                        width: CELL_WIDTH,
-                        height: CELL_HEIGHT,
-                        background: isBusy ? "#e2e8f0" : isInSelection ? "#818cf8" : "#bbf7d0",
-                        borderLeft: slotIdx % 2 === 0 ? "1px solid rgba(0,0,0,0.06)" : "none",
-                        borderBottom: "1px solid rgba(0,0,0,0.04)",
-                        cursor: "pointer",
-                        flexShrink: 0,
-                        outline: isRecommended && !isBusy && !isInSelection ? "1px solid #3B82F6" : "none",
-                        outlineOffset: -1,
-                      }}
-                      title={`${member.name} ${slotToTime(slotIdx)} ${isBusy ? "불가" : "가능"}`}
-                    />
-                  );
-                })}
-              </div>
+              }}
+            >
+              {myName}
             </div>
-          ))}
+            {Array.from({ length: TOTAL_SLOTS }, (_, slotIdx) => {
+              const isBusy = isBusyAtSlot(myBusyPeriods, date, slotIdx);
+              const isMine = isSlotInRange(slotIdx, selectionStart, selectionEnd);
+              const isRecommended = !!recommendedRange &&
+                slotIdx >= recommendedRange.start && slotIdx <= recommendedRange.end;
 
-          {/* Aggregate "전원" row */}
-          {members.length > 0 && (
-            <>
-              <div style={{ borderTop: "1.5px solid #94a3b8", marginTop: 2, paddingTop: 2, display: "flex", alignItems: "center" }}>
-                <div style={{
-                  width: NAME_WIDTH,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  color: "#1e293b",
-                  flexShrink: 0,
-                  paddingRight: 4,
-                }}>
-                  전원
-                </div>
-                <div style={{ display: "flex" }}>
-                  {aggregateAvailability.map((available, slotIdx) => {
-                    const isInSelection = selectionStart !== null &&
-                      ((selectionEnd !== null && slotIdx >= selectionStart && slotIdx <= selectionEnd) ||
-                       (selectionEnd === null && slotIdx === selectionStart));
+              let bg: string;
+              if (isBusy) bg = COLOR_BUSY;
+              else if (isMine) bg = COLOR_MY_PICK;
+              else bg = COLOR_AVAILABLE_IDLE;
 
-                    return (
-                      <div
-                        key={slotIdx}
-                        onClick={() => handleSlotClick(slotIdx)}
-                        style={{
-                          width: CELL_WIDTH,
-                          height: CELL_HEIGHT,
-                          background: !available ? "#e2e8f0" : isInSelection ? "#818cf8" : "#22c55e",
-                          borderLeft: slotIdx % 2 === 0 ? "1px solid rgba(0,0,0,0.06)" : "none",
-                          cursor: "pointer",
-                          flexShrink: 0,
-                        }}
-                        title={`전원 ${slotToTime(slotIdx)} ${available ? "가능" : "불가"}`}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-            </>
-          )}
+              const cellLabel = `내 시간 ${slotToTime(slotIdx)} ${isBusy ? "불가" : isMine ? "내가 선택함" : "가능"}`;
+              return (
+                <div
+                  key={slotIdx}
+                  id={`${gridId}-mine-${slotIdx}`}
+                  role="gridcell"
+                  tabIndex={-1}
+                  aria-selected={isMine}
+                  aria-label={cellLabel}
+                  onClick={() => !isBusy && handleSlotClick(slotIdx)}
+                  style={{
+                    width: CELL_WIDTH,
+                    height: CELL_HEIGHT,
+                    background: bg,
+                    borderLeft: slotIdx % 2 === 0 ? "1px solid rgba(0,0,0,0.06)" : "none",
+                    borderBottom: "1px solid rgba(0,0,0,0.04)",
+                    cursor: isBusy ? "not-allowed" : "pointer",
+                    flexShrink: 0,
+                    outline: isRecommended && !isBusy ? `1px solid ${COLOR_RECOMMEND_OUTLINE}` : "none",
+                    outlineOffset: -1,
+                    boxShadow: isMine ? `inset 0 0 0 1px ${COLOR_SELECTION_BORDER}` : undefined,
+                  }}
+                  title={cellLabel}
+                />
+              );
+            })}
+          </div>
+
+          {/* Row 2: 다른 분들 — 나 제외 참여자들의 선택 집계, 선택자 수에 비례한 alpha 그라데이션 */}
+          <div role="row" aria-label="다른 분들 합산" style={{ display: "flex", alignItems: "center", marginBottom: 2 }}>
+            <div
+              role="rowheader"
+              style={{
+                width: NAME_WIDTH,
+                fontSize: 11,
+                fontWeight: 500,
+                color: "#92400e",
+                flexShrink: 0,
+                paddingRight: 4,
+              }}
+            >
+              다른 분들
+            </div>
+            {Array.from({ length: TOTAL_SLOTS }, (_, slotIdx) => {
+              const count = peerSelectionStats.counts[slotIdx];
+              const total = peerSelectionStats.totalPeers;
+              // alpha = 0.15 + (응답률 count/total) * 0.7
+              //   total=3, 1/3 선택 → 0.38  (연한 주황)
+              //   total=3, 2/3 선택 → 0.62  (중간)
+              //   total=3, 3/3 선택 → 0.85  (진한 주황)
+              //   total=1, 1/1 선택 → 0.85  (유일 참여자 전부 동의 → 진하게, 의도대로)
+              const alpha = total > 0 ? 0.15 + (count / total) * 0.7 : 0;
+              const hasPeer = count > 0;
+              const bg = hasPeer
+                ? `rgba(251, 146, 60, ${alpha.toFixed(2)})`
+                : "#f1f5f9";
+              const label = `다른 분들 ${slotToTime(slotIdx)} ${count}/${total}명 선택`;
+              return (
+                <div
+                  key={slotIdx}
+                  role="gridcell"
+                  tabIndex={-1}
+                  aria-label={label}
+                  style={{
+                    width: CELL_WIDTH,
+                    height: CELL_HEIGHT,
+                    background: bg,
+                    borderLeft: slotIdx % 2 === 0 ? "1px solid rgba(0,0,0,0.06)" : "none",
+                    borderBottom: "1px solid rgba(0,0,0,0.04)",
+                    flexShrink: 0,
+                  }}
+                  title={label}
+                />
+              );
+            })}
+          </div>
+
+          {/* Row 3: 전원 — 내 선택/남 선택/교집합을 다른 색으로 */}
+          <div role="row" aria-label="전원" style={{ borderTop: "1.5px solid #94a3b8", marginTop: 2, paddingTop: 2, display: "flex", alignItems: "center" }}>
+            <div
+              role="rowheader"
+              style={{
+                width: NAME_WIDTH,
+                fontSize: 11,
+                fontWeight: 700,
+                color: "#1e293b",
+                flexShrink: 0,
+                paddingRight: 4,
+              }}
+            >
+              전원
+            </div>
+            {Array.from({ length: TOTAL_SLOTS }, (_, slotIdx) => {
+              const isMine = isSlotInRange(slotIdx, selectionStart, selectionEnd);
+              const peerCount = peerSelectionStats.counts[slotIdx];
+              const hasPeer = peerCount > 0;
+
+              let bg: string;
+              if (isMine && hasPeer) bg = COLOR_EVERYONE_AGREE;
+              else if (isMine) bg = COLOR_MY_PICK;
+              else if (hasPeer) bg = COLOR_PEERS_BASE;
+              else bg = aggregateAvailability[slotIdx] ? "#dcfce7" : COLOR_BUSY;
+
+              const stateLabel = isMine && hasPeer
+                ? `나 + 다른 ${peerCount}명 겹침`
+                : isMine
+                  ? "나만 선택"
+                  : hasPeer
+                    ? `다른 ${peerCount}명 선택`
+                    : aggregateAvailability[slotIdx] ? "가능" : "전원 불가";
+              const aggLabel = `전원 ${slotToTime(slotIdx)} ${stateLabel}`;
+
+              return (
+                <div
+                  key={slotIdx}
+                  id={`${gridId}-agg-${slotIdx}`}
+                  role="gridcell"
+                  tabIndex={-1}
+                  aria-selected={isMine}
+                  aria-label={aggLabel}
+                  style={{
+                    width: CELL_WIDTH,
+                    height: CELL_HEIGHT,
+                    background: bg,
+                    borderLeft: slotIdx % 2 === 0 ? "1px solid rgba(0,0,0,0.06)" : "none",
+                    cursor: "default",
+                    flexShrink: 0,
+                  }}
+                  title={aggLabel}
+                />
+              );
+            })}
+          </div>
+
         </div>
       </div>
 
       {/* Legend */}
-      <div style={{ display: "flex", gap: 12, fontSize: 11, color: "#64748b" }}>
+      <div style={{ display: "flex", gap: 10, fontSize: 11, color: "#64748b", flexWrap: "wrap" }}>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ width: 12, height: 12, borderRadius: 3, background: "#bbf7d0", display: "inline-block" }} /> 가능
+          <span style={{ width: 12, height: 12, borderRadius: 3, background: COLOR_MY_PICK, display: "inline-block" }} /> 내 선택
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ width: 12, height: 12, borderRadius: 3, background: "#e2e8f0", display: "inline-block" }} /> 불가
+          <span style={{ width: 12, height: 12, borderRadius: 3, background: COLOR_PEERS_BASE, display: "inline-block" }} /> 다른 분들
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ width: 12, height: 12, borderRadius: 3, background: "#818cf8", display: "inline-block" }} /> 선택
+          <span style={{ width: 12, height: 12, borderRadius: 3, background: COLOR_EVERYONE_AGREE, display: "inline-block" }} /> 나+다른 분 겹침
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ width: 12, height: 12, borderRadius: 3, background: COLOR_BUSY, display: "inline-block" }} /> 불가
         </span>
         {recommendedRange && (
           <span style={{ display: "flex", alignItems: "center", gap: 4 }}>

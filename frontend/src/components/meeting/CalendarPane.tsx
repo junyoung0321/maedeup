@@ -38,6 +38,8 @@ export default function CalendarPane() {
   const confirmDate = meeting?.confirmDate;
   const infoPanePhase = meeting?.infoPanePhase;
   const candidateSlots = meeting?.candidateSlots ?? [];
+  const peerDateSelections = meeting?.peerDateSelections ?? {};
+  const sendDateSelection = meeting?.sendDateSelection ?? null;
   const [availabilityData, setAvailabilityData] = useState<Record<number, DayAvail>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -65,6 +67,18 @@ export default function CalendarPane() {
       })
       .map((d) => Number(d.split("-")[2])),
   );
+
+  // 각 일(day)별 피어 선택 목록. 해당 월에 속한 것만.
+  const peerSelectionsByDay: Record<number, Array<{ key: string; name: string; color: string }>> = {};
+  const PEER_COLORS = ["#f59e0b", "#10b981", "#ec4899", "#8b5cf6", "#14b8a6", "#ef4444"];
+  Object.entries(peerDateSelections).forEach(([key, sel], idx) => {
+    if (!sel.date) return;
+    const [py, pm, pd] = sel.date.split("-").map(Number);
+    if (py !== year || pm !== month) return;
+    const color = PEER_COLORS[(sel.userId ?? idx) % PEER_COLORS.length];
+    if (!peerSelectionsByDay[pd]) peerSelectionsByDay[pd] = [];
+    peerSelectionsByDay[pd].push({ key, name: sel.name, color });
+  });
 
   const goPrev = () => {
     setClickedDay(null);
@@ -254,10 +268,16 @@ export default function CalendarPane() {
               const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
               if (isClicked) {
                 setClickedDay(null);
-                if (setInfoPanePhase) setInfoPanePhase("idle");
+                if (setInfoPanePhase && infoPanePhase === "dateSelected") {
+                  setInfoPanePhase("idle");
+                }
+                sendDateSelection?.(null);
               } else {
                 setClickedDay(day);
-                if (setInfoPanePhase) setInfoPanePhase("dateSelected");
+                if (setInfoPanePhase && infoPanePhase === "idle") {
+                  setInfoPanePhase("dateSelected");
+                }
+                sendDateSelection?.(dateStr);
               }
             };
 
@@ -274,6 +294,8 @@ export default function CalendarPane() {
             } else if (isToday || isClicked) {
               borderStyle = "2px solid #4f46e5";
             }
+
+            const peersForDay = peerSelectionsByDay[day] ?? [];
 
             return (
               <div
@@ -292,6 +314,7 @@ export default function CalendarPane() {
                   background: isPast ? "transparent" : isHighlighted ? "#e0e7ff" : "transparent",
                   border: isPast ? undefined : borderStyle,
                   opacity: isPast ? 0.4 : 1,
+                  position: "relative",
                 }}
               >
                 <span
@@ -316,6 +339,46 @@ export default function CalendarPane() {
                   >
                     {avail.count}/{avail.total}
                   </span>
+                )}
+                {peersForDay.length > 0 && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      bottom: 2,
+                      left: 0,
+                      right: 0,
+                      display: "flex",
+                      gap: 2,
+                      justifyContent: "center",
+                    }}
+                    title={`${peersForDay.map((p) => p.name).join(", ")} 선택 중`}
+                  >
+                    {peersForDay.slice(0, 3).map((p) => (
+                      <span
+                        key={p.key}
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: "50%",
+                          background: p.color,
+                          display: "inline-block",
+                          border: "1px solid #fff",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                    ))}
+                    {peersForDay.length > 3 && (
+                      <span
+                        style={{
+                          fontSize: 8,
+                          color: "#64748b",
+                          lineHeight: 1,
+                        }}
+                      >
+                        +{peersForDay.length - 3}
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             );
@@ -342,6 +405,49 @@ export default function CalendarPane() {
           overflow: "hidden",
         }}
       >
+        {/* 다른 참여자들의 실시간 날짜 선택 요약 */}
+        {Object.values(peerDateSelections).some((s) => s.date) && (
+          <div
+            style={{
+              marginBottom: 10,
+              padding: "8px 12px",
+              borderRadius: 10,
+              background: "#fefce8",
+              border: "1px solid #fde68a",
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+            }}
+          >
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#854d0e" }}>
+              다른 참여자 선택
+            </span>
+            {Object.entries(peerDateSelections)
+              .filter(([, s]) => s.date)
+              .map(([key, s], idx) => {
+                const color = PEER_COLORS[(s.userId ?? idx) % PEER_COLORS.length];
+                const [, pm, pd] = (s.date ?? "--").split("-");
+                return (
+                  <div key={key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        background: color,
+                        display: "inline-block",
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span style={{ fontSize: 12, color: "#475569" }}>
+                      {s.name}님이 {Number(pm)}월 {Number(pd)}일 선택 중
+                    </span>
+                  </div>
+                );
+              })}
+          </div>
+        )}
+
         {/* 날짜 클릭 시 멤버 현황 */}
         {clickedDay !== null && (
           <div
@@ -432,29 +538,46 @@ export default function CalendarPane() {
               );
             })()}
             {/* 날짜 확정 버튼 */}
-            {infoPanePhase === "dateSelected" && confirmDate && (
-              <button
-                onClick={() => {
-                  const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(clickedDay).padStart(2, "0")}`;
-                  confirmDate(dateStr);
-                }}
-                style={{
-                  marginTop: 8,
-                  width: "100%",
-                  padding: "10px 14px",
-                  borderRadius: 10,
-                  border: "none",
-                  background: "#4f46e5",
-                  color: "#ffffff",
-                  cursor: "pointer",
-                  fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                  fontSize: 13,
-                  fontWeight: 700,
-                }}
-              >
-                이 날짜로 확정
-              </button>
-            )}
+            {(() => {
+              if (!confirmDate || clickedDay === null) return null;
+              const clickedDateStr = `${year}-${String(month).padStart(2, "0")}-${String(clickedDay).padStart(2, "0")}`;
+              const confirmedDateStr = meeting?.confirmedDate ?? null;
+              const alreadyConfirmedSame = confirmedDateStr === clickedDateStr;
+              const isReplacing = confirmedDateStr !== null && !alreadyConfirmedSame;
+              const showButton =
+                infoPanePhase === "dateSelected" ||
+                (isReplacing &&
+                  (infoPanePhase === "dateConfirmed" ||
+                    infoPanePhase === "timeConfirmed"));
+              if (!showButton || alreadyConfirmedSame) return null;
+
+              let label = "이 날짜로 확정";
+              if (isReplacing && confirmedDateStr) {
+                const [, cm, cd] = confirmedDateStr.split("-");
+                label = `${Number(cm)}월 ${Number(cd)}일 취소하고 이 날짜로 확정`;
+              }
+
+              return (
+                <button
+                  onClick={() => confirmDate(clickedDateStr)}
+                  style={{
+                    marginTop: 8,
+                    width: "100%",
+                    padding: "10px 14px",
+                    borderRadius: 10,
+                    border: "none",
+                    background: isReplacing ? "#dc2626" : "#4f46e5",
+                    color: "#ffffff",
+                    cursor: "pointer",
+                    fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                    fontSize: 13,
+                    fontWeight: 700,
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })()}
           </div>
         )}
 

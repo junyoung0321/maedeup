@@ -25,6 +25,36 @@ export interface VoteReminderPayload {
   meeting_id: number;
 }
 
+export interface PeerDateSelectionPayload {
+  type: "peer_date_selection";
+  user_id: number | null;
+  sender: string | null;
+  date: string | null; // "YYYY-MM-DD" or null (해제)
+}
+
+export interface PeerSelection {
+  userId: number | null;
+  name: string;
+  date: string | null;
+}
+
+export interface PeerTimeSelectionPayload {
+  type: "peer_time_selection";
+  user_id: number | null;
+  sender: string | null;
+  date: string | null;
+  start: number | null;
+  end: number | null;
+}
+
+export interface PeerTimeSelection {
+  userId: number | null;
+  name: string;
+  date: string;
+  start: number;
+  end: number;
+}
+
 type WsStatus = "connecting" | "open" | "closed" | "error";
 
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -73,6 +103,29 @@ function isReminderPayload(data: unknown): data is ReminderPayload {
   );
 }
 
+function isPeerDateSelectionPayload(data: unknown): data is PeerDateSelectionPayload {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+
+  const candidate = data as Partial<PeerDateSelectionPayload>;
+  return (
+    candidate.type === "peer_date_selection" &&
+    (candidate.date === null || typeof candidate.date === "string")
+  );
+}
+
+function isPeerTimeSelectionPayload(data: unknown): data is PeerTimeSelectionPayload {
+  if (!data || typeof data !== "object") return false;
+  const c = data as Partial<PeerTimeSelectionPayload>;
+  return (
+    c.type === "peer_time_selection" &&
+    (c.date === null || typeof c.date === "string") &&
+    (c.start === null || typeof c.start === "number") &&
+    (c.end === null || typeof c.end === "number")
+  );
+}
+
 function isVoteReminderPayload(data: unknown): data is VoteReminderPayload {
   if (!data || typeof data !== "object") {
     return false;
@@ -93,6 +146,8 @@ function getReconnectDelay(attempt: number): number {
 export function useSocialWebSocket(roomId: string, sender: string) {
   const [messages, setMessages] = useState<ChatMessagePayload[]>([]);
   const [detectedIntent, setDetectedIntent] = useState<IntentDetectedPayload | null>(null);
+  const [peerSelections, setPeerSelections] = useState<Record<string, PeerSelection>>({});
+  const [peerTimeSelections, setPeerTimeSelections] = useState<Record<string, PeerTimeSelection>>({});
   const [status, setStatus] = useState<WsStatus>("connecting");
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -104,6 +159,23 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     if (!token) {
       window.location.href = "/";
       return;
+    }
+
+    // JWT sub에서 내 user_id 추출 (echo 필터용)
+    let myUserId: number | null = null;
+    try {
+      const payloadPart = token.split(".")[1];
+      if (payloadPart) {
+        const normalized = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
+        const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+        const decoded = JSON.parse(atob(padded));
+        if (decoded?.sub) {
+          const asNum = Number(decoded.sub);
+          if (Number.isFinite(asNum)) myUserId = asNum;
+        }
+      }
+    } catch {
+      /* token 파싱 실패는 무시 — echo 필터만 못함 */
     }
 
     let isActive = true;
@@ -215,6 +287,52 @@ export function useSocialWebSocket(roomId: string, sender: string) {
           return;
         }
 
+        if (isPeerTimeSelectionPayload(data)) {
+          // self-echo 무시
+          if (myUserId !== null && data.user_id === myUserId) return;
+          if (data.user_id == null && data.sender && data.sender === sender) return;
+          const peerKey = data.user_id != null ? `u${data.user_id}` : `n:${data.sender ?? ""}`;
+          setPeerTimeSelections((prev) => {
+            const next = { ...prev };
+            // 범위가 null이거나 date null이면 해제
+            if (data.date === null || data.start === null || data.end === null) {
+              delete next[peerKey];
+            } else {
+              next[peerKey] = {
+                userId: data.user_id,
+                name: data.sender ?? "익명",
+                date: data.date,
+                start: data.start,
+                end: data.end,
+              };
+            }
+            return next;
+          });
+          return;
+        }
+
+        if (isPeerDateSelectionPayload(data)) {
+          // 자기 자신 이벤트는 무시 (user_id 기준 — 동명이인에 안전).
+          // user_id가 누락된 이벤트(예: 구버전 서버)는 sender 이름으로 fallback.
+          if (myUserId !== null && data.user_id === myUserId) return;
+          if (data.user_id == null && data.sender && data.sender === sender) return;
+          const peerKey = data.user_id != null ? `u${data.user_id}` : `n:${data.sender ?? ""}`;
+          setPeerSelections((prev) => {
+            const next = { ...prev };
+            if (data.date === null) {
+              delete next[peerKey];
+            } else {
+              next[peerKey] = {
+                userId: data.user_id,
+                name: data.sender ?? "익명",
+                date: data.date,
+              };
+            }
+            return next;
+          });
+          return;
+        }
+
         if (isReminderPayload(data) || isVoteReminderPayload(data)) {
           setMessages((prev) => [
             ...prev,
@@ -304,9 +422,39 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     [sender],
   );
 
+  const sendDateSelection = useCallback(
+    (date: string | null) => {
+      const ws = wsRef.current;
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "date_selection", date, sender }));
+      }
+    },
+    [sender],
+  );
+
+  const sendTimeSelection = useCallback(
+    (date: string | null, start: number | null, end: number | null) => {
+      const ws = wsRef.current;
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "time_selection", date, start, end, sender }));
+      }
+    },
+    [sender],
+  );
+
   const dismissIntent = useCallback(() => {
     setDetectedIntent(null);
   }, []);
 
-  return { messages, sendMessage, status, detectedIntent, dismissIntent };
+  return {
+    messages,
+    sendMessage,
+    sendDateSelection,
+    sendTimeSelection,
+    status,
+    detectedIntent,
+    dismissIntent,
+    peerSelections,
+    peerTimeSelections,
+  };
 }

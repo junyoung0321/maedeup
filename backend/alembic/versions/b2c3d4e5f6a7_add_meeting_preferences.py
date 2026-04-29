@@ -1,7 +1,7 @@
 """add_meeting_preferences
 
 Revision ID: b2c3d4e5f6a7
-Revises: a2b3c4d5e6f7
+Revises: f6a7b8c9d0e1
 Create Date: 2026-04-15 14:00:00.000000
 
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b2c3d4e5f6a7"
-down_revision: Union[str, None] = "a2b3c4d5e6f7"
+down_revision: Union[str, None] = "f6a7b8c9d0e1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

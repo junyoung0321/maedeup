@@ -8,6 +8,10 @@ import AiAssistantPane from "@/components/meeting/AiAssistantPane";
 import CompletionPage from "@/components/meeting/CompletionPage";
 import InfoPane from "@/components/meeting/InfoPane";
 import { MeetingProvider, useMeeting } from "@/contexts/MeetingContext";
+import MeetingPreferencePopup from "@/components/meeting/MeetingPreferencePopup";
+import { useEffect, useState } from "react";
+import { useAuth } from "@/hooks/useAuth";
+import { apiFetch } from "@/lib/api";
 
 function getSingleParamValue(value: string | string[] | undefined): string | null {
   if (typeof value === "string" && value.trim()) {
@@ -34,7 +38,36 @@ export default function MeetingPage() {
 }
 
 function MeetingPageInner() {
-  const { contextMode, setContextMode } = useMeeting();
+  const { contextMode, setContextMode, roomId } = useMeeting();
+  const { user } = useAuth();
+  const [showPreferencePopup, setShowPreferencePopup] = useState(false);
+  const [preferenceChecked, setPreferenceChecked] = useState(false);
+
+  // 입장 시 선호 정보 입력 여부 확인
+  useEffect(() => {
+    if (!roomId || !user || preferenceChecked) return;
+    apiFetch<{ preferences: Array<{ user_id: number }> }>(
+      `/api/v1/rooms/${roomId}/preferences`,
+    )
+      .then((data) => {
+        const userId = user?.sub ? Number(user.sub) : NaN;
+        const alreadySubmitted =
+          Number.isFinite(userId) &&
+          data.preferences.some((p) => p.user_id === userId);
+        if (!alreadySubmitted) {
+          setShowPreferencePopup(true);
+        }
+        setPreferenceChecked(true);
+      })
+      .catch(() => {
+        setPreferenceChecked(true);
+      });
+  }, [roomId, user, preferenceChecked]);
+
+  // 팝업 제출 후 팝업 닫기 (파이프라인 트리거는 백엔드 POST에서 자동 처리)
+  const handlePreferenceSubmitted = () => {
+    setShowPreferencePopup(false);
+  };
   const currentStep: Step = contextMode === "agent" ? "schedule" : contextMode;
 
   if (contextMode === "done") {
@@ -47,53 +80,56 @@ function MeetingPageInner() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#ffffff", fontFamily: "Pretendard, sans-serif" }}>
-      <Header showSteps currentStep={currentStep} />
-
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "flex-end",
-          padding: "16px 48px 0",
-        }}
-      >
+    <div style={{ height: "100vh", overflow: "hidden", background: "#ffffff", fontFamily: "Pretendard, sans-serif", display: "flex", flexDirection: "column" }}>
+      <Header showSteps currentStep={currentStep}>
         <button
           onClick={() => setContextMode("done")}
           type="button"
           style={{
             display: "flex",
             alignItems: "center",
-            padding: "8px 20px",
-            borderRadius: 24,
-            border: "1px solid #4f46e5",
-            background: "#4f46e5",
+            padding: "6px 18px",
+            borderRadius: 20,
+            border: "1px solid rgba(255,255,255,0.3)",
+            background: "rgba(255,255,255,0.15)",
             color: "#ffffff",
-            fontSize: 14,
+            fontSize: 13,
             fontWeight: 600,
             cursor: "pointer",
             fontFamily: "Pretendard, sans-serif",
             transition: "all 0.2s",
+            backdropFilter: "blur(4px)",
           }}
         >
           생성 완료
         </button>
-      </div>
+      </Header>
 
       <main
         style={{
           display: "flex",
-          justifyContent: "center",
-          alignItems: "flex-start",
-          gap: 53,
-          paddingTop: 24,
-          paddingLeft: 48,
-          paddingRight: 48,
+          alignItems: "stretch",
+          gap: "clamp(6px, 0.8vw, 16px)",
+          padding: "clamp(6px, 0.8vw, 16px)",
+          flex: 1,
+          minHeight: 0,
+          maxWidth: 1800,
+          margin: "0 auto",
+          width: "100%",
         }}
       >
         <ChatPane />
         <AiAssistantPane />
         <InfoPane />
       </main>
+
+      {showPreferencePopup && (
+        <MeetingPreferencePopup
+          roomId={roomId}
+          onClose={() => setShowPreferencePopup(false)}
+          onSubmitted={handlePreferenceSubmitted}
+        />
+      )}
     </div>
   );
 }

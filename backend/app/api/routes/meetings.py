@@ -35,6 +35,7 @@ class ConfirmMeetingRequest(BaseModel):
     end_at: datetime
     location_name: Optional[str] = None
     vote_options: Optional[list[dict[str, str]]] = None
+    meeting_id: int | None = None
 
 
 class ConfirmMeetingResponse(BaseModel):
@@ -171,18 +172,38 @@ async def confirm_meeting(
     scheduled_at = body.scheduled_at.replace(tzinfo=None) if body.scheduled_at.tzinfo else body.scheduled_at
     end_at = body.end_at.replace(tzinfo=None) if body.end_at.tzinfo else body.end_at
 
-    meeting = MeetingSchedule(
-        room_id=body.room_id,
-        title=body.title,
-        scheduled_at=scheduled_at,
-        end_at=end_at,
-        location_name=body.location_name,
-        vote_options=body.vote_options,
-        votes={},
-        status=MeetingStatus.confirmed,
-        created_by=int(current_user.sub),
-    )
-    session.add(meeting)
+    if body.meeting_id is not None:
+        # 기존 pending 미팅을 confirmed로 승격
+        result = await session.execute(
+            select(MeetingSchedule).where(MeetingSchedule.id == body.meeting_id)
+        )
+        meeting = result.scalar_one_or_none()
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        if meeting.room_id != body.room_id:
+            raise HTTPException(status_code=400, detail="Meeting does not belong to this room")
+
+        meeting.status = MeetingStatus.confirmed
+        meeting.scheduled_at = scheduled_at
+        meeting.end_at = end_at
+        meeting.title = body.title
+        meeting.vote_options = body.vote_options
+        meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        session.add(meeting)
+    else:
+        meeting = MeetingSchedule(
+            room_id=body.room_id,
+            title=body.title,
+            scheduled_at=scheduled_at,
+            end_at=end_at,
+            location_name=body.location_name,
+            vote_options=body.vote_options,
+            votes={},
+            status=MeetingStatus.confirmed,
+            created_by=int(current_user.sub),
+        )
+        session.add(meeting)
+
     await session.commit()
     await session.refresh(meeting)
     return ConfirmMeetingResponse(id=meeting.id)

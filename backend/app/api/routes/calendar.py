@@ -54,9 +54,15 @@ class FreeSlot(BaseModel):
     is_recommended: bool  # available_count == total_count
 
 
+class MemberBusyPeriod(BaseModel):
+    start: str  # ISO datetime
+    end: str    # ISO datetime
+
+
 class FreeSlotsResponse(BaseModel):
     free_slots: list[FreeSlot]
     dates: dict[str, DayInfo]
+    member_busy_periods: dict[str, list[MemberBusyPeriod]] | None = None  # member_name → busy periods
 
 
 class MyCalendarEvent(BaseModel):
@@ -166,10 +172,37 @@ def _format_label(start: datetime, end: datetime) -> str:
 
 
 def _has_event_on_day(busy_periods: list[dict], kst_date: date) -> bool:
-    """해당 날짜(KST 00:00~24:00) 안에 일정이 하나라도 있는지 확인합니다."""
-    day_start = datetime(kst_date.year, kst_date.month, kst_date.day, tzinfo=KST)
-    day_end = day_start + timedelta(days=1)
-    return any(bp["start"] < day_end and bp["end"] > day_start for bp in busy_periods)
+    """해당 날짜의 워킹 아워(9~22시)가 전부 일정으로 막혀있는지 확인합니다.
+    빈 시간이 30분 이상 있으면 False(가능)를 반환합니다."""
+    work_start = datetime(kst_date.year, kst_date.month, kst_date.day, WORK_HOUR_START, tzinfo=KST)
+    work_end = datetime(kst_date.year, kst_date.month, kst_date.day, WORK_HOUR_END, tzinfo=KST)
+
+    # 해당 날짜와 겹치는 busy periods만 필터링
+    day_busy = []
+    for bp in busy_periods:
+        if bp["start"] < work_end and bp["end"] > work_start:
+            clip_start = max(bp["start"], work_start)
+            clip_end = min(bp["end"], work_end)
+            day_busy.append({"start": clip_start, "end": clip_end})
+
+    if not day_busy:
+        return False  # 일정 없음 → 가능
+
+    # busy periods를 시작 시간순 정렬 후 빈 시간 계산
+    day_busy.sort(key=lambda x: x["start"])
+    cursor = work_start
+    for bp in day_busy:
+        gap = (bp["start"] - cursor).total_seconds()
+        if gap >= SLOT_MINUTES * 60:  # 30분 이상 빈 시간 있으면 가능
+            return False
+        cursor = max(cursor, bp["end"])
+
+    # 마지막 일정 이후 빈 시간 확인
+    gap = (work_end - cursor).total_seconds()
+    if gap >= SLOT_MINUTES * 60:
+        return False
+
+    return True  # 워킹 아워 전체가 막힘 → 불가
 
 
 def _compute_dates(
@@ -259,6 +292,7 @@ async def get_free_slots(
     room_id: str = Query(..., description="채팅방 ID"),
     year: int = Query(default=None, description="조회 연도 (없으면 오늘 기준)"),
     month: int = Query(default=None, description="조회 월 (없으면 오늘 기준)"),
+    detail_date: str = Query(default=None, description="특정 날짜의 멤버별 바쁜 시간대 조회 (YYYY-MM-DD)"),
     _current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -328,7 +362,36 @@ async def get_free_slots(
     dates = _compute_dates(busy_by_user, start_date, lookahead, unconnected_names)
     free_slots = _compute_free_slots(busy_by_user, time_min, time_max)
 
-    return FreeSlotsResponse(free_slots=free_slots, dates=dates)
+    # detail_date: 특정 날짜의 멤버별 바쁜 시간대 조회
+    member_busy_periods: dict[str, list[MemberBusyPeriod]] | None = None
+    if detail_date:
+        try:
+            target_date = date.fromisoformat(detail_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="detail_date 형식이 올바르지 않습니다. (YYYY-MM-DD)")
+
+        day_start_kst = datetime(target_date.year, target_date.month, target_date.day, tzinfo=KST)
+        day_end_kst = day_start_kst + timedelta(days=1)
+
+        member_busy_periods = {}
+        for user_key, periods in busy_by_user.items():
+            display_name = _calendar_display_name(user_key)
+            busy_list: list[MemberBusyPeriod] = []
+            for bp in periods:
+                # 해당 날짜(KST)와 겹치는 바쁜 시간대만 포함
+                if bp["start"] < day_end_kst and bp["end"] > day_start_kst:
+                    busy_list.append(MemberBusyPeriod(
+                        start=bp["start"].isoformat(),
+                        end=bp["end"].isoformat(),
+                    ))
+            member_busy_periods[display_name] = busy_list
+
+        # 캘린더 미연동 멤버는 빈 리스트로 포함
+        for name in unconnected_names:
+            if name not in member_busy_periods:
+                member_busy_periods[name] = []
+
+    return FreeSlotsResponse(free_slots=free_slots, dates=dates, member_busy_periods=member_busy_periods)
 
 
 @router.get("/my-events", response_model=MyCalendarResponse)

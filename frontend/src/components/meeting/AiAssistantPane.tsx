@@ -5,7 +5,7 @@ import { Sparkles, Send, Square, MessageCircle, CalendarDays, MapPin, Users, Che
 import { useAgentWebSocket } from "@/hooks/useAgentWebSocket";
 import { useAuth } from "@/hooks/useAuth";
 import { MeetingContext } from "@/contexts/MeetingContext";
-import { apiFetch } from "@/lib/api";
+import { fs } from "@/lib/responsive";
 import type { ContextMode } from "@/types";
 
 const PANE_TYPE_MAP: Record<string, ContextMode> = {
@@ -15,28 +15,8 @@ const PANE_TYPE_MAP: Record<string, ContextMode> = {
   agent: "agent",
 };
 
-function getErrorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
-
 export default function AiAssistantPane() {
   const [input, setInput] = useState("");
-  const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
-  const [votedOptionIndex, setVotedOptionIndex] = useState<number | null>(null);
-  const [voteCounts, setVoteCounts] = useState<Record<string, number>>({});
-  const [totalVoters, setTotalVoters] = useState(0);
-  const [isVoting, setIsVoting] = useState(false);
-  const [voteError, setVoteError] = useState<string | null>(null);
-  const [isConfirmingSchedule, setIsConfirmingSchedule] = useState(false);
-  const [isScheduleConfirmed, setIsScheduleConfirmed] = useState(false);
-  const [scheduleConfirmError, setScheduleConfirmError] = useState<string | null>(null);
-  const [confirmedMeetingId, setConfirmedMeetingId] = useState<number | null>(null);
-  const [confirmedSlot, setConfirmedSlot] = useState<{ label: string; start_at: string; end_at: string } | null>(null);
-  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
-  const [confirmedPlace, setConfirmedPlace] = useState<{ name: string; address: string } | null>(null);
-  const [isConfirmingPlace, setIsConfirmingPlace] = useState(false);
-  const [isPlaceConfirmed, setIsPlaceConfirmed] = useState(false);
-  const [placeConfirmError, setPlaceConfirmError] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiTimeoutMessage, setAiTimeoutMessage] = useState<string | null>(null);
   const aiLoadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -47,10 +27,12 @@ export default function AiAssistantPane() {
 
   const roomId = meetingContext?.roomId?.trim() || "1";
   const setContextMode = meetingContext?.setContextMode;
-  const setSelectedPlace = meetingContext?.setSelectedPlace;
   const aiTriggerIntent = meetingContext?.aiTriggerIntent ?? null;
   const setAiTriggerIntent = meetingContext?.setAiTriggerIntent;
-  const refreshCalendar = meetingContext?.refreshCalendar;
+  const setVoteCardCtx = meetingContext?.setVoteCard;
+  const setVoteUpdateCtx = meetingContext?.setVoteUpdate;
+  const setPlaceRecommendationCtx = meetingContext?.setPlaceRecommendation;
+  const setSendMessageToAi = meetingContext?.setSendMessageToAi;
 
   const handlePaneSwitch = useCallback(
     (paneType: string) => {
@@ -82,46 +64,26 @@ export default function AiAssistantPane() {
 
   const [autoTriggerBanner, setAutoTriggerBanner] = useState<string | null>(null);
 
-  const activeMeetingId = confirmedMeetingId ?? voteCard?.meeting_id ?? null;
+  // Sync WS data to MeetingContext for VoteCardSection in InfoPane
+  useEffect(() => {
+    setVoteCardCtx?.(voteCard ?? null);
+  }, [voteCard, setVoteCardCtx]);
 
   useEffect(() => {
-    if (voteCard) {
-      refreshCalendar?.();
-    }
-
-    setSelectedSlotId(voteCard?.time_options[0]?.slot_id ?? null);
-    setIsScheduleConfirmed(false);
-    setScheduleConfirmError(null);
-    setIsConfirmingSchedule(false);
-    setConfirmedMeetingId(voteCard?.meeting_id ?? null);
-    setConfirmedSlot(null);
-    setVotedOptionIndex(null);
-    setVoteCounts({});
-    setTotalVoters(0);
-    setIsVoting(false);
-    setVoteError(null);
-  }, [refreshCalendar, voteCard]);
+    setVoteUpdateCtx?.(voteUpdate ?? null);
+  }, [voteUpdate, setVoteUpdateCtx]);
 
   useEffect(() => {
-    if (!voteUpdate) {
-      return;
-    }
-    if (activeMeetingId !== null && voteUpdate.meeting_id !== activeMeetingId) {
-      return;
-    }
+    setPlaceRecommendationCtx?.(placeRecommendation ?? null);
+  }, [placeRecommendation, setPlaceRecommendationCtx]);
 
-    setVoteCounts(voteUpdate.votes);
-    setTotalVoters(voteUpdate.total_voters);
-    setVoteError(null);
-  }, [activeMeetingId, voteUpdate]);
-
+  // Register sendMessage callback so CalendarPane can send messages to AI
   useEffect(() => {
-    setSelectedPlaceId(null);
-    setConfirmedPlace(null);
-    setIsPlaceConfirmed(false);
-    setPlaceConfirmError(null);
-    setIsConfirmingPlace(false);
-  }, [placeRecommendation]);
+    setSendMessageToAi?.(sendMessage);
+    return () => setSendMessageToAi?.(null);
+  }, [sendMessage, setSendMessageToAi]);
+
+  // (vote state and place state now managed by VoteCardSection in InfoPane)
 
   // aiTriggerIntent는 더 이상 자동 메시지를 보내지 않음
   // 채팅방 자체가 일정 조율 목적이므로 AI가 알아서 관찰하다 개입
@@ -144,21 +106,33 @@ export default function AiAssistantPane() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, voteCard, placeRecommendation, maedeupCard, meetingSummary, isAiLoading, aiTimeoutMessage]);
 
+  // Clear loading state helper
+  const clearAiLoading = useCallback(() => {
+    setIsAiLoading(false);
+    setAiTimeoutMessage(null);
+    if (aiLoadingTimeoutRef.current) {
+      clearTimeout(aiLoadingTimeoutRef.current);
+      aiLoadingTimeoutRef.current = null;
+    }
+    if (aiWarningTimeoutRef.current) {
+      clearTimeout(aiWarningTimeoutRef.current);
+      aiWarningTimeoutRef.current = null;
+    }
+  }, []);
+
   // Set isAiLoading to false when an assistant message arrives
   useEffect(() => {
     if (messages.length > 0 && messages[messages.length - 1]?.role === "assistant") {
-      setIsAiLoading(false);
-      setAiTimeoutMessage(null);
-      if (aiLoadingTimeoutRef.current) {
-        clearTimeout(aiLoadingTimeoutRef.current);
-        aiLoadingTimeoutRef.current = null;
-      }
-      if (aiWarningTimeoutRef.current) {
-        clearTimeout(aiWarningTimeoutRef.current);
-        aiWarningTimeoutRef.current = null;
-      }
+      clearAiLoading();
     }
-  }, [messages]);
+  }, [messages, clearAiLoading]);
+
+  // Also clear loading when any card payload arrives
+  useEffect(() => {
+    if (voteCard || placeRecommendation || maedeupCard) {
+      clearAiLoading();
+    }
+  }, [voteCard, placeRecommendation, maedeupCard, clearAiLoading]);
 
   // Reset loading when WS reconnects (don't treat connecting as loading)
   useEffect(() => {
@@ -178,24 +152,7 @@ export default function AiAssistantPane() {
     };
   }, []);
 
-  // 에러 메시지 5초 후 자동 해제
-  useEffect(() => {
-    if (!scheduleConfirmError) return;
-    const timer = window.setTimeout(() => setScheduleConfirmError(null), 5000);
-    return () => window.clearTimeout(timer);
-  }, [scheduleConfirmError]);
-
-  useEffect(() => {
-    if (!voteError) return;
-    const timer = window.setTimeout(() => setVoteError(null), 5000);
-    return () => window.clearTimeout(timer);
-  }, [voteError]);
-
-  useEffect(() => {
-    if (!placeConfirmError) return;
-    const timer = window.setTimeout(() => setPlaceConfirmError(null), 5000);
-    return () => window.clearTimeout(timer);
-  }, [placeConfirmError]);
+  // Error auto-dismiss moved to VoteCardSection
 
   const handleStopAi = () => {
     setIsAiLoading(false);
@@ -221,16 +178,16 @@ export default function AiAssistantPane() {
     setIsAiLoading(true);
     setAiTimeoutMessage(null);
 
-    // Warning after 10 seconds
+    // Warning after 20 seconds
     if (aiWarningTimeoutRef.current) {
       clearTimeout(aiWarningTimeoutRef.current);
     }
     aiWarningTimeoutRef.current = setTimeout(() => {
       setAiTimeoutMessage("응답이 지연되고 있어요. 잠시만 기다려주세요...");
       aiWarningTimeoutRef.current = null;
-    }, 10_000);
+    }, 20_000);
 
-    // Auto-cancel after 30 seconds
+    // Auto-cancel after 90 seconds
     if (aiLoadingTimeoutRef.current) {
       clearTimeout(aiLoadingTimeoutRef.current);
     }
@@ -238,132 +195,16 @@ export default function AiAssistantPane() {
       setIsAiLoading(false);
       setAiTimeoutMessage("응답 시간이 초과되었어요. 다시 시도해주세요.");
       aiLoadingTimeoutRef.current = null;
-    }, 30_000);
+    }, 90_000);
   };
 
-  const handleConfirmSchedule = async () => {
-    if (!voteCard || !selectedSlotId) {
-      return;
-    }
-
-    const selectedSlot = voteCard.time_options.find((option) => option.slot_id === selectedSlotId);
-    if (!selectedSlot) {
-      setScheduleConfirmError("선택한 일정 정보를 찾을 수 없습니다.");
-      return;
-    }
-
-    const parsedRoomId = Number.parseInt(roomId, 10);
-    if (Number.isNaN(parsedRoomId)) {
-      setScheduleConfirmError("방 정보를 확인할 수 없습니다.");
-      return;
-    }
-
-    setIsConfirmingSchedule(true);
-    setScheduleConfirmError(null);
-
-    try {
-      const result = await apiFetch<{ id: number }>("/api/v1/meetings/confirm", {
-        method: "POST",
-        body: JSON.stringify({
-          room_id: parsedRoomId,
-          title: voteCard.title,
-          scheduled_at: selectedSlot.start_at,
-          end_at: selectedSlot.end_at,
-          location_name: null,
-          vote_options: voteCard.time_options.map((option) => ({
-            slot_id: option.slot_id,
-            label: option.label,
-            start_at: option.start_at,
-            end_at: option.end_at,
-          })),
-        }),
-      });
-
-      setConfirmedMeetingId(result.id);
-      setConfirmedSlot({
-        label: selectedSlot.label,
-        start_at: selectedSlot.start_at,
-        end_at: selectedSlot.end_at,
-      });
-      setIsScheduleConfirmed(true);
-      refreshCalendar?.();
-    } catch (error) {
-      setScheduleConfirmError(getErrorMessage(error, "일정 확정에 실패했습니다."));
-    } finally {
-      setIsConfirmingSchedule(false);
-    }
-  };
-
-  const handleVote = async (optionIndex: number) => {
-    if (!activeMeetingId || votedOptionIndex !== null) {
-      return;
-    }
-
-    setIsVoting(true);
-    setVoteError(null);
-    try {
-      const result = await apiFetch<{
-        meeting_id: number;
-        votes: Record<string, number>;
-        total_voters: number;
-        selected_option_index: number;
-      }>(`/api/v1/meetings/${activeMeetingId}/vote`, {
-        method: "POST",
-        body: JSON.stringify({ option_index: optionIndex }),
-      });
-
-      setConfirmedMeetingId(result.meeting_id);
-      setVotedOptionIndex(result.selected_option_index);
-      setVoteCounts(result.votes);
-      setTotalVoters(result.total_voters);
-    } catch (error) {
-      setVoteError(getErrorMessage(error, "투표에 실패했습니다."));
-    } finally {
-      setIsVoting(false);
-    }
-  };
-
-  const handleConfirmPlace = async (placeId: string) => {
-    if (!placeRecommendation || !confirmedMeetingId) {
-      return;
-    }
-
-    const place = placeRecommendation.recommendations.find((item) => item.place_id === placeId);
-    if (!place) {
-      setPlaceConfirmError("선택한 장소 정보를 찾을 수 없습니다.");
-      return;
-    }
-
-    setSelectedPlaceId(placeId);
-    setIsConfirmingPlace(true);
-    setPlaceConfirmError(null);
-
-    try {
-      await apiFetch<{ id: number }>(`/api/v1/meetings/${confirmedMeetingId}/place`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          place_id: place.place_id,
-          name: place.name,
-          address: place.address,
-          url: place.url,
-        }),
-      });
-
-      setConfirmedPlace({ name: place.name, address: place.address });
-      setIsPlaceConfirmed(true);
-    } catch (error) {
-      setPlaceConfirmError(getErrorMessage(error, "장소 확정에 실패했습니다."));
-      setSelectedPlaceId(null);
-    } finally {
-      setIsConfirmingPlace(false);
-    }
-  };
+  // Vote handlers moved to VoteCardSection in InfoPane
 
   return (
     <div
       style={{
-        width: 414,
-        height: 733,
+        flex: 1,
+        minWidth: 0,
         borderRadius: 20,
         border: "1px solid #e2e8f0",
         boxShadow: "0 4px 3.5px rgba(0,0,0,0.25)",
@@ -379,7 +220,7 @@ export default function AiAssistantPane() {
           display: "flex",
           alignItems: "center",
           gap: 8,
-          padding: "16px 20px",
+          padding: "clamp(10px, 1vw, 16px) clamp(12px, 1.2vw, 20px)",
           background: "linear-gradient(135deg, #837cff, #6eb3ff)",
           borderBottom: "1px solid #e2e8f0",
         }}
@@ -387,7 +228,7 @@ export default function AiAssistantPane() {
         <Sparkles style={{ width: 20, height: 20, color: "#ffffff" }} />
         <span
           style={{
-            fontSize: 26,
+            fontSize: fs(26, 17),
             fontWeight: 400,
             color: "#ffffff",
             letterSpacing: 0.75,
@@ -494,7 +335,7 @@ export default function AiAssistantPane() {
             `}</style>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <ClipboardList style={{ width: 18, height: 18, color: "#ffffff" }} />
-              <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.9)" }}>
+              <span style={{ fontSize: fs(13, 11), fontWeight: 700, color: "rgba(255,255,255,0.9)" }}>
                 현재 대화 정리
               </span>
             </div>
@@ -511,7 +352,7 @@ export default function AiAssistantPane() {
               {meetingSummary.date && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <CalendarDays style={{ width: 14, height: 14, color: "#e9d5ff", flexShrink: 0 }} />
-                  <span style={{ fontSize: 14, fontWeight: 500 }}>
+                  <span style={{ fontSize: fs(14, 12), fontWeight: 500 }}>
                     날짜: {meetingSummary.date}
                   </span>
                 </div>
@@ -519,7 +360,7 @@ export default function AiAssistantPane() {
               {meetingSummary.place && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <MapPin style={{ width: 14, height: 14, color: "#e9d5ff", flexShrink: 0 }} />
-                  <span style={{ fontSize: 14, fontWeight: 500 }}>
+                  <span style={{ fontSize: fs(14, 12), fontWeight: 500 }}>
                     장소: {meetingSummary.place}
                   </span>
                 </div>
@@ -527,7 +368,7 @@ export default function AiAssistantPane() {
               {meetingSummary.headcount && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <Users style={{ width: 14, height: 14, color: "#e9d5ff", flexShrink: 0 }} />
-                  <span style={{ fontSize: 14, fontWeight: 500 }}>
+                  <span style={{ fontSize: fs(14, 12), fontWeight: 500 }}>
                     인원: {meetingSummary.headcount}
                   </span>
                 </div>
@@ -535,7 +376,7 @@ export default function AiAssistantPane() {
               {meetingSummary.meeting_type && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <Sparkles style={{ width: 14, height: 14, color: "#e9d5ff", flexShrink: 0 }} />
-                  <span style={{ fontSize: 14, fontWeight: 500 }}>
+                  <span style={{ fontSize: fs(14, 12), fontWeight: 500 }}>
                     유형: {meetingSummary.meeting_type}
                   </span>
                 </div>
@@ -543,7 +384,7 @@ export default function AiAssistantPane() {
               {meetingSummary.notes && meetingSummary.notes.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
                   {meetingSummary.notes.map((note, i) => (
-                    <span key={i} style={{ fontSize: 13, fontWeight: 400, color: "rgba(255,255,255,0.85)" }}>
+                    <span key={i} style={{ fontSize: fs(13, 11), fontWeight: 400, color: "rgba(255,255,255,0.85)" }}>
                       · {note}
                     </span>
                   ))}
@@ -565,344 +406,36 @@ export default function AiAssistantPane() {
             }}
           >
             <MessageCircle style={{ width: 16, height: 16, color: "#4f46e5" }} />
-            <span style={{ fontSize: 15, fontWeight: 400, color: "#4f46e5", fontFamily: "Inter, sans-serif" }}>
+            <span style={{ fontSize: fs(15, 12), fontWeight: 400, color: "#4f46e5", fontFamily: "Inter, sans-serif" }}>
               AI 어시스턴트에게 모임 일정이나 장소를 물어보세요
             </span>
           </div>
         )}
 
-        {voteCard && (
+        {/* Vote card stub - actual cards now rendered in InfoPane's VoteCardSection */}
+        {(voteCard || placeRecommendation) && (
           <div
             style={{
               display: "flex",
-              flexDirection: "column",
-              gap: 14,
-              padding: 18,
-              borderRadius: 18,
-              background: "#f1f5f9",
-              border: "1px solid #cbd5e1",
-              color: "#1e293b",
-              fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+              alignItems: "center",
+              gap: 10,
+              padding: "12px 16px",
+              borderRadius: 14,
+              background: "#eef2ff",
+              border: "1px solid #c7d2fe",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 14,
-                  background: "#e0e7ff",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <CalendarDays style={{ width: 20, height: 20, color: "#4f46e5" }} />
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                <span style={{ fontSize: 12, fontWeight: 600, color: "#4f46e5" }}>
-                  투표 카드
-                </span>
-                <span style={{ fontSize: 19, fontWeight: 700, color: "#1e293b" }}>
-                  {voteCard.title}
-                </span>
-              </div>
-            </div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "10px 12px",
-                borderRadius: 14,
-                background: "#ffffff",
-                border: "1px solid #e2e8f0",
-              }}
-            >
-              <Users style={{ width: 16, height: 16, color: "#4f46e5" }} />
-              <span style={{ fontSize: 14, fontWeight: 500, color: "#1e293b" }}>
-                총 {voteCard.headcount}명 기준으로 가능한 시간을 선택하세요
-              </span>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {voteCard.time_options.map((option, optionIndex) => {
-                const isSelected = selectedSlotId === option.slot_id;
-                const optionVotes = voteCounts[String(optionIndex)] ?? 0;
-                const isVoteDisabled = !activeMeetingId || votedOptionIndex !== null || isVoting;
-                return (
-                  <div
-                    key={option.slot_id}
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 10,
-                      padding: "14px 16px",
-                      borderRadius: 14,
-                      border: isSelected ? "1.5px solid #4f46e5" : "1px solid #cbd5e1",
-                      background: isSelected ? "#eef2ff" : "#ffffff",
-                      boxShadow: isSelected ? "0 6px 18px rgba(79, 70, 229, 0.12)" : "none",
-                    }}
-                  >
-                    <button
-                      onClick={() => setSelectedSlotId(option.slot_id)}
-                      style={{
-                        width: "100%",
-                        textAlign: "left",
-                        border: "none",
-                        background: "transparent",
-                        color: "#1e293b",
-                        cursor: "pointer",
-                        fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                        fontSize: 15,
-                        fontWeight: isSelected ? 600 : 500,
-                        padding: 0,
-                      }}
-                    >
-                      <span>{option.label}</span>
-                      {option.is_holiday && (
-                        <span style={{ marginLeft: 6, padding: "2px 6px", borderRadius: 6, background: "#fef2f2", color: "#dc2626", fontSize: 11, fontWeight: 600 }}>
-                          {option.holiday_name || "공휴일"}
-                        </span>
-                      )}
-                      {option.is_weekend && !option.is_holiday && (
-                        <span style={{ marginLeft: 6, padding: "2px 6px", borderRadius: 6, background: "#eff6ff", color: "#2563eb", fontSize: 11, fontWeight: 600 }}>
-                          주말
-                        </span>
-                      )}
-                      <span style={{ marginLeft: 6, color: "#94a3b8", fontSize: 13 }}>
-                        ({optionVotes}표 / {totalVoters > 0 ? `${totalVoters}명` : "투표 중"})
-                      </span>
-                    </button>
-                    <button
-                      onClick={() => handleVote(optionIndex)}
-                      disabled={isVoteDisabled}
-                      style={{
-                        padding: "8px 14px",
-                        borderRadius: 10,
-                        border: "none",
-                        background: isVoteDisabled ? "#cbd5e1" : "#4f46e5",
-                        color: "#ffffff",
-                        fontSize: 13,
-                        fontWeight: 600,
-                        cursor: isVoteDisabled ? "not-allowed" : "pointer",
-                        alignSelf: "flex-start",
-                        fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                      }}
-                    >
-                      {votedOptionIndex === optionIndex ? "투표 완료" : "투표하기"}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {isScheduleConfirmed ? (
-                <div
-                  style={{
-                    padding: "12px 14px",
-                    borderRadius: 14,
-                    background: "#ecfdf5",
-                    border: "1px solid #86efac",
-                    color: "#166534",
-                    fontSize: 15,
-                    fontWeight: 700,
-                  }}
-                >
-                  ✓ 일정이 확정되었습니다
-                </div>
-              ) : (
-                <button
-                  onClick={handleConfirmSchedule}
-                  disabled={selectedSlotId === null || isConfirmingSchedule}
-                  style={{
-                    width: "100%",
-                    padding: "14px 16px",
-                    borderRadius: 14,
-                    border: "none",
-                    background: selectedSlotId === null || isConfirmingSchedule ? "#cbd5e1" : "#4f46e5",
-                    color: "#ffffff",
-                    cursor: selectedSlotId === null || isConfirmingSchedule ? "not-allowed" : "pointer",
-                    fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                    fontSize: 15,
-                    fontWeight: 700,
-                  }}
-                >
-                  {isConfirmingSchedule ? "확정 중..." : "일정 확정하기"}
-                </button>
-              )}
-              {scheduleConfirmError && (
-                <span style={{ fontSize: 13, fontWeight: 500, color: "#dc2626" }}>
-                  {scheduleConfirmError}
-                </span>
-              )}
-              {voteError && (
-                <span style={{ fontSize: 13, fontWeight: 500, color: "#dc2626" }}>
-                  {voteError}
-                </span>
-              )}
-            </div>
+            <CalendarDays style={{ width: 18, height: 18, color: "#4f46e5" }} />
+            <span style={{ fontSize: fs(14, 12), fontWeight: 500, color: "#4f46e5", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}>
+              {voteCard ? "투표가 진행 중입니다" : "장소 추천이 도착했습니다"} — 오른쪽 캘린더 탭에서 확인하세요
+            </span>
           </div>
         )}
 
-        {placeRecommendation && (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 14,
-              padding: 18,
-              borderRadius: 18,
-              background: "#f1f5f9",
-              border: "1px solid #cbd5e1",
-              color: "#1e293b",
-              fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 14,
-                  background: "#e0e7ff",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <MapPin style={{ width: 20, height: 20, color: "#4f46e5" }} />
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                <span style={{ fontSize: 12, fontWeight: 600, color: "#4f46e5" }}>
-                  장소 추천
-                </span>
-                <span style={{ fontSize: 19, fontWeight: 700, color: "#1e293b" }}>
-                  {placeRecommendation.place_hint} 추천 장소
-                </span>
-              </div>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {placeRecommendation.recommendations.map((place) => {
-                const isSelected = selectedPlaceId === place.place_id;
-                const distanceMeters = place.distance_m;
-                return (
-                  <div
-                    key={place.place_id}
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 8,
-                      padding: "14px 16px",
-                      borderRadius: 16,
-                      background: isSelected ? "#eef2ff" : "#ffffff",
-                      border: isSelected ? "1.5px solid #4f46e5" : "1px solid #e2e8f0",
-                      boxShadow: isSelected ? "0 6px 18px rgba(79, 70, 229, 0.12)" : "0 4px 14px rgba(15, 23, 42, 0.05)",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                      <span
-                        onClick={() => {
-                          setSelectedPlace?.({
-                            id: place.place_id,
-                            name: place.name,
-                            address: place.address,
-                            phone: place.phone ?? "",
-                            url: place.url,
-                            x: place.x ?? "",
-                            y: place.y ?? "",
-                            category: place.category,
-                            distance_m: place.distance_m,
-                            score: place.score,
-                          });
-                          setContextMode?.("place");
-                        }}
-                        style={{ fontSize: 17, fontWeight: 700, color: "#1e293b", cursor: "pointer" }}
-                      >
-                        {place.name}
-                      </span>
-                      <span
-                        style={{
-                          padding: "4px 10px",
-                          borderRadius: 999,
-                          background: "#eef2ff",
-                          color: "#4f46e5",
-                          fontSize: 13,
-                          fontWeight: 700,
-                          flexShrink: 0,
-                        }}
-                      >
-                        {Math.round(place.score * 100)}%
-                      </span>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 14, fontWeight: 500, color: "#475569" }}>
-                        {place.category}
-                      </span>
-                      {typeof distanceMeters === "number" && distanceMeters > 0 && (
-                        <span style={{ fontSize: 12, color: "#94a3b8", fontWeight: 500 }}>
-                          {distanceMeters >= 1000
-                            ? `${(distanceMeters / 1000).toFixed(1)}km`
-                            : `${distanceMeters}m`}
-                        </span>
-                      )}
-                    </div>
-                    <span style={{ fontSize: 14, lineHeight: 1.5, color: "#1e293b" }}>
-                      {place.address}
-                    </span>
-                    {isPlaceConfirmed && isSelected ? (
-                      <div
-                        style={{
-                          padding: "8px 12px",
-                          borderRadius: 10,
-                          background: "#ecfdf5",
-                          border: "1px solid #86efac",
-                          color: "#166534",
-                          fontSize: 13,
-                          fontWeight: 700,
-                        }}
-                      >
-                        ✓ 장소가 확정되었습니다
-                      </div>
-                    ) : !isPlaceConfirmed && confirmedMeetingId ? (
-                      <button
-                        onClick={() => handleConfirmPlace(place.place_id)}
-                        disabled={isConfirmingPlace}
-                        style={{
-                          padding: "8px 14px",
-                          borderRadius: 10,
-                          border: "none",
-                          background: isConfirmingPlace && isSelected ? "#cbd5e1" : "#4f46e5",
-                          color: "#ffffff",
-                          fontSize: 13,
-                          fontWeight: 600,
-                          cursor: isConfirmingPlace ? "not-allowed" : "pointer",
-                          alignSelf: "flex-start",
-                          fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                        }}
-                      >
-                        {isConfirmingPlace && isSelected ? "확정 중..." : "이 장소로 확정"}
-                      </button>
-                    ) : !isPlaceConfirmed && !confirmedMeetingId ? (
-                      <span style={{ fontSize: 12, color: "#94a3b8", fontStyle: "italic" }}>
-                        일정을 먼저 확정하면 장소를 선택할 수 있어요
-                      </span>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-            {placeConfirmError && (
-              <span style={{ fontSize: 13, fontWeight: 500, color: "#dc2626" }}>
-                {placeConfirmError}
-              </span>
-            )}
-          </div>
-        )}
-
-        {(maedeupCard || (confirmedSlot && confirmedPlace)) && (() => {
-          const displayTime = confirmedSlot ?? maedeupCard?.selected_time;
-          const displayPlace = confirmedPlace ?? maedeupCard?.selected_place;
-          const title = maedeupCard?.title ?? `${maedeupCard?.meeting_type ?? "모임"} 매듭 카드`;
+        {maedeupCard && (() => {
+          const displayTime = maedeupCard.selected_time;
+          const displayPlace = maedeupCard.selected_place;
+          const title = maedeupCard.title ?? `${maedeupCard.meeting_type ?? "모임"} 매듭 카드`;
 
           return (
             <div
@@ -921,10 +454,10 @@ export default function AiAssistantPane() {
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <CheckCircle2 style={{ width: 24, height: 24, color: "#ffffff" }} />
                 <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.82)" }}>
+                  <span style={{ fontSize: fs(12, 10.5), fontWeight: 700, color: "rgba(255,255,255,0.82)" }}>
                     최종 확정
                   </span>
-                  <span style={{ fontSize: 21, fontWeight: 700, color: "#ffffff" }}>
+                  <span style={{ fontSize: fs(21, 15), fontWeight: 700, color: "#ffffff" }}>
                     {title}
                   </span>
                 </div>
@@ -941,10 +474,10 @@ export default function AiAssistantPane() {
               >
                 {maedeupCard && (
                   <>
-                    <span style={{ fontSize: 15, lineHeight: 1.5 }}>
+                    <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
                       {maedeupCard.meeting_type} · {maedeupCard.date_hint}
                     </span>
-                    <span style={{ fontSize: 15, lineHeight: 1.5 }}>
+                    <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
                       참석 인원 {maedeupCard.headcount}명
                     </span>
                   </>
@@ -956,10 +489,10 @@ export default function AiAssistantPane() {
                 )}
                 {displayPlace && (
                   <>
-                    <span style={{ fontSize: 15, lineHeight: 1.5 }}>
+                    <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
                       장소 {displayPlace.name}
                     </span>
-                    <span style={{ fontSize: 14, lineHeight: 1.5, color: "rgba(255,255,255,0.84)" }}>
+                    <span style={{ fontSize: fs(14, 12), lineHeight: 1.5, color: "rgba(255,255,255,0.84)" }}>
                       {displayPlace.address}
                     </span>
                   </>
@@ -1012,7 +545,7 @@ export default function AiAssistantPane() {
                 }}
               >
                 {!isMe && (
-                  <span style={{ fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>
+                  <span style={{ fontSize: fs(11, 10), color: "#94a3b8", marginBottom: 4 }}>
                     {senderLabel}
                   </span>
                 )}
@@ -1031,7 +564,7 @@ export default function AiAssistantPane() {
                           background: "#f1f5f9",
                           color: "#000000",
                         }),
-                    fontSize: 17,
+                    fontSize: fs(17, 13),
                     fontWeight: 300,
                     lineHeight: 1.5,
                     whiteSpace: "pre-wrap" as const,
@@ -1162,16 +695,16 @@ export default function AiAssistantPane() {
           >
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <Sparkles style={{ width: 20, height: 20, color: "#ffffff" }} />
-              <span style={{ fontSize: 12, fontWeight: 600, color: "#ffffff", fontFamily: "Inter, sans-serif" }}>
+              <span style={{ fontSize: fs(12, 10.5), fontWeight: 600, color: "#ffffff", fontFamily: "Inter, sans-serif" }}>
                 AI 어시스턴트
               </span>
             </div>
-            <span style={{ fontSize: 18, fontWeight: 600, color: "#ffffff", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}>
+            <span style={{ fontSize: fs(18, 14), fontWeight: 600, color: "#ffffff", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}>
               {isAiLoading ? "분석 중..." : "일정 조율을 시작하겠습니다"}
             </span>
             <span
               style={{
-                fontSize: 13,
+                fontSize: fs(13, 11),
                 fontWeight: 300,
                 color: "#ffffff",
                 lineHeight: 1.5,
@@ -1194,7 +727,7 @@ export default function AiAssistantPane() {
                   flexShrink: 0,
                 }}
               />
-              <span style={{ fontSize: 12, fontWeight: 300, color: "#ffffff", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}>
+              <span style={{ fontSize: fs(12, 10.5), fontWeight: 300, color: "#ffffff", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}>
                 {status === "connecting"
                   ? "연결 중..."
                   : isAiLoading
@@ -1235,7 +768,7 @@ export default function AiAssistantPane() {
             borderRadius: 60,
             border: "1.5px solid #a2f4fd",
             outline: "none",
-            fontSize: 15,
+            fontSize: fs(15, 12),
             color: "#1e293b",
             fontFamily: "Pretendard Variable, Pretendard, sans-serif",
             boxShadow: "0 2px 3.5px rgba(0,0,0,0.15)",

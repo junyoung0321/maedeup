@@ -20,6 +20,8 @@ import holidays
 from app.core.config import settings
 from app.models.ai_memory import AIMemory
 from app.models.chat import ChatMessage, PaneType
+from app.models.meeting import MeetingSchedule
+from app.models.meeting_preference import MeetingPreference
 from app.models.room import RoomMember
 from app.models.user import User
 from app.services.gemini import call_gemini
@@ -114,6 +116,13 @@ class GraphState(TypedDict, total=False):
     calendar_strategy: str | None
     summary_message_count: int
     meeting_history_context: str | None
+    # 교착 감지
+    conflict_detected: bool
+    conflict_type: str | None  # "date" | "place" | "time"
+    conflict_options: list[str]
+    conflict_users: list[str]
+    # 선호 정보
+    preference_common_times: list[str]
     status: str
 
 
@@ -146,7 +155,7 @@ def _default_state(
         "date_hint": ctx.get("date_hint"),
         "place_hint": ctx.get("place_hint"),
         "place_coord": ctx.get("place_coord"),
-        "default_place_hint": ctx.get("default_place_hint") or "서울 강남",
+        "default_place_hint": ctx.get("default_place_hint") or "",
         "confirmed_date": ctx.get("confirmed_date"),
         "confirmed_time": ctx.get("confirmed_time"),
         "confirmed_place": ctx.get("confirmed_place"),
@@ -176,6 +185,11 @@ def _default_state(
         "blocker_notification_payload": None,
         "calendar_strategy": None,
         "summary_message_count": int(ctx.get("summary_message_count") or 0),
+        "conflict_detected": False,
+        "conflict_type": None,
+        "conflict_options": [],
+        "conflict_users": [],
+        "preference_common_times": [],
         "status": "initialized",
     }
 
@@ -365,9 +379,16 @@ def _resolve_place_hint(state: GraphState) -> str:
     if isinstance(default_place_hint, str) and default_place_hint.strip():
         resolved = default_place_hint.strip()
     else:
-        resolved = "서울 강남"
+        # 방장의 home_base가 있으면 사용, 없으면 빈 문자열 반환
+        # (빈 문자열이면 place_recommendation 노드에서 검색을 건너뜀)
+        home_base = state.get("creator_home_base")
+        if isinstance(home_base, str) and home_base.strip():
+            resolved = home_base.strip()
+        else:
+            resolved = ""
 
-    state["place_hint"] = resolved
+    if resolved:
+        state["place_hint"] = resolved
     return resolved
 
 
@@ -926,13 +947,18 @@ async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
         "당신은 매듭 AI입니다. 한국인들의 모임 일정을 돕는 어시스턴트입니다.\n"
         f"오늘 날짜는 {today_kst}입니다.\n"
         "대화에서 모임 조율에 필요한 정보를 추출하세요.\n"
+        "또한, 멤버들 간의 의견 충돌(교착)도 감지하세요.\n"
         "아래 스키마 그대로 JSON만 반환하세요:\n"
         "{"
         '"date_hint": string | null, '
         '"date_hints": [string] | null, '
         '"place_hint": string | null, '
         '"headcount": number | null, '
-        '"meeting_type": string | null'
+        '"meeting_type": string | null, '
+        '"conflict_detected": boolean, '
+        '"conflict_type": "date" | "place" | "time" | null, '
+        '"conflict_options": [string] | null, '
+        '"conflict_users": [string] | null'
         "}\n\n"
         "date_hint: 첫 번째 날짜 표현. 가능하면 YYYY-MM-DD 형식으로 변환, 범위면 "
         "'YYYY-MM-DD~YYYY-MM-DD'\n"
@@ -949,6 +975,16 @@ async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
         '  - "을지로 맛집" → place_hint: "을지로"\n'
         "headcount: 예상 인원 수\n"
         "meeting_type: 모임 종류 (맛집, 카페, 술집 등 키워드가 있으면 반영)\n\n"
+        "conflict_detected: 대화에서 멤버 간 의견 충돌이 감지되면 true\n"
+        "  충돌 예시:\n"
+        '  - "나는 목요일이 좋아" + "금요일이 낫지 않아?" → 날짜 충돌\n'
+        '  - "강남이 좋겠다" + "홍대가 낫지 않아?" → 장소 충돌\n'
+        '  - "점심에 보자" + "저녁이 좋은데" → 시간 충돌\n'
+        "  주의: 단순 질문('금요일은 어때?')은 충돌이 아닙니다. "
+        "2명 이상이 서로 다른 의견을 명시적으로 표현했을 때만 충돌입니다.\n"
+        "conflict_type: 충돌 유형 (date/place/time)\n"
+        "conflict_options: 충돌하는 선택지 배열 (예: ['목요일', '금요일'])\n"
+        "conflict_users: 충돌하는 사용자 이름 배열 (메시지 발신자 기반, 알 수 없으면 null)\n\n"
         f"대화 맥락:\n{context or '(empty)'}\n\n"
         "모르면 null로 반환하세요."
     )
@@ -1268,11 +1304,32 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
 
 
 async def _get_room_member_food_preferences(state: GraphState) -> list[str]:
+    """비선호 음식 목록을 반환합니다. meeting_preferences 우선, 없으면 User 프로필 사용."""
     db = state["db"]
     room_pk = _room_id_as_int(state["room_id"])
     if room_pk is None:
         return []
 
+    # 1. meeting_preferences에서 비선호 음식 로드 (팝업 데이터)
+    pref_result = await db.execute(
+        select(MeetingPreference).where(MeetingPreference.room_id == room_pk)
+    )
+    prefs = pref_result.scalars().all()
+
+    disliked_foods: list[str] = []
+    seen: set[str] = set()
+
+    if prefs:
+        for pref in prefs:
+            for item in pref.disliked_foods or []:
+                normalized = str(item).strip()
+                if normalized and normalized not in seen:
+                    seen.add(normalized)
+                    disliked_foods.append(normalized)
+        if disliked_foods:
+            return disliked_foods
+
+    # 2. fallback: User 프로필의 food_preferences
     member_result = await db.execute(select(RoomMember).where(RoomMember.room_id == room_pk))
     members = member_result.scalars().all()
     user_ids = [member.user_id for member in members]
@@ -1282,8 +1339,6 @@ async def _get_room_member_food_preferences(state: GraphState) -> list[str]:
     user_result = await db.execute(select(User).where(User.id.in_(user_ids)))
     users = user_result.scalars().all()
 
-    disliked_foods: list[str] = []
-    seen: set[str] = set()
     for user in users:
         for item in user.food_preferences or []:
             normalized = str(item).strip()
@@ -1389,6 +1444,102 @@ def _build_group_constraints_summary(constraints: dict[str, list[str]]) -> str:
     if not parts:
         return ""
     return "모임 멤버 중 " + " / ".join(parts) + " 고려"
+
+
+async def _load_meeting_preferences(state: GraphState) -> dict[str, Any]:
+    """meeting_preferences 테이블에서 모임별 선호 정보를 로드하고 집계합니다.
+
+    Returns:
+        {
+            "has_preferences": bool,
+            "all_submitted": bool,
+            "total_members": int,
+            "submitted_count": int,
+            "best_location": str | None,       # 다수결 장소
+            "common_times": list[str],          # 교차 시간대
+            "all_disliked_foods": list[str],    # 모든 비선호 음식
+            "all_preferred_foods": list[str],   # 모든 선호 음식
+            "notes": list[str],                 # 메모들
+        }
+    """
+    db = state["db"]
+    room_pk = _room_id_as_int(state["room_id"])
+    if room_pk is None:
+        return {"has_preferences": False, "all_submitted": False}
+
+    # 멤버 수
+    member_result = await db.execute(select(RoomMember).where(RoomMember.room_id == room_pk))
+    members = member_result.scalars().all()
+    total_members = len(members)
+
+    # 선호 정보 로드
+    pref_result = await db.execute(
+        select(MeetingPreference).where(MeetingPreference.room_id == room_pk)
+    )
+    prefs = pref_result.scalars().all()
+
+    if not prefs:
+        return {
+            "has_preferences": False,
+            "all_submitted": False,
+            "total_members": total_members,
+            "submitted_count": 0,
+        }
+
+    # 장소 다수결
+    location_counts: dict[str, int] = {}
+    for p in prefs:
+        loc = (p.preferred_location or "").strip()
+        if loc:
+            location_counts[loc] = location_counts.get(loc, 0) + 1
+    best_location = max(location_counts, key=location_counts.get) if location_counts else None
+
+    # 시간대 교차 (모든 멤버가 공통으로 선택한 시간대)
+    time_sets = [set(p.preferred_times or []) for p in prefs if p.preferred_times]
+    if time_sets:
+        common_times = list(time_sets[0].intersection(*time_sets[1:]))
+        if not common_times:
+            # 교차 없으면 가장 많이 선택된 시간대 상위 3개
+            time_counts: dict[str, int] = {}
+            for p in prefs:
+                for t in p.preferred_times or []:
+                    time_counts[t] = time_counts.get(t, 0) + 1
+            common_times = sorted(time_counts, key=time_counts.get, reverse=True)[:3]
+    else:
+        common_times = []
+
+    # 비선호 음식 합집합
+    all_disliked: list[str] = []
+    seen_disliked: set[str] = set()
+    for p in prefs:
+        for food in p.disliked_foods or []:
+            if food not in seen_disliked:
+                seen_disliked.add(food)
+                all_disliked.append(food)
+
+    # 선호 음식 합집합
+    all_preferred: list[str] = []
+    seen_preferred: set[str] = set()
+    for p in prefs:
+        for food in p.preferred_foods or []:
+            if food not in seen_preferred:
+                seen_preferred.add(food)
+                all_preferred.append(food)
+
+    # 메모 수집
+    notes = [p.note for p in prefs if p.note and p.note.strip()]
+
+    return {
+        "has_preferences": True,
+        "all_submitted": len(prefs) >= total_members,
+        "total_members": total_members,
+        "submitted_count": len(prefs),
+        "best_location": best_location,
+        "common_times": common_times,
+        "all_disliked_foods": all_disliked,
+        "all_preferred_foods": all_preferred,
+        "notes": notes,
+    }
 
 
 def _contains_disliked_keyword(category: str, disliked_foods: list[str]) -> str | None:
@@ -1661,6 +1812,15 @@ async def intent_detection(state: GraphState) -> GraphState:
             state["confidence_score"] = max(state["confidence_score"], 0.9)
             logger.info("[INTENT] Multi-date option pattern detected, overriding to meeting_schedule")
 
+        # 패턴 기반 intent 오버라이드: 선호 정보 기반 추천 요청 → meeting_schedule
+        if latest_user_message:
+            msg_lower = latest_user_message.lower()
+            pref_keywords = ["선호 정보", "선호정보", "추천해줘", "추천해", "최적", "일정.*추천", "장소.*추천"]
+            if any(re.search(kw, msg_lower) for kw in pref_keywords):
+                state["intent"] = "meeting_schedule"
+                state["confidence_score"] = max(state["confidence_score"], 0.95)
+                logger.info("[INTENT] Preference-based recommendation request detected, overriding to meeting_schedule")
+
         state["status"] = "intent_detected"
         logger.info("[TIMING] intent_detection: %.2fs", time.monotonic() - _t0)
         return state
@@ -1706,6 +1866,19 @@ async def entity_extraction(state: GraphState) -> GraphState:
                 extracted["date_hint_source_text"] = raw_date_hint
         state["extracted_entities"] = extracted
         _update_slot_state(state, extracted)
+
+        # 교착 감지 결과를 state에 반영
+        if extracted.get("conflict_detected"):
+            state["conflict_detected"] = True
+            state["conflict_type"] = extracted.get("conflict_type")
+            state["conflict_options"] = extracted.get("conflict_options") or []
+            state["conflict_users"] = extracted.get("conflict_users") or []
+            logger.info(
+                "[CONFLICT] Detected: type=%s options=%s users=%s",
+                state["conflict_type"],
+                state["conflict_options"],
+                state["conflict_users"],
+            )
 
         # place_suggestion intent인데 place_hint가 없으면 메시지에서 직접 추출
         if state.get("intent") == "place_suggestion" and not state.get("place_hint"):
@@ -1757,8 +1930,87 @@ async def slot_filling(state: GraphState) -> GraphState:
             return state
 
         _update_slot_state(state, state.get("extracted_entities", {}))
+
+        # 선호 정보 로드 및 반영 (대화 추출보다 우선)
+        pref_data = await _load_meeting_preferences(state)
+        if pref_data.get("has_preferences"):
+            # 장소: 대화에서 추출 안 됐으면 선호 데이터 사용
+            if not state.get("place_hint") and pref_data.get("best_location"):
+                state["place_hint"] = pref_data["best_location"]
+                logger.info("[PREF] place_hint set from preferences: %s", pref_data["best_location"])
+
+            # 인원수: 멤버 수 기반
+            if not state.get("headcount") and pref_data.get("total_members"):
+                state["headcount"] = pref_data["total_members"]
+
+            # meeting_type 기본값
+            if not state.get("meeting_type"):
+                state["meeting_type"] = "모임"
+
+            # 전원 입력 완료 + 대화에서 일정 관련 의도 감지 시 자동 제안 모드
+            if pref_data.get("all_submitted") and state.get("intent") in (
+                "meeting_schedule", "place_suggestion", None,
+            ):
+                # 공통 시간대가 있으면 date_hint로 활용 가능
+                common_times = pref_data.get("common_times", [])
+                if common_times:
+                    state["preference_common_times"] = common_times
+
+                # 모든 슬롯이 채워진 것으로 간주하고 자동 제안
+                if not state.get("all_slots_filled"):
+                    state["all_slots_filled"] = True
+                    state["missing_slots"] = []
+                    if state.get("place_hint"):
+                        logger.info("[PREF] All preferences submitted. Auto-suggesting with place=%s", state["place_hint"])
+                    else:
+                        logger.info("[PREF] All preferences submitted. Auto-suggesting (no place hint, time-only)")
+
         state["is_location_first"] = bool(state.get("place_hint")) and not bool(state.get("date_hint"))
         state["time_options"] = _build_flexible_time_options(state)
+
+        # 교착 감지 → 선호 정보 기반 중재 메시지 + 투표 카드 생성
+        if state.get("conflict_detected") and state.get("conflict_options"):
+            conflict_type = state.get("conflict_type", "date")
+            options = state.get("conflict_options", [])
+            users = state.get("conflict_users", [])
+
+            # 선호 정보 기반 분석 메시지 구성
+            pref_data_for_conflict = await _load_meeting_preferences(state)
+            type_label = {"date": "날짜", "place": "장소", "time": "시간"}.get(conflict_type, "일정")
+            options_text = "과 ".join(f"**{o}**" for o in options)
+
+            mediation_msg = f"{options_text} 의견이 나뉘네요! 😊\n"
+
+            if pref_data_for_conflict.get("has_preferences"):
+                total = pref_data_for_conflict.get("total_members", 0)
+                common = pref_data_for_conflict.get("common_times", [])
+                if common and conflict_type in ("date", "time"):
+                    mediation_msg += f"선호 정보를 보면 공통 가능 시간대는 {', '.join(common)}이에요.\n"
+                mediation_msg += f"총 {total}명의 선호를 고려해서 "
+
+            mediation_msg += "투표로 결정할까요?"
+
+            await _emit_assistant_message(state["room_id"], state["db"], mediation_msg, state)
+
+            # 교착 옵션을 date_hints로 변환해서 투표 카드 생성으로 보냄
+            if conflict_type == "date" and len(options) >= 2:
+                state["date_hints"] = options
+            elif conflict_type == "place" and len(options) >= 2:
+                # 장소 교착은 장소 추천으로 양쪽 모두 검색
+                state["place_hint"] = options[0]  # 첫 번째 옵션으로 검색
+
+            if not state.get("headcount"):
+                state["headcount"] = pref_data_for_conflict.get("total_members", 4)
+            if not state.get("meeting_type"):
+                state["meeting_type"] = "모임"
+            state["all_slots_filled"] = True
+            state["missing_slots"] = []
+            state["awaiting_user_reply"] = False
+            state["wait_timed_out"] = False
+            state["message_count_since_last_trigger"] = 0
+            state["status"] = "multi_date_vote" if conflict_type == "date" else "slots_filled"
+            logger.info("[CONFLICT] Mediation triggered: type=%s options=%s", conflict_type, options)
+            return state
 
         # 여러 날짜 선택지 → 투표 카드 생성으로 바로 진행
         multi_date_hints = state.get("date_hints") or []
@@ -1800,6 +2052,13 @@ async def slot_filling(state: GraphState) -> GraphState:
         if has_date and has_place and has_headcount:
             if not state.get("meeting_type"):
                 state["meeting_type"] = "모임"
+            date_display = state.get("date_hint", "")
+            place_display = state.get("place_hint", "")
+            confirm_msg = (
+                f"{date_display}에 {place_display}에서 {state.get('headcount', '')}명이요! 👍 "
+                "일정과 장소를 정리해드릴게요~"
+            )
+            await _emit_assistant_message(state["room_id"], state["db"], confirm_msg, state)
             state["all_slots_filled"] = True
             state["missing_slots"] = []
             state["awaiting_user_reply"] = False
@@ -1814,6 +2073,13 @@ async def slot_filling(state: GraphState) -> GraphState:
                 state["headcount"] = 4  # 기본값
             if not state.get("meeting_type"):
                 state["meeting_type"] = "모임"
+            date_display = state.get("date_hint", "")
+            place_display = state.get("place_hint", "")
+            confirm_msg = (
+                f"{date_display}에 {place_display}에서요! 👍 "
+                "일정과 장소를 정리해드릴게요~"
+            )
+            await _emit_assistant_message(state["room_id"], state["db"], confirm_msg, state)
             state["all_slots_filled"] = True
             state["missing_slots"] = []
             state["awaiting_user_reply"] = False
@@ -1931,6 +2197,104 @@ def _build_multi_date_slots(state: GraphState) -> list[dict[str, Any]]:
     return slots
 
 
+def _build_preference_time_slots(
+    state: GraphState, pref_times: list[str],
+) -> list[dict[str, Any]]:
+    """선호 시간대 기반으로 이번 주/다음 주 투표용 슬롯을 생성합니다."""
+    now_kst = datetime.now(KST)
+    slots: list[dict[str, Any]] = []
+    slot_index = 0
+
+    # 시간대 → (시작 시, 종료 시) 매핑
+    time_map = {
+        "평일오전": (10, 12),
+        "평일오후": (14, 16),
+        "평일저녁": (18, 20),
+        "주말오전": (10, 12),
+        "주말오후": (14, 16),
+        "주말저녁": (18, 20),
+    }
+
+    # 이번 주 + 다음 주 날짜 중 선호 시간대에 맞는 슬롯 생성
+    for day_offset in range(1, 22):  # 향후 3주 (충분한 슬롯 확보)
+        target = now_kst + timedelta(days=day_offset)
+        weekday = target.weekday()  # 0=월 6=일
+        is_weekend = weekday >= 5
+
+        for pref_time in pref_times:
+            # 평일/주말 필터
+            if pref_time.startswith("평일") and is_weekend:
+                continue
+            if pref_time.startswith("주말") and not is_weekend:
+                continue
+
+            hours = time_map.get(pref_time)
+            if not hours:
+                continue
+
+            start_h, end_h = hours
+            start_at = target.replace(hour=start_h, minute=0, second=0, microsecond=0)
+            end_at = target.replace(hour=end_h, minute=0, second=0, microsecond=0)
+
+            # 과거 시간 건너뛰기
+            if start_at <= now_kst:
+                continue
+
+            holiday = _get_korean_holiday(target)
+
+            slot_index += 1
+            slots.append({
+                "slot_id": f"pref-slot-{slot_index}",
+                "start_at": start_at.isoformat(),
+                "end_at": end_at.isoformat(),
+                "label": _format_slot_label(start_at, []),
+                "available_count": state.get("headcount"),
+                "total_count": state.get("headcount"),
+                "has_conflict": False,
+                "unavailable_users": [],
+                "is_holiday": bool(holiday),
+                "holiday_name": holiday,
+                "is_weekend": is_weekend,
+            })
+
+            if len(slots) >= 5:
+                break
+        if len(slots) >= 5:
+            break
+
+    # 최소 3개 슬롯 보장: 선호 시간대가 좁아서 슬롯이 부족하면 기본 슬롯 추가
+    if len(slots) < 3:
+        for day_offset in range(1, 15):
+            if len(slots) >= 3:
+                break
+            target = now_kst + timedelta(days=day_offset)
+            start_at = target.replace(hour=19, minute=0, second=0, microsecond=0)
+            if start_at <= now_kst:
+                continue
+            end_at = start_at + timedelta(hours=2)
+            # 중복 날짜 체크
+            existing_dates = {s["start_at"][:10] for s in slots}
+            if start_at.strftime("%Y-%m-%d") in existing_dates:
+                continue
+            holiday = _get_korean_holiday(target)
+            slot_index += 1
+            slots.append({
+                "slot_id": f"pref-slot-{slot_index}",
+                "start_at": start_at.isoformat(),
+                "end_at": end_at.isoformat(),
+                "label": _format_slot_label(start_at, []),
+                "available_count": state.get("headcount"),
+                "total_count": state.get("headcount"),
+                "has_conflict": False,
+                "unavailable_users": [],
+                "is_holiday": bool(holiday),
+                "holiday_name": holiday,
+                "is_weekend": target.weekday() >= 5,
+            })
+
+    return slots[:5]
+
+
 async def function_calling(state: GraphState) -> GraphState:
     _t0 = time.monotonic()
     try:
@@ -1950,6 +2314,18 @@ async def function_calling(state: GraphState) -> GraphState:
                 state["status"] = "functions_called"
                 logger.info("[TIMING] function_calling (multi-date): %.2fs", time.monotonic() - _t0)
                 return state
+
+        # 선호 데이터 기반 자동 제안: preference_common_times로 슬롯 생성
+        pref_times = state.get("preference_common_times") or []
+        if pref_times and not state.get("date_hint"):
+            pref_slots = _build_preference_time_slots(state, pref_times)
+            state["calendar_free_slots"] = pref_slots
+            state["calendar_strategy"] = "preference_based"
+            place_results = await search_place(state)
+            state["place_search_results"] = place_results
+            state["status"] = "functions_called"
+            logger.info("[TIMING] function_calling (preference-based): %.2fs", time.monotonic() - _t0)
+            return state
 
         if state.get("is_location_first") and not state.get("date_hint"):
             state["calendar_free_slots"] = []
@@ -1997,7 +2373,15 @@ async def supervisor_validation(state: GraphState) -> GraphState:
         errors: list[str] = []
         now = datetime.now(timezone.utc)
         valid_slots: list[dict[str, Any]] = []
-        is_location_first = bool(state.get("is_location_first") and not state.get("date_hint"))
+        has_preference_time_slots = bool(
+            state.get("calendar_strategy") == "preference_based"
+            and state.get("preference_common_times")
+        )
+        is_location_first = bool(
+            state.get("is_location_first")
+            and not state.get("date_hint")
+            and not has_preference_time_slots
+        )
         is_multi_date_vote = state.get("calendar_strategy") == "multi_date_vote"
 
         headcount = state.get("headcount")
@@ -2075,11 +2459,56 @@ async def vote_card_creation(state: GraphState) -> GraphState:
         if start_at is not None:
             state["confirmed_time"] = _format_confirmed_time(start_at)
         is_multi_date = state.get("calendar_strategy") == "multi_date_vote"
+        calendar_slots = state.get("calendar_free_slots") or []
+
+        # 단일 날짜 + 슬롯 1개 = 투표 불필요 (선호 기반은 항상 투표 카드 생성)
+        is_preference_based = state.get("calendar_strategy") == "preference_based"
+        if not is_multi_date and not is_preference_based and len(calendar_slots) <= 1:
+            state["status"] = "vote_card_skipped"
+            logger.info("[TIMING] vote_card_creation: skipped (single slot) %.2fs", time.monotonic() - _t0)
+            return state
+
         vote_title = (
             f"{state.get('meeting_type') or '모임'} 날짜 투표 📅"
             if is_multi_date
             else f"{state.get('meeting_type') or '모임'} 시간 투표"
         )
+
+        # meeting_id가 없으면 DB에 pending meeting 생성
+        if not meeting_id:
+            db = state["db"]
+            room_pk = _room_id_as_int(state["room_id"])
+            # room 첫 번째 멤버를 created_by로 사용
+            created_by = 1
+            if room_pk is not None:
+                member_result = await db.execute(
+                    select(RoomMember).where(RoomMember.room_id == room_pk).limit(1)
+                )
+                first_member = member_result.scalar_one_or_none()
+                if first_member:
+                    created_by = first_member.user_id
+            first_slot = calendar_slots[0] if calendar_slots else {}
+            slot_start = _parse_iso_datetime(first_slot.get("start_at")) if first_slot.get("start_at") else datetime.now(timezone.utc).replace(tzinfo=None)
+            slot_end = _parse_iso_datetime(first_slot.get("end_at")) if first_slot.get("end_at") else slot_start + timedelta(hours=2)
+            new_meeting = MeetingSchedule(
+                room_id=room_pk or 1,
+                title=vote_title,
+                scheduled_at=slot_start if not hasattr(slot_start, 'tzinfo') or slot_start.tzinfo is None else slot_start.replace(tzinfo=None),
+                end_at=slot_end if not hasattr(slot_end, 'tzinfo') or slot_end.tzinfo is None else slot_end.replace(tzinfo=None),
+                vote_options=[
+                    {"slot_id": s.get("slot_id"), "label": s.get("label"), "start_at": s.get("start_at"), "end_at": s.get("end_at")}
+                    for s in calendar_slots
+                ],
+                votes={},
+                status="pending",
+                created_by=created_by,
+            )
+            db.add(new_meeting)
+            await db.commit()
+            await db.refresh(new_meeting)
+            meeting_id = new_meeting.id
+            logger.info("Created pending meeting id=%s for vote card", meeting_id)
+
         state["vote_card_payload"] = {
             "type": "vote_card",
             "title": vote_title,
@@ -2130,7 +2559,13 @@ async def place_recommendation(state: GraphState) -> GraphState:
             return state
 
         if not state.get("place_hint"):
-            state["place_hint"] = _resolve_place_hint(state)
+            resolved = _resolve_place_hint(state)
+            if not resolved:
+                # 장소 힌트가 없으면 추천 건너뜀
+                state["status"] = "place_skipped"
+                logger.info("[TIMING] place_recommendation (skipped, no hint): %.2fs", time.monotonic() - _t0)
+                return state
+            state["place_hint"] = resolved
 
         place_results = list(state.get("place_search_results", []))
         ranked_places = place_results
@@ -2544,17 +2979,23 @@ def _route_after_validation(state: GraphState) -> Literal["vote_card_creation", 
         return END
     if not state.get("validation_passed"):
         return END
+    # 선호 데이터 기반 자동 제안: 투표 카드를 먼저 생성 (시간대 투표)
+    if state.get("preference_common_times"):
+        return "vote_card_creation"
     if state.get("is_location_first") and not state.get("date_hint"):
         return "place_recommendation"
     return "vote_card_creation"
 
 
-def _route_after_vote_card_creation(state: GraphState) -> Literal["place_recommendation", "maedeup_card_creation"]:
+def _route_after_vote_card_creation(state: GraphState) -> Literal["place_recommendation", "maedeup_card_creation", "__end__"]:
     if _has_node_error(state):
-        return "place_recommendation"
+        return END
     if state.get("confirmed_place"):
         return "maedeup_card_creation"
-    return "place_recommendation"
+    # 장소 힌트가 있을 때만 장소 추천 진행, 없으면 투표 카드만 보내고 끝
+    if state.get("place_hint"):
+        return "place_recommendation"
+    return END
 
 
 def _route_after_place_recommendation(state: GraphState) -> Literal["maedeup_card_creation", "__end__"]:
@@ -2845,5 +3286,4 @@ async def suggest_alternative_slots(
         "is_holiday": best.get("is_holiday", False),
         "is_weekend": best.get("is_weekend", False),
     }
-
 

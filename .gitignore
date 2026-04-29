@@ -42,3 +42,4 @@ aovenv/
 # Misc
 main.py
 temp_write_test.txt
+.gstack/

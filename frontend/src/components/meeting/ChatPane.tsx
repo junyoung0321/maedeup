@@ -4,6 +4,7 @@ import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from
 import { User, Send, X, Calendar, MapPin } from "lucide-react";
 import { useSocialWebSocket } from "@/hooks/useSocialWebSocket";
 import { MeetingContext } from "@/contexts/MeetingContext";
+import { fs } from "@/lib/responsive";
 
 function getNameFromToken(): string {
   try {
@@ -105,8 +106,8 @@ export default function ChatPane() {
   return (
     <div
       style={{
-        width: 414,
-        height: 733,
+        flex: 1,
+        minWidth: 0,
         borderRadius: 20,
         border: "1px solid #e2e8f0",
         boxShadow: "0 4px 3.5px rgba(0,0,0,0.25)",
@@ -122,14 +123,14 @@ export default function ChatPane() {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "16px 20px",
+          padding: "clamp(10px, 1vw, 16px) clamp(12px, 1.2vw, 20px)",
           background: "#f2f4f7",
           borderBottom: "1px solid #e2e8f0",
         }}
       >
         <span
           style={{
-            fontSize: 26,
+            fontSize: fs(26, 17),
             fontWeight: 400,
             color: "#000000",
             letterSpacing: 0.75,
@@ -193,7 +194,7 @@ export default function ChatPane() {
                 }}
               >
                 {!isMe && (
-                  <span style={{ fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>
+                  <span style={{ fontSize: fs(11, 10), color: "#94a3b8", marginBottom: 4 }}>
                     {msg.sender}
                   </span>
                 )}
@@ -212,7 +213,7 @@ export default function ChatPane() {
                           background: "#f1f5f9",
                           color: "#000000",
                         }),
-                    fontSize: 17,
+                    fontSize: fs(17, 13),
                     fontWeight: 300,
                     lineHeight: 1.5,
                     whiteSpace: "pre-wrap" as const,
@@ -252,7 +253,7 @@ export default function ChatPane() {
             border: "1px solid #e2e8f0",
             boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
             outline: "none",
-            fontSize: 15,
+            fontSize: fs(15, 12),
             color: "#1e293b",
             fontFamily: "Pretendard Variable, Pretendard, sans-serif",
           }}

@@ -10,9 +10,10 @@ import ProfileDropdown from "@/components/home/ProfileDropdown";
 interface HeaderProps {
   showSteps?: boolean;
   currentStep?: Step;
+  children?: React.ReactNode;
 }
 
-export default function Header({ showSteps = false, currentStep = "schedule" }: HeaderProps) {
+export default function Header({ showSteps = false, currentStep = "schedule", children }: HeaderProps) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
@@ -34,6 +35,7 @@ export default function Header({ showSteps = false, currentStep = "schedule" }: 
           </div>
         )}
         <div className="flex items-center gap-2 sm:gap-3">
+          {children}
           <Bell
             className="w-7 h-7 sm:w-9 sm:h-9 lg:w-10 lg:h-10 text-white/70 cursor-pointer hover:text-white"
             onClick={() => { setNotifOpen(!notifOpen); setProfileOpen(false); }}

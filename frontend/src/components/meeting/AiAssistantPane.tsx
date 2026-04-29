@@ -1,12 +1,20 @@
 "use client";
 
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles, Send, Square, MessageCircle, CalendarDays, MapPin, Users, CheckCircle2, ClipboardList } from "lucide-react";
+import { Sparkles, Send, Square, MessageCircle, CalendarDays, MapPin, Users, CheckCircle2, ClipboardList, Share2, Check, AlertCircle } from "lucide-react";
 import { useAgentWebSocket } from "@/hooks/useAgentWebSocket";
 import { useAuth } from "@/hooks/useAuth";
 import { MeetingContext } from "@/contexts/MeetingContext";
 import { fs } from "@/lib/responsive";
+import { apiFetch } from "@/lib/api";
 import type { ContextMode } from "@/types";
+
+interface ShareMessageResponse {
+  id: number;
+  shared_from_id: number;
+  created_at: string;
+  already_shared: boolean;
+}
 
 const PANE_TYPE_MAP: Record<string, ContextMode> = {
   schedule: "schedule",
@@ -63,6 +71,37 @@ export default function AiAssistantPane() {
   } = useAgentWebSocket(roomId, user?.name ?? "나", websocketOptions);
 
   const [autoTriggerBanner, setAutoTriggerBanner] = useState<string | null>(null);
+
+  // docs/ai-separation.md §6.1 — share button state
+  const [sharedSourceIds, setSharedSourceIds] = useState<Set<number>>(new Set());
+  const [sharingId, setSharingId] = useState<number | null>(null);
+  const [shareError, setShareError] = useState<{ id: number; message: string } | null>(null);
+  const currentUserId = user?.sub ? Number(user.sub) : null;
+
+  const handleShareMessage = useCallback(
+    async (messageId: number) => {
+      if (sharingId !== null || sharedSourceIds.has(messageId)) return;
+      setSharingId(messageId);
+      setShareError(null);
+      try {
+        const res = await apiFetch<ShareMessageResponse>(
+          `/api/v1/chat/messages/${messageId}/share`,
+          { method: "POST", body: JSON.stringify({}) },
+        );
+        setSharedSourceIds((prev) => {
+          const next = new Set(prev);
+          next.add(res.shared_from_id);
+          return next;
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "공유 실패";
+        setShareError({ id: messageId, message });
+      } finally {
+        setSharingId(null);
+      }
+    },
+    [sharingId, sharedSourceIds],
+  );
 
   // Sync WS data to MeetingContext for VoteCardSection in InfoPane
   useEffect(() => {
@@ -507,6 +546,25 @@ export default function AiAssistantPane() {
           const rawSender = isMe ? (msg.sender ?? user?.name ?? "나") : (msg.sender ?? "AI 어시스턴트");
           const senderLabel = rawSender === "LangGraph" ? "매듭 AI" : rawSender;
 
+          // docs/ai-separation.md §2.2 — visibility-based rendering
+          const visibility = msg.visibility ?? "shared";
+          const isPrivate = visibility === "private";
+          const isSharedByUser = visibility === "shared" && msg.shared_by_user_id != null;
+          const isSharedByMe = isSharedByUser && msg.shared_by_user_id === currentUserId;
+          // Share button visibility: only on MY private AI responses
+          const canShare =
+            !isMe &&
+            isPrivate &&
+            msg.user_id != null &&
+            msg.user_id === currentUserId &&
+            typeof msg.id === "number";
+          const alreadyShared = typeof msg.id === "number" && sharedSourceIds.has(msg.id);
+          const isSharing = sharingId === msg.id;
+          const hasShareError = shareError?.id === msg.id;
+
+          // Accent rail color — different hues so "내가 공유" vs "OO님 공유" is distinguishable at a glance
+          const accentColor = isSharedByMe ? "#10b981" : isSharedByUser ? "#f59e0b" : null;
+
           return (
             <div
               key={msg.id ?? index}
@@ -549,10 +607,33 @@ export default function AiAssistantPane() {
                     {senderLabel}
                   </span>
                 )}
+                {isSharedByUser && (
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                      padding: "2px 8px",
+                      marginBottom: 4,
+                      background: isSharedByMe ? "#d1fae5" : "#fef3c7",
+                      borderRadius: 10,
+                      fontSize: fs(10, 9),
+                      fontWeight: 500,
+                      color: isSharedByMe ? "#065f46" : "#92400e",
+                    }}
+                  >
+                    <Share2 size={10} />
+                    {isSharedByMe ? "내가 공유" : `${senderLabel}님이 공유`}
+                  </div>
+                )}
                 <div
                   style={{
                     padding: "10px 16px",
                     borderRadius: 16,
+                    // Triple-code for shared-by-user: accent rail via left border (docs §2.3)
+                    ...(accentColor
+                      ? { borderLeft: `3px solid ${accentColor}` }
+                      : {}),
                     ...(isMe
                       ? {
                           borderBottomRightRadius: 6,
@@ -561,17 +642,87 @@ export default function AiAssistantPane() {
                         }
                       : {
                           borderBottomLeftRadius: 6,
-                          background: "#f1f5f9",
+                          background: isSharedByMe
+                            ? "#ecfdf5"
+                            : isSharedByUser
+                              ? "#fffbeb"
+                              : "#f1f5f9",
                           color: "#000000",
                         }),
                     fontSize: fs(17, 13),
                     fontWeight: 300,
                     lineHeight: 1.5,
                     whiteSpace: "pre-wrap" as const,
+                    overflowWrap: "anywhere" as const,
                   }}
                 >
                   {msg.content}
                 </div>
+                {canShare && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      marginTop: 4,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleShareMessage(msg.id)}
+                      disabled={alreadyShared || isSharing}
+                      title={alreadyShared ? "이미 공유됨" : "모두에게 공유"}
+                      aria-label={alreadyShared ? "이미 공유됨" : "모두에게 공유"}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 4,
+                        padding: "4px 10px",
+                        minHeight: 28,
+                        background: alreadyShared ? "#f1f5f9" : "transparent",
+                        border: "1px solid",
+                        borderColor: alreadyShared ? "#cbd5e1" : "#a5b4fc",
+                        borderRadius: 12,
+                        fontSize: fs(11, 10),
+                        fontWeight: 500,
+                        color: alreadyShared ? "#64748b" : "#4f46e5",
+                        cursor: alreadyShared || isSharing ? "not-allowed" : "pointer",
+                        opacity: isSharing ? 0.6 : 1,
+                        transition: "all 0.15s ease",
+                      }}
+                    >
+                      {alreadyShared ? (
+                        <>
+                          <Check size={12} />
+                          공유됨
+                        </>
+                      ) : isSharing ? (
+                        <>
+                          <Share2 size={12} style={{ animation: "pulse 1s infinite" }} />
+                          공유 중...
+                        </>
+                      ) : (
+                        <>
+                          <Share2 size={12} />
+                          모두에게 공유
+                        </>
+                      )}
+                    </button>
+                    {hasShareError && (
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 2,
+                          fontSize: fs(10, 9),
+                          color: "#dc2626",
+                        }}
+                      >
+                        <AlertCircle size={10} /> {shareError.message}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           );

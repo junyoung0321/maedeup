@@ -93,6 +93,11 @@ export default function ChatPane() {
     dismissIntent,
     peerSelections,
     peerTimeSelections,
+    unavailabilityByUser,
+    sendUnavailableToggle,
+    finalizationProposal,
+    finalizationPending,
+    lastConfirmedMeeting,
   } = useSocialWebSocket(roomId, currentUserName);
 
   // Bridge: socket의 peerSelections/sendDateSelection을 MeetingContext로 노출
@@ -100,6 +105,11 @@ export default function ChatPane() {
   const setSendDateSelection = meetingContext?.setSendDateSelection;
   const setPeerTimeSelections = meetingContext?.setPeerTimeSelections;
   const setSendTimeSelection = meetingContext?.setSendTimeSelection;
+  const setUnavailabilityByUser = meetingContext?.setUnavailabilityByUser;
+  const setSendUnavailableToggle = meetingContext?.setSendUnavailableToggle;
+  const setFinalizationProposal = meetingContext?.setFinalizationProposal;
+  const setFinalizationPending = meetingContext?.setFinalizationPending;
+  const setLastConfirmedMeeting = meetingContext?.setLastConfirmedMeeting;
   useEffect(() => {
     setPeerDateSelections?.(peerSelections);
   }, [peerSelections, setPeerDateSelections]);
@@ -114,6 +124,22 @@ export default function ChatPane() {
     setSendTimeSelection?.(sendTimeSelection);
     return () => setSendTimeSelection?.(null);
   }, [sendTimeSelection, setSendTimeSelection]);
+  useEffect(() => {
+    setUnavailabilityByUser?.(unavailabilityByUser);
+  }, [unavailabilityByUser, setUnavailabilityByUser]);
+  useEffect(() => {
+    setSendUnavailableToggle?.(sendUnavailableToggle);
+    return () => setSendUnavailableToggle?.(null);
+  }, [sendUnavailableToggle, setSendUnavailableToggle]);
+  useEffect(() => {
+    setFinalizationProposal?.(finalizationProposal);
+  }, [finalizationProposal, setFinalizationProposal]);
+  useEffect(() => {
+    setFinalizationPending?.(finalizationPending);
+  }, [finalizationPending, setFinalizationPending]);
+  useEffect(() => {
+    setLastConfirmedMeeting?.(lastConfirmedMeeting);
+  }, [lastConfirmedMeeting, setLastConfirmedMeeting]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });

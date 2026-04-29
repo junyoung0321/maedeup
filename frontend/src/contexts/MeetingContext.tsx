@@ -3,7 +3,12 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import type { AiTriggerIntent, ContextMode, PlaceResult } from "@/types";
 import type { VoteCardPayload, VoteUpdatePayload, PlaceRecommendationPayload, VoteCardTimeOption } from "@/hooks/useAgentWebSocket";
-import type { PeerSelection, PeerTimeSelection } from "@/hooks/useSocialWebSocket";
+import type {
+  FinalizationState,
+  MeetingConfirmedPayload,
+  PeerSelection,
+  PeerTimeSelection,
+} from "@/hooks/useSocialWebSocket";
 
 // ┌─────────────────┐    setVoteCard/etc     ┌──────────────┐
 // │ AiAssistantPane │ ─────────────────────→ │ MeetingContext│
@@ -49,6 +54,14 @@ interface MeetingState {
   peerDateSelections: Record<string, PeerSelection>;
   // 실시간으로 다른 참여자들이 TimeBar에서 선택한 시간 범위 공유용
   peerTimeSelections: Record<string, PeerTimeSelection>;
+  // 유저별 불가능 날짜 배열 (내 것 + 남 것. user_id를 키로 사용)
+  unavailabilityByUser: Record<number, string[]>;
+  // AI 제안 카드 상태 (과반 도달 시 백엔드가 푸시)
+  finalizationProposal: FinalizationState | null;
+  // AI reason 생성 대기 중이면 shimmer 카드 렌더
+  finalizationPending: boolean;
+  // 최근 meeting_confirmed 이벤트 (성공 배너용)
+  lastConfirmedMeeting: MeetingConfirmedPayload | null;
 }
 
 interface MeetingContextValue extends MeetingState {
@@ -78,6 +91,14 @@ interface MeetingContextValue extends MeetingState {
   setPeerTimeSelections: (selections: Record<string, PeerTimeSelection>) => void;
   sendTimeSelection: ((date: string | null, start: number | null, end: number | null) => void) | null;
   setSendTimeSelection: (fn: ((date: string | null, start: number | null, end: number | null) => void) | null) => void;
+  // 불가능 날짜 공유 bridge: ChatPane WS ↔ CalendarPane
+  setUnavailabilityByUser: (by: Record<number, string[]>) => void;
+  sendUnavailableToggle: ((date: string, unavailable: boolean) => void) | null;
+  setSendUnavailableToggle: (fn: ((date: string, unavailable: boolean) => void) | null) => void;
+  // Finalization bridge — ChatPane(social WS)이 여기로 push, InfoPane/Card가 소비
+  setFinalizationProposal: (proposal: FinalizationState | null) => void;
+  setFinalizationPending: (pending: boolean) => void;
+  setLastConfirmedMeeting: (payload: MeetingConfirmedPayload | null) => void;
 }
 
 export const MeetingContext = createContext<MeetingContextValue | null>(null);
@@ -109,6 +130,10 @@ export function MeetingProvider({
     confirmedMeetingId: null,
     peerDateSelections: {},
     peerTimeSelections: {},
+    unavailabilityByUser: {},
+    finalizationProposal: null,
+    finalizationPending: false,
+    lastConfirmedMeeting: null,
   });
 
   const [sendMessageToAi, setSendMessageToAiRaw] = useState<((msg: string) => void) | null>(null);
@@ -137,6 +162,34 @@ export function MeetingProvider({
   const setPeerTimeSelections = useCallback((selections: Record<string, PeerTimeSelection>) => {
     setState((prev) => ({ ...prev, peerTimeSelections: selections }));
   }, []);
+
+  const [sendUnavailableToggle, setSendUnavailableToggleRaw] =
+    useState<((date: string, unavailable: boolean) => void) | null>(null);
+  const setSendUnavailableToggle = useCallback(
+    (fn: ((date: string, unavailable: boolean) => void) | null) => {
+      setSendUnavailableToggleRaw(() => fn);
+    },
+    [],
+  );
+
+  const setUnavailabilityByUser = useCallback((by: Record<number, string[]>) => {
+    setState((prev) => ({ ...prev, unavailabilityByUser: by }));
+  }, []);
+
+  const setFinalizationProposal = useCallback((proposal: FinalizationState | null) => {
+    setState((prev) => ({ ...prev, finalizationProposal: proposal }));
+  }, []);
+
+  const setFinalizationPending = useCallback((pending: boolean) => {
+    setState((prev) => ({ ...prev, finalizationPending: pending }));
+  }, []);
+
+  const setLastConfirmedMeeting = useCallback(
+    (payload: MeetingConfirmedPayload | null) => {
+      setState((prev) => ({ ...prev, lastConfirmedMeeting: payload }));
+    },
+    [],
+  );
 
   const setContextMode = useCallback((mode: ContextMode) => {
     setState((prev) => (prev.contextMode === mode ? prev : { ...prev, contextMode: mode }));
@@ -302,6 +355,16 @@ export function MeetingProvider({
       setPeerTimeSelections,
       sendTimeSelection,
       setSendTimeSelection,
+      unavailabilityByUser: state.unavailabilityByUser,
+      setUnavailabilityByUser,
+      sendUnavailableToggle,
+      setSendUnavailableToggle,
+      finalizationProposal: state.finalizationProposal,
+      finalizationPending: state.finalizationPending,
+      lastConfirmedMeeting: state.lastConfirmedMeeting,
+      setFinalizationProposal,
+      setFinalizationPending,
+      setLastConfirmedMeeting,
       setContextMode,
       setSelectedPlace,
       setRoom,
@@ -342,6 +405,16 @@ export function MeetingProvider({
       setPeerTimeSelections,
       sendTimeSelection,
       setSendTimeSelection,
+      state.unavailabilityByUser,
+      setUnavailabilityByUser,
+      sendUnavailableToggle,
+      setSendUnavailableToggle,
+      state.finalizationProposal,
+      state.finalizationPending,
+      state.lastConfirmedMeeting,
+      setFinalizationProposal,
+      setFinalizationPending,
+      setLastConfirmedMeeting,
       setAiTriggerIntent,
       setContextMode,
       refreshCalendar,

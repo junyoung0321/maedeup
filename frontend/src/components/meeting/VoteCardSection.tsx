@@ -125,6 +125,9 @@ export default function VoteCardSection() {
           scheduled_at: selectedSlot.start_at,
           end_at: selectedSlot.end_at,
           location_name: null,
+          // Eng review fix: attach meeting_id so the backend promotes the
+          // existing pending MeetingSchedule instead of creating a fresh one.
+          meeting_id: activeMeetingId ?? undefined,
           vote_options: voteCard.time_options.map((o) => ({
             slot_id: o.slot_id,
             label: o.label,

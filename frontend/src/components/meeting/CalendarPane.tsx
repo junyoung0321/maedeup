@@ -225,7 +225,6 @@ export default function CalendarPane() {
         background: "#fff",
         display: "flex",
         flexDirection: "column",
-        overflow: "hidden",
         fontFamily: "Pretendard Variable, Pretendard, sans-serif",
       }}
     >
@@ -553,11 +552,9 @@ export default function CalendarPane() {
       {/* Bottom section */}
       <div
         style={{
-          flex: 1,
           display: "flex",
           flexDirection: "column",
           padding: "10px clamp(8px, 1vw, 19px) clamp(10px, 1vw, 19px)",
-          overflow: "hidden",
         }}
       >
         {/* 다른 참여자들의 실시간 날짜 선택 요약 */}

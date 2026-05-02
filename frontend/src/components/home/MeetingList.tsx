@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Users } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import type { Room, MeetingItem } from "@/types";
 import EmptyState from "@/components/ui/EmptyState";

@@ -18,6 +18,7 @@
 import json
 import os
 import logging
+from preprocessing.io_utils import save_versioned
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +244,7 @@ def process_all_absa(
     existing.update(results)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(existing, f, ensure_ascii=False, indent=2)
+    save_versioned(output_path)
 
     # 통계 (전체 기준)
     food_active = sum(1 for r in existing.values() if r["food_score"] != 0)

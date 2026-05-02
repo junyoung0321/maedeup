@@ -23,19 +23,24 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 FEATURE_COLS = [
-    # 고정 12개
-    "rating_norm", "review_count_log", "blog_count_log", "price_level",
-    "mood_quiet", "mood_group", "mood_vibe", "mood_budget", "mood_private",
-    "is_chain", "category_depth1", "category_depth2",
-    # 시나리오 의존 8개
+    # 정량 3개 (price_level 제거: std=0 상수)
+    "rating_norm", "review_count_log", "blog_count_log",
+    # mood 2개 (mood_group/vibe/budget 제거: 1비율 79~87%, v2 gain<21로 식별력 없음. 2026-04-25)
+    "mood_quiet", "mood_private",
+    # 기타 고정 1개 (is_chain 제거: 커버리지 3.1% → 상수, gain=6. category_depth1 제거: depth2 포함, gain=29. 2026-04-26)
+    "category_depth2",
+    # 거리/공정성 3개
     "avg_distance_km", "max_distance_km", "fairness_score",
-    "category_match", "mood_match_count", "price_match",
-    "hour_suitability", "near_station",
+    # 시나리오 매칭 4개 (price_match 제거: price_level 상수로 인한 파생 무의미)
+    "category_match", "mood_match_count", "hour_suitability", "near_station",
     # 감성 4개
     "food_sentiment", "mood_sentiment", "svc_sentiment", "price_sentiment",
-    # 긍부정 2개
-    "sentiment_confidence", "label_score",
+    # sentiment_confidence 제거: v2 gain=39 (rating_norm 대비 8%), rating_norm과 r=0.554 (2026-04-25)
 ]
+
+# LightGBM native categorical handling — 정수 인코딩이지만 연속형이 아닌 명목형 피쳐
+# categorical_feature 미지정 시 LightGBM이 연속형으로 처리 (depth=2가 depth=1의 "2배"로 해석)
+CAT_FEATURES = ["category_depth2"]
 
 LABEL_COL = "relevance"
 GROUP_COL = "scenario_id"
@@ -77,13 +82,13 @@ def evaluate_scenarios(df: pd.DataFrame, scores: np.ndarray, k: int = 10) -> dic
 V1_WEIGHTS = {
     "rating_norm":       0.20,
     "fairness_score":    0.15,
-    "avg_distance_km":   -0.15,   # 거리 역방향
+    "avg_distance_km":   -0.15,
     "review_count_log":  0.10,
     "category_match":    0.15,
     "mood_match_count":  0.10,
-    "food_sentiment":    0.05,
-    "mood_sentiment":    0.05,
-    "price_match":       0.05,
+    "food_sentiment":    0.075,
+    "mood_sentiment":    0.075,
+    # sentiment_confidence 제거 → 0.05 weight를 food/mood_sentiment에 0.025씩 재분배
 }
 
 
@@ -145,7 +150,7 @@ def train_v1_5(
 
     model = lgb.LGBMRanker(**params)
     t0 = time.time()
-    model.fit(X_fit, y_fit, group=g_fit, feature_name=FEATURE_COLS)
+    model.fit(X_fit, y_fit, group=g_fit, feature_name=FEATURE_COLS, categorical_feature=CAT_FEATURES)
     logger.info(f"v1.5 학습 완료 ({time.time()-t0:.1f}s)")
 
     test_scores = model.predict(X_test)
@@ -211,6 +216,8 @@ def train_v2(
             X_train, y_train, group=g_train,
             eval_set=[(X_val, y_val)], eval_group=[g_val],
             eval_at=[10],
+            feature_name=FEATURE_COLS,
+            categorical_feature=CAT_FEATURES,
             callbacks=[lgb.early_stopping(20, verbose=False), lgb.log_evaluation(-1)],
         )
         val_scores = model.predict(X_val)
@@ -240,7 +247,7 @@ def train_v2(
     g_fit = _make_groups(fit_df)
 
     final_model = lgb.LGBMRanker(**best_params)
-    final_model.fit(X_fit, y_fit, group=g_fit, feature_name=FEATURE_COLS)
+    final_model.fit(X_fit, y_fit, group=g_fit, feature_name=FEATURE_COLS, categorical_feature=CAT_FEATURES)
 
     # Test 평가
     test_scores = final_model.predict(X_test)

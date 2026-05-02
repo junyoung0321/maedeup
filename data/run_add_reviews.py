@@ -5,7 +5,8 @@ run_search.py + run_detail.py 경로로 수집된 장소들은 review_texts가 �
 getVisitorReviews GraphQL로 텍스트를 수집하여 업데이트.
 
 사용법:
-  python run_add_reviews.py                    # 전체 (약 3,000개)
+  python run_add_reviews.py                    # 광역시만 (기본)
+  python run_add_reviews.py --all-cities       # 전체 도시 포함
   python run_add_reviews.py --test 20          # 20개만 테스트
   python run_add_reviews.py --max-reviews 20  # 장소당 최대 리뷰 수 (기본 20)
   python run_add_reviews.py --headless         # headless 모드
@@ -18,9 +19,12 @@ import time
 import logging
 from playwright.sync_api import sync_playwright
 from tqdm import tqdm
+import pandas as pd
 
 from config import RAW_DIR
 from crawler.browser import create_browser_context, init_detail_page, fetch_review_texts
+
+METRO_CITIES = {'서울', '부산', '인천', '대구', '대전', '광주', '울산', '세종'}
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,17 +48,32 @@ def save_checkpoint(done: set[str]):
         json.dump(list(done), f)
 
 
-def find_targets(limit: int = 0) -> list[str]:
-    """review_texts 없고 review_count > 0인 raw 파일 pid 목록."""
+def load_metro_pids() -> set[str]:
+    """places.csv에서 광역시 장소 pid 목록 반환."""
+    df = pd.read_csv("output/places.csv", dtype={"naver_place_id": str})
+    city = df["hub"].str.split("_").str[0]
+    return set(df.loc[city.isin(METRO_CITIES), "naver_place_id"].astype(str))
+
+
+def find_targets(limit: int = 0, metro_only: bool = True) -> list[str]:
+    """review_texts 없고 review_count > 0인 raw 파일 pid 목록.
+
+    metro_only=True(기본)이면 광역시/특별시 장소만 대상으로 함.
+    """
+    metro_pids = load_metro_pids() if metro_only else None
+
     targets = []
     for fname in os.listdir(RAW_DIR):
         if not fname.endswith(".json"):
+            continue
+        pid = fname.replace(".json", "")
+        if metro_pids is not None and pid not in metro_pids:
             continue
         path = os.path.join(RAW_DIR, fname)
         with open(path, encoding="utf-8") as f:
             d = json.load(f)
         if not d.get("review_texts") and d.get("review_count", 0) > 0:
-            targets.append(fname.replace(".json", ""))
+            targets.append(pid)
         if limit and len(targets) >= limit:
             break
     return targets
@@ -65,9 +84,13 @@ def main():
     parser.add_argument("--test", type=int, default=0, metavar="N", help="N개만 처리")
     parser.add_argument("--max-reviews", type=int, default=20, help="장소당 최대 리뷰 수 (기본 20)")
     parser.add_argument("--headless", action="store_true", help="headless 모드")
+    parser.add_argument("--all-cities", action="store_true", help="광역시 외 도시 포함")
     args = parser.parse_args()
 
-    targets = find_targets(limit=args.test)
+    metro_only = not args.all_cities
+    if metro_only:
+        logger.info("대상: 광역시/특별시 장소만 (--all-cities 로 전체 포함 가능)")
+    targets = find_targets(limit=args.test, metro_only=metro_only)
     done = load_checkpoint()
 
     todo = [pid for pid in targets if pid not in done]

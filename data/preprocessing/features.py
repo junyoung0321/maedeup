@@ -10,6 +10,7 @@
 - output/features/place_features.csv (장소당 16개 feature)
 """
 
+import ast
 import json
 import math
 import os
@@ -18,6 +19,7 @@ import logging
 
 import pandas as pd
 import numpy as np
+from preprocessing.io_utils import save_versioned
 
 logger = logging.getLogger(__name__)
 
@@ -61,13 +63,17 @@ def compute_place_features(
     else:
         logger.warning(f"sentiment_labels 없음 (run_sentiment_label.py 미실행): {sentiment_label_path}")
 
-    # keyword_tags 파싱
+    # keyword_tags 파싱 (CSV에 Python repr ['a','b'] 형식으로 저장됨)
     def parse_tags(x):
         if pd.isna(x):
             return []
         try:
             return json.loads(x)
         except (json.JSONDecodeError, TypeError):
+            pass
+        try:
+            return ast.literal_eval(x)
+        except Exception:
             return []
 
     df["_tags"] = df["keyword_tags"].apply(parse_tags)
@@ -86,7 +92,11 @@ def compute_place_features(
     df["_avg_price"] = df["menu_prices"].apply(parse_avg_price)
 
     # ── Feature 1~3: 정량 지표 정규화 ──
-    df["rating_norm"] = df["rating"] / 5.0
+    # rating: percentile rank (rating>0 장소만 대상, 0은 정보 없음으로 0.0 유지)
+    # /5.0 대비 실제 분포 반영 — mean=4.443이 0.5로, 4.0(하위10%)이 0.1로 매핑
+    active_rating = df["rating"] > 0
+    df["rating_norm"] = 0.0
+    df.loc[active_rating, "rating_norm"] = df.loc[active_rating, "rating"].rank(pct=True)
 
     max_review_log = math.log(df["review_count"].max() + 1) if df["review_count"].max() > 0 else 1
     df["review_count_log"] = df["review_count"].apply(lambda x: math.log(x + 1) / max_review_log)
@@ -94,34 +104,23 @@ def compute_place_features(
     max_blog_log = math.log(df["blog_review_count"].max() + 1) if df["blog_review_count"].max() > 0 else 1
     df["blog_count_log"] = df["blog_review_count"].apply(lambda x: math.log(x + 1) / max_blog_log)
 
-    # ── Feature 4: price_level (1~4 구간화) ──
-    def price_level(avg_price):
-        if avg_price <= 0:
-            return 2  # 정보 없으면 중간값
-        if avg_price < 8000:
-            return 1
-        if avg_price < 15000:
-            return 2
-        if avg_price < 30000:
-            return 3
-        return 4
+    # price_level 제거: menu_prices 미노출 장소가 대부분이라 전체가 default=2로 고정됨 (std=0.0)
+    # → 상수 피쳐는 모델에 정보 기여 없음 (2026-04-25 제거)
 
-    df["price_level"] = df["_avg_price"].apply(price_level)
-
-    # ── Feature 5~9: mood 키워드 기반 ──
-    # 네이버 themes는 대분류이므로, 원래 keyword_tags에서 세부 키워드 매칭
-    # 현재 keyword_tags가 대분류(맛/분위기/서비스 등)이므로 부분 매칭
-    mood_keywords = {
-        "mood_quiet": ["조용", "아늑", "편안"],
-        "mood_group": ["단체", "모임", "회식", "넓"],
-        "mood_vibe": ["분위기", "감성", "인테리어", "예쁜"],
-        "mood_budget": ["가성비", "저렴", "합리"],
-        "mood_private": ["룸", "개인", "프라이빗", "독립"],
+    # ── Feature 5~9: mood 피쳐 — keyword_tags 대분류 기반 ──
+    # keyword_tags는 네이버 키워드 리뷰 카테고리명 (맛/분위기/가격/목적 등 대분류)
+    # 해당 카테고리에 리뷰가 있다 = 그 속성이 두드러지는 장소
+    mood_tag_map = {
+        "mood_quiet": ["전망"],          # 전망 리뷰 = 뷰/분위기 특화 (조용한 공간)
+        "mood_group": ["목적"],          # 목적 리뷰 = 단체/모임 목적 언급
+        "mood_vibe": ["분위기"],         # 분위기 리뷰 = 감성/인테리어 특화
+        "mood_budget": ["가격"],         # 가격 리뷰 = 가성비 의식 장소
+        "mood_private": ["예약"],        # 예약 리뷰 = 프라이빗/예약제 공간
     }
 
-    for feature_name, keywords in mood_keywords.items():
+    for feature_name, tag_list in mood_tag_map.items():
         df[feature_name] = df["_tags"].apply(
-            lambda tags: 1 if any(kw in " ".join(tags) for kw in keywords) else 0
+            lambda tags: 1 if any(t in tags for t in tag_list) else 0
         )
 
     # ── Feature 10: is_chain ──
@@ -130,9 +129,26 @@ def compute_place_features(
     )
 
     # ── Feature 11~12: category encoding ──
-    # category_depth1: 대분류
-    cat_map_depth1 = {"음식점": 0, "카페": 1, "술집": 2, "스터디": 3}
-    df["category_depth1"] = df["category_group"].map(cat_map_depth1).fillna(0).astype(int)
+    # category_depth1: category 컬럼 depth1에서 추출 (category_group 결측 2,955개 커버)
+    # category_group은 12.5% 결측 → fillna(0)으로 모두 음식점으로 처리되는 버그 수정
+    # category 컬럼 예: "음식점 > 한식 > 한정식", "카페,디저트 > 카페" — 첫 토큰이 대분류
+    _CAT_DEPTH1_KEYWORDS = {
+        "카페": 1, "디저트": 1,          # "카페,디저트" 포함
+        "술집": 2, "bar": 2, "바": 2,
+        "스터디": 3,
+        "음식점": 0,
+    }
+
+    def extract_depth1(cat_str):
+        if pd.isna(cat_str):
+            return 0  # 실제 정보 없음 → 음식점(0)으로 기본값
+        token = str(cat_str).split(">")[0].strip().lower()
+        for kw, code in _CAT_DEPTH1_KEYWORDS.items():
+            if kw in token:
+                return code
+        return 0  # 매핑 안 되면 음식점(0)
+
+    df["category_depth1"] = df["category"].apply(extract_depth1)
 
     # category_depth2: 중분류 (category 컬럼에서 추출)
     def extract_depth2(cat_str):
@@ -163,39 +179,43 @@ def compute_place_features(
         if active_mask.sum() > 0:
             df.loc[active_mask, col] = df.loc[active_mask, col].rank(pct=True)
 
-    # ── Feature 25~26: 긍부정 레이블 (평점 × 텍스트 일치도) ──
+    # ── Feature 25: 긍부정 신뢰도 ──
     df["sentiment_confidence"] = df["naver_place_id"].apply(
         lambda pid: sentiment_labels.get(str(pid), {}).get("confidence", 0.5)
     )
-    df["label_score"] = df["naver_place_id"].apply(
-        lambda pid: sentiment_labels.get(str(pid), {}).get("label_score", 0.0)
-    )
+    # label_score 제거: sentiment_confidence(r=0.832), food_sentiment(r=0.721)과 고상관
+    # → 동일 정보를 중복 반영. sentiment_confidence가 더 직접적인 지표 (2026-04-25 제거)
 
     # ── 결과 DataFrame 구성 ──
+    # sentiment_confidence 제거: v2 gain=39 (rating_norm=496의 8% 수준)
+    # → rating_norm과 r=0.554 상관, 독립 정보 기여 미미 (2026-04-25 제거)
     feature_cols = [
         "naver_place_id", "place_name", "lat", "lng", "hub", "category_group",
-        # 12 고정 feature
-        "rating_norm", "review_count_log", "blog_count_log", "price_level",
+        # 서빙/시뮬레이션 메타데이터 (학습 feature 제외): compute_scenario_features에 필요
+        "category_depth1",
+        # 9 고정 feature (price_level 제거: std=0 상수)
+        # mood_group/vibe/budget은 시뮬레이션 mood_match_count 계산에 필요 → CSV에는 유지, 학습 feature 제외
+        "rating_norm", "review_count_log", "blog_count_log",
         "mood_quiet", "mood_group", "mood_vibe", "mood_budget", "mood_private",
-        "is_chain", "category_depth1", "category_depth2",
+        # is_chain 제거: 장소명 키워드 기반이라 커버리지 3.1% → 사실상 상수, v2 gain=6 (2026-04-26)
+        "category_depth2",
         # 4 감성 feature (ABSA 4축)
         "food_sentiment", "mood_sentiment", "svc_sentiment", "price_sentiment",
-        # 2 긍부정 레이블 feature
-        "sentiment_confidence", "label_score",
     ]
 
     result = df[feature_cols].copy()
     result.to_csv(output_path, index=False, encoding="utf-8-sig")
+    save_versioned(output_path)
 
-    logger.info(f"Feature 저장: {output_path} ({len(result)}곳, {len(feature_cols)-6}개 feature: 고정12 + 감성4 + 긍부정2)")
+    logger.info(f"Feature 저장: {output_path} ({len(result)}곳, {len(feature_cols)-7}개 feature: 고정9 + 감성4)")
 
     # 통계
     sentiment_active = (result[["food_sentiment", "mood_sentiment", "svc_sentiment", "price_sentiment"]] != 0).any(axis=1).sum()
-    chain_count = result["is_chain"].sum()
+    chain_count = df["is_chain"].sum()  # is_chain은 feature_cols 제외, df에서 직접 참조
 
     return {
         "places": len(result),
-        "features": len(feature_cols) - 6,
+        "features": len(feature_cols) - 7,
         "sentiment_active": int(sentiment_active),
         "chain_count": int(chain_count),
         "output_path": output_path,

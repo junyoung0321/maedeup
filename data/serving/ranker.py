@@ -43,40 +43,38 @@ logger = logging.getLogger(__name__)
 
 # 학습에 사용된 feature 순서 (train.py의 FEATURE_COLS와 동일해야 함)
 FEATURE_COLS = [
-    # 고정 12개
-    "rating_norm", "review_count_log", "blog_count_log", "price_level",
-    "mood_quiet", "mood_group", "mood_vibe", "mood_budget", "mood_private",
-    "is_chain", "category_depth1", "category_depth2",
-    # 시나리오 의존 8개
+    # 정량 3개
+    "rating_norm", "review_count_log", "blog_count_log",
+    # mood 2개
+    "mood_quiet", "mood_private",
+    # 고정 1개
+    "category_depth2",
+    # 거리/공정성 3개
     "avg_distance_km", "max_distance_km", "fairness_score",
-    "category_match", "mood_match_count", "price_match",
-    "hour_suitability", "near_station",
+    # 시나리오 매칭 4개
+    "category_match", "mood_match_count", "hour_suitability", "near_station",
     # 감성 4개
     "food_sentiment", "mood_sentiment", "svc_sentiment", "price_sentiment",
-    # 긍부정 2개
-    "sentiment_confidence", "label_score",
 ]
 
 # 고정 feature 기본값 (place_features 미등록 장소 fallback)
+# mood_group/vibe/budget은 FEATURE_COLS 제외지만 compute_scenario_features(mood_match_count)에 필요
+# category_depth1은 FEATURE_COLS 제외지만 compute_scenario_features(category_match, hour_suitability)에 필요
 _FIXED_DEFAULTS = {
     "rating_norm": 0.7,
     "review_count_log": 0.3,
     "blog_count_log": 0.2,
-    "price_level": 2,
     "mood_quiet": 0,
     "mood_group": 0,
     "mood_vibe": 0,
     "mood_budget": 0,
     "mood_private": 0,
-    "is_chain": 0,
-    "category_depth1": -1,
+    "category_depth1": 0,
     "category_depth2": -1,
     "food_sentiment": 0.5,
     "mood_sentiment": 0.5,
     "svc_sentiment": 0.5,
     "price_sentiment": 0.5,
-    "sentiment_confidence": 0.5,
-    "label_score": 0.5,
 }
 
 _MODEL_PATH = os.path.join(
@@ -112,11 +110,10 @@ def _load_place_features() -> pd.DataFrame:
 def _get_fixed_features(naver_place_id: Optional[str], place_row: Optional[pd.Series] = None) -> dict:
     """place_features에서 고정 feature를 조회. 미등록이면 기본값 사용."""
     fixed_cols = [
-        "rating_norm", "review_count_log", "blog_count_log", "price_level",
+        "rating_norm", "review_count_log", "blog_count_log",
         "mood_quiet", "mood_group", "mood_vibe", "mood_budget", "mood_private",
-        "is_chain", "category_depth1", "category_depth2",
+        "category_depth1", "category_depth2",
         "food_sentiment", "mood_sentiment", "svc_sentiment", "price_sentiment",
-        "sentiment_confidence", "label_score",
     ]
 
     if place_row is not None:
@@ -133,7 +130,7 @@ def _get_fixed_features(naver_place_id: Optional[str], place_row: Optional[pd.Se
 
 
 def build_features(candidates: list[dict], scenario: dict) -> pd.DataFrame:
-    """후보 장소 리스트 + 시나리오 → 26-feature DataFrame.
+    """후보 장소 리스트 + 시나리오 → 17-feature DataFrame.
 
     Args:
         candidates: 후보 장소 리스트. 각 dict는 최소 {"lat": float, "lng": float} 필요.
@@ -146,7 +143,7 @@ def build_features(candidates: list[dict], scenario: dict) -> pd.DataFrame:
     """
     rows = []
     for cand in candidates:
-        # 고정 feature 18개 조회 (compute_scenario_features도 일부 참조)
+        # 고정 feature 조회 (mood_group/vibe/budget은 compute_scenario_features 내부용)
         naver_id = str(cand.get("naver_place_id", "")) or None
         fixed_feat = _get_fixed_features(naver_id)
 

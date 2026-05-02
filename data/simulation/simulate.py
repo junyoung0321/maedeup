@@ -56,7 +56,12 @@ def haversine_km(lat1, lng1, lat2, lng2):
 
 def generate_scenario(places_df: pd.DataFrame, scenario_id: int) -> dict:
     """단일 시나리오 생성.
-    반환: {scenario_id, purpose, budget, moods, time_slot, participants: [{lat, lng}]}
+
+    반환: {scenario_id, purpose, budget, moods, time_slot, participants,
+           center_lat, center_lng, location_specified, effective_center_lat, effective_center_lng}
+
+    location_specified=True  (50%): 대화에서 특정 지역 명시 → hub를 중심으로 후보 선택
+    location_specified=False (50%): 지역 미명시 → 참여자 무게중심을 중심으로 후보 선택
     """
     # 목적 선택 (가중 랜덤)
     purposes = list(PURPOSES.keys())
@@ -67,18 +72,35 @@ def generate_scenario(places_df: pd.DataFrame, scenario_id: int) -> dict:
     # 참여자 (3~8명)
     n_participants = random.randint(3, 8)
 
-    # 거점 하나 선택 → 참여자 위치는 거점 중심 반경 5km 내
+    # 거점 하나 선택 (location_specified=True 시 명시 지역, False 시 참여자 분산 기준점)
     hub_row = places_df.sample(1).iloc[0]
     center_lat, center_lng = hub_row["lat"], hub_row["lng"]
 
+    # 지역 명시 여부 결정 (50/50)
+    location_specified = random.random() < 0.5
+
+    if location_specified:
+        # 특정 지역 명시: 참여자 hub 반경 5km 내
+        spread_lat, spread_lng = 0.045, 0.055
+    else:
+        # 지역 미명시: 참여자 분산 넓음 (~10km) → 무게중심 사용
+        spread_lat, spread_lng = 0.090, 0.110
+
     participants = []
     for _ in range(n_participants):
-        dlat = random.uniform(-0.045, 0.045)  # ~5km
-        dlng = random.uniform(-0.055, 0.055)
+        dlat = random.uniform(-spread_lat, spread_lat)
+        dlng = random.uniform(-spread_lng, spread_lng)
         participants.append({
             "lat": center_lat + dlat,
             "lng": center_lng + dlng,
         })
+
+    if location_specified:
+        effective_center_lat = center_lat
+        effective_center_lng = center_lng
+    else:
+        effective_center_lat = float(np.mean([p["lat"] for p in participants]))
+        effective_center_lng = float(np.mean([p["lng"] for p in participants]))
 
     # 예산
     budget = random.randint(*purpose_info["budget_range"])
@@ -87,8 +109,8 @@ def generate_scenario(places_df: pd.DataFrame, scenario_id: int) -> dict:
     n_moods = random.randint(1, 3)
     moods = random.sample(MOOD_POOL, k=n_moods)
 
-    # 시간대
-    time_slot = random.choice(["점심", "저녁", "심야"])
+    # 시간대 (저녁 0.5, 점심 0.3, 심야 0.2)
+    time_slot = random.choices(["저녁", "점심", "심야"], weights=[0.5, 0.3, 0.2], k=1)[0]
 
     # 숨겨진 사용자 유형 (label 생성에만 사용, 학습 feature 제외)
     user_type = random.choice(list(USER_TYPES.keys()))
@@ -103,6 +125,9 @@ def generate_scenario(places_df: pd.DataFrame, scenario_id: int) -> dict:
         "participants": participants,
         "center_lat": center_lat,
         "center_lng": center_lng,
+        "location_specified": location_specified,
+        "effective_center_lat": effective_center_lat,
+        "effective_center_lng": effective_center_lng,
         "user_type": user_type,
     }
 
@@ -118,8 +143,8 @@ def select_candidates(
     - (n_candidates - n_hard_negatives)개: 중심 반경 3km 내 근거리
     - n_hard_negatives개: 4~8km 원거리 (label-0 유도용 hard negative)
     """
-    center_lat = scenario["center_lat"]
-    center_lng = scenario["center_lng"]
+    center_lat = scenario.get("effective_center_lat", scenario["center_lat"])
+    center_lng = scenario.get("effective_center_lng", scenario["center_lng"])
 
     # ── 근거리 후보 (3km 이내) ──────────────────────────
     lat_near = 0.027   # ~3km
@@ -185,22 +210,18 @@ def compute_scenario_features(candidate: pd.Series, scenario: dict) -> dict:
     matched = sum(1 for m in requested_moods if candidate.get(m, 0) == 1)
     mood_match = matched / len(requested_moods) if requested_moods else 0
 
-    # price_match: 예산 내 여부
-    price_level = candidate["price_level"]
-    budget = scenario["budget"]
-    # price_level 1~4 → 대략적 가격대
-    price_ranges = {1: 8000, 2: 15000, 3: 30000, 4: 50000}
-    est_price = price_ranges.get(price_level, 15000)
-    price_match = 1 if est_price <= budget else 0
+    # price_match 제거: price_level이 항상 2(상수)였으므로 budget>=15000 여부만 판단 → 무의미
+    # (2026-04-25 제거)
 
     # hour_suitability
     time_slot = scenario["time_slot"]
     cat = candidate["category_depth1"]
     hour_suit = HOUR_SUITABILITY.get(time_slot, {}).get(cat, 0.5)
 
-    # near_station: 간소화 (도심 거점 1.5km 내면 1)
+    # near_station: 선택 중심(명시 지역 or 참여자 무게중심) 1.5km 내면 1
     center_dist = haversine_km(
-        scenario["center_lat"], scenario["center_lng"],
+        scenario.get("effective_center_lat", scenario["center_lat"]),
+        scenario.get("effective_center_lng", scenario["center_lng"]),
         place_lat, place_lng
     )
     near_station = 1 if center_dist < 1.5 else 0
@@ -211,7 +232,6 @@ def compute_scenario_features(candidate: pd.Series, scenario: dict) -> dict:
         "fairness_score": round(fairness, 3),
         "category_match": cat_match,
         "mood_match_count": round(mood_match, 3),
-        "price_match": price_match,
         "hour_suitability": round(hour_suit, 3),
         "near_station": near_station,
         # label 계산 전용 (학습 feature 제외)
@@ -241,12 +261,11 @@ def compute_pseudo_label(features: dict, user_type: str) -> int:
     dist = features["avg_distance_km"]
     dist_score = max(0.0, 1.0 - dist / 5.0)
 
-    # match_score: 4개 시나리오 부합 요소 평균
+    # match_score: 3개 시나리오 부합 요소 평균 (price_match 제거)
     cat = float(features["category_match"])
     mood = min(float(features["mood_match_count"]), 1.0)
-    price = float(features.get("price_match", 0))
     time_ = float(features.get("hour_suitability", 0.5))
-    match_score = (cat + mood + price + time_) / 4.0
+    match_score = (cat + mood + time_) / 3.0
 
     # quality_score: 평점 정규화
     quality_score = float(features["rating_norm"])
@@ -271,7 +290,7 @@ def compute_pseudo_label(features: dict, user_type: str) -> int:
     raw += random.gauss(0, 0.10)
     raw = max(0.0, min(1.0, raw))
 
-    return max(0, min(7, int(raw * 8)))
+    return max(0, min(7, round(raw * 7)))
 
 
 def run_simulation(
@@ -309,18 +328,15 @@ def run_simulation(
             row = {
                 "scenario_id": scenario["scenario_id"],
                 "naver_place_id": cand["naver_place_id"],
-                # 12 고정 feature
+                # 8 고정 feature (price_level 제거: std=0, mood_group/vibe/budget 제거: v2 gain<21)
+                # mood_group(79.8%=1), mood_vibe(78.4%=1), mood_budget(86.9%=1) → 분산 없어 식별력 없음
                 "rating_norm": cand["rating_norm"],
                 "review_count_log": cand["review_count_log"],
                 "blog_count_log": cand["blog_count_log"],
-                "price_level": cand["price_level"],
                 "mood_quiet": cand["mood_quiet"],
-                "mood_group": cand["mood_group"],
-                "mood_vibe": cand["mood_vibe"],
-                "mood_budget": cand["mood_budget"],
                 "mood_private": cand["mood_private"],
-                "is_chain": cand["is_chain"],
-                "category_depth1": cand["category_depth1"],
+                # is_chain 제거: 키워드 커버리지 3.1% → 상수에 가까움, v2 gain=6 (2026-04-26)
+                # category_depth1 제거: depth2에 대분류 정보 포함됨, v2 gain=29 (2026-04-26)
                 "category_depth2": cand["category_depth2"],
                 # 8 시나리오 의존 feature
                 **scen_features,
@@ -329,9 +345,7 @@ def run_simulation(
                 "mood_sentiment": cand["mood_sentiment"],
                 "svc_sentiment": cand["svc_sentiment"],
                 "price_sentiment": cand["price_sentiment"],
-                # 2 긍부정 레이블 feature
-                "sentiment_confidence": cand["sentiment_confidence"],
-                "label_score": cand["label_score"],
+                # sentiment_confidence 제거: v2 gain=39 (rating_norm 대비 8%), r=0.554 (2026-04-25 제거)
             }
 
             # Pseudo-label (user_type, _center_dist_km은 학습 row에 포함 안 됨)

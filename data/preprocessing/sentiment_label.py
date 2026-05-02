@@ -33,6 +33,7 @@ import logging
 import pandas as pd
 
 from preprocessing.absa import SENTIMENT_SCORES, NEGATION_FLIP_FACTOR
+from preprocessing.io_utils import save_versioned
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +191,7 @@ def process_all_sentiment_labels(
     existing.update(results)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(existing, f, ensure_ascii=False, indent=2)
+    save_versioned(output_path)
 
     # 전체 통계
     all_stats = {"strong": 0, "conflict": 0, "neutral": 0, "unknown": 0}

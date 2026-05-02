@@ -61,6 +61,201 @@ async def _build_conversation_summary(messages: list[ChatMessage]) -> str:
     return (await call_gemini(prompt)).strip()
 
 
+async def _emit_auto_trigger_greeting(
+    redis_client: aioredis.Redis | None,
+    room_id: str,
+    channel: str,
+    content: str,
+) -> None:
+    try:
+        async with AsyncSessionLocal() as sess:
+            greeting = ChatMessage(
+                pane_type=PaneType.agent,
+                role="assistant",
+                content=content,
+                sender="매듭 AI",
+                room_id=int(room_id) if room_id else None,
+                user_id=None,
+                visibility=Visibility.shared.value,
+            )
+            sess.add(greeting)
+            await sess.commit()
+            await sess.refresh(greeting)
+        await _publish_agent_message(
+            redis_client,
+            channel,
+            json.dumps(
+                {
+                    "id": greeting.id,
+                    "pane_type": greeting.pane_type,
+                    "role": greeting.role,
+                    "content": greeting.content,
+                    "sender": greeting.sender,
+                    "created_at": greeting.created_at.isoformat(),
+                    "visibility": greeting.visibility,
+                    "user_id": greeting.user_id,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    except Exception:
+        logger.debug("Failed to emit auto-trigger greeting", exc_info=True)
+
+
+async def _run_auto_trigger_pipeline(
+    room_id: str,
+    trigger_content: str,
+    trigger_intent: str,
+    trigger_reason: str,
+    slot_context: dict,
+) -> None:
+    shared_channel = f"agent:{room_id}"
+    try:
+        redis_client = aioredis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+    except Exception:
+        logger.exception("Redis client unavailable for detached auto-trigger room %s", room_id)
+        redis_client = None
+
+    try:
+        try:
+            async with AsyncSessionLocal() as session:
+                summary = await extract_meeting_summary(room_id, session)
+            if summary and any(summary.get(k) for k in ("date", "place", "headcount", "type")):
+                await _publish_agent_message(
+                    redis_client,
+                    shared_channel,
+                    json.dumps(
+                        {
+                            "type": "meeting_summary",
+                            "date": summary.get("date"),
+                            "place": summary.get("place"),
+                            "headcount": summary.get("headcount"),
+                            "meeting_type": summary.get("type"),
+                            "notes": summary.get("notes", []),
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+        except Exception:
+            logger.warning("Meeting summary extraction failed for room %s", room_id, exc_info=True)
+
+        if trigger_reason == "all_members_selected":
+            await _emit_auto_trigger_greeting(
+                redis_client,
+                room_id,
+                shared_channel,
+                "모두 시간대를 선택했어요! 일정을 조율해볼게요 📅",
+            )
+        elif trigger_reason in {"stalemate_judged", "conclusion_detected"}:
+            await _emit_auto_trigger_greeting(
+                redis_client,
+                room_id,
+                shared_channel,
+                "대화에서 일정 조율이 필요해 보여요! 제가 도와드릴게요 🗓️",
+            )
+
+        if trigger_intent not in {"meeting_schedule", "place_suggestion"}:
+            return
+
+        try:
+            room_pk_val = int(room_id)
+        except (TypeError, ValueError):
+            room_pk_val = None
+
+        async with AsyncSessionLocal() as session:
+            context = await MessageReader.load_agent_context(
+                session=session,
+                room_id=room_pk_val,
+                viewer_user_id=None,
+            )
+            result = await run_pipeline(
+                room_id,
+                context,
+                session,
+                slot_context=slot_context,
+            )
+
+        for key in (
+            "slot_filling_turns",
+            "date_hint",
+            "place_hint",
+            "place_coord",
+            "confirmed_date",
+            "confirmed_time",
+            "confirmed_place",
+            "headcount",
+            "meeting_type",
+            "default_place_hint",
+            "conversation_summary",
+            "missing_slots",
+        ):
+            if result.get(key) is not None:
+                slot_context[key] = result[key]
+        slot_context["message_count_since_last_trigger"] = 0
+
+        for new_msg in result.get("new_assistant_messages", []):
+            if new_msg.get("emitted_early"):
+                continue
+            await _publish_agent_message(
+                redis_client,
+                shared_channel,
+                json.dumps(new_msg, ensure_ascii=False),
+            )
+
+        vote_card_payload = result.get("vote_card_payload")
+        if vote_card_payload and not result.get("vote_card_emitted_early"):
+            await _publish_agent_message(
+                redis_client,
+                shared_channel,
+                json.dumps({"type": "vote_card", **vote_card_payload}, ensure_ascii=False),
+            )
+
+        place_recommendation_payload = result.get("place_recommendation_payload")
+        if place_recommendation_payload:
+            await _publish_agent_message(
+                redis_client,
+                shared_channel,
+                json.dumps(
+                    {"type": "place_recommendation", **place_recommendation_payload},
+                    ensure_ascii=False,
+                ),
+            )
+
+        maedeup_card_payload = result.get("maedeup_card_payload")
+        if maedeup_card_payload:
+            await _publish_agent_message(
+                redis_client,
+                shared_channel,
+                json.dumps({"type": "maedeup_card", **maedeup_card_payload}, ensure_ascii=False),
+            )
+    except Exception:
+        logger.exception("Detached auto-trigger pipeline failed for room %s", room_id)
+    finally:
+        if redis_client is not None:
+            with suppress(Exception):
+                await redis_client.aclose()
+
+
+def _log_detached_task_result(task: asyncio.Task) -> None:
+    if task.cancelled():
+        return
+    try:
+        exc = task.exception()
+    except Exception:
+        logger.exception("Failed to inspect detached auto-trigger task")
+        return
+    if exc is not None:
+        logger.error(
+            "Detached auto-trigger task crashed",
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+
+
 async def _redis_subscriber(
     channels: list[str],
     websocket: WebSocket,
@@ -162,8 +357,6 @@ async def agent_ws(
     # docs/ai-separation.md §4.1 — 채널 분리
     shared_channel = f"agent:{room_id}"
     user_channel = f"agent:{room_id}:user:{user_id_check}"
-    # 이전 코드와의 호환을 위해 channel 변수는 유지 (기본 발행 채널 = shared)
-    channel = shared_channel
     auto_trigger_queue: asyncio.Queue = asyncio.Queue()
     manager.add(shared_channel, websocket)
     manager.add(user_channel, websocket)
@@ -267,169 +460,20 @@ async def agent_ws(
                 continue
             _last_auto_trigger_time = now
 
-            # 소셜 채팅 기반 모임 요약 추출 및 발행
-            try:
-                async with AsyncSessionLocal() as session:
-                    summary = await extract_meeting_summary(room_id, session)
-                if summary and any(summary.get(k) for k in ("date", "place", "headcount", "type")):
-                    await _publish_agent_message(
-                        r,
-                        channel,
-                        json.dumps(
-                            {
-                                "type": "meeting_summary",
-                                "date": summary.get("date"),
-                                "place": summary.get("place"),
-                                "headcount": summary.get("headcount"),
-                                "meeting_type": summary.get("type"),
-                                "notes": summary.get("notes", []),
-                            },
-                            ensure_ascii=False,
-                        ),
-                    )
-            except Exception:
-                logger.warning("Meeting summary extraction failed for room %s", room_id, exc_info=True)
-
-            # 전원 선택 완료 시 AI 안내 메시지를 먼저 발행
             trigger_reason = trigger.get("trigger_reason", "")
-            if trigger_reason == "all_members_selected":
-                try:
-                    async with AsyncSessionLocal() as sess:
-                        greeting = ChatMessage(
-                            pane_type=PaneType.agent,
-                            role="assistant",
-                            content="모두 시간대를 선택했어요! 일정을 조율해볼게요 📅",
-                            sender="매듭 AI",
-                            room_id=int(room_id) if room_id else None,
-                            user_id=None,
-                            visibility=Visibility.shared.value,
-                        )
-                        sess.add(greeting)
-                        await sess.commit()
-                        await sess.refresh(greeting)
-                    await _publish_agent_message(
-                        r, shared_channel,
-                        json.dumps({
-                            "id": greeting.id,
-                            "pane_type": greeting.pane_type,
-                            "role": greeting.role,
-                            "content": greeting.content,
-                            "sender": greeting.sender,
-                            "created_at": greeting.created_at.isoformat(),
-                            "visibility": greeting.visibility,
-                            "user_id": greeting.user_id,
-                        }, ensure_ascii=False),
-                    )
-                except Exception:
-                    logger.debug("Failed to emit greeting for all_members_selected", exc_info=True)
-
-            # 의도에 맞는 프롬프트 생성
-            if trigger_intent == "meeting_schedule":
-                prompt = f"채팅방에서 모임 일정 관련 대화가 감지되었어요: \"{trigger_content}\"\n모임 일정 조율을 시작해줘"
-            elif trigger_intent == "place_suggestion":
-                prompt = f"채팅방에서 장소 관련 대화가 감지되었어요: \"{trigger_content}\"\n장소 추천을 시작해줘"
-            else:
+            if trigger_intent not in {"meeting_schedule", "place_suggestion"}:
                 continue
 
-            try:
-                room_pk_val = int(room_id)
-            except (TypeError, ValueError):
-                room_pk_val = None
-
-            # 사용자 메시지를 DB에 저장 (자동 트리거로 생성된 메시지 → 공용)
-            async with AsyncSessionLocal() as session:
-                auto_msg = ChatMessage(
-                    pane_type=PaneType.agent,
-                    role="user",
-                    content=prompt,
-                    sender="system",
-                    room_id=room_pk_val,
-                    user_id=None,
-                    visibility=Visibility.shared.value,
+            task = asyncio.create_task(
+                _run_auto_trigger_pipeline(
+                    room_id,
+                    trigger_content,
+                    trigger_intent,
+                    trigger_reason,
+                    dict(slot_context),
                 )
-                session.add(auto_msg)
-                await session.commit()
-                await session.refresh(auto_msg)
-
-            # 파이프라인 실행 (auto-trigger → shared 시야)
-            try:
-                async with AsyncSessionLocal() as session:
-                    context = await MessageReader.load_agent_context(
-                        session=session,
-                        room_id=room_pk_val,
-                        viewer_user_id=None,  # auto-trigger: shared-only view
-                    )
-
-                    result = await run_pipeline(
-                        room_id, context, session, slot_context=slot_context
-                    )
-
-                # 슬롯 컨텍스트 업데이트
-                for key in (
-                    "slot_filling_turns",
-                    "date_hint",
-                    "place_hint",
-                    "place_coord",
-                    "confirmed_date",
-                    "confirmed_time",
-                    "confirmed_place",
-                    "headcount",
-                    "meeting_type",
-                    "default_place_hint",
-                    "conversation_summary",
-                    "missing_slots",
-                ):
-                    if result.get(key) is not None:
-                        slot_context[key] = result[key]
-
-                slot_context["message_count_since_last_trigger"] = 0
-
-                # 어시스턴트 응답 메시지 발행
-                for new_msg in result.get("new_assistant_messages", []):
-                    if new_msg.get("emitted_early"):
-                        continue
-                    await _publish_agent_message(
-                        r,
-                        channel,
-                        json.dumps(new_msg, ensure_ascii=False),
-                    )
-
-                # 투표 카드 등 추가 페이로드 발행 (파이프라인에서 선발행되었으면 스킵)
-                vote_card_payload = result.get("vote_card_payload")
-                if vote_card_payload and not result.get("vote_card_emitted_early"):
-                    await _publish_agent_message(
-                        r,
-                        channel,
-                        json.dumps(
-                            {"type": "vote_card", **vote_card_payload},
-                            ensure_ascii=False,
-                        ),
-                    )
-
-                place_recommendation_payload = result.get("place_recommendation_payload")
-                if place_recommendation_payload:
-                    await _publish_agent_message(
-                        r,
-                        channel,
-                        json.dumps(
-                            {"type": "place_recommendation", **place_recommendation_payload},
-                            ensure_ascii=False,
-                        ),
-                    )
-
-                maedeup_card_payload = result.get("maedeup_card_payload")
-                if maedeup_card_payload:
-                    await _publish_agent_message(
-                        r,
-                        channel,
-                        json.dumps(
-                            {"type": "maedeup_card", **maedeup_card_payload},
-                            ensure_ascii=False,
-                        ),
-                    )
-
-            except Exception:
-                logger.exception("Auto-trigger pipeline failed for room %s", room_id)
+            )
+            task.add_done_callback(_log_detached_task_result)
 
     auto_trigger_task = asyncio.create_task(_process_auto_triggers())
 

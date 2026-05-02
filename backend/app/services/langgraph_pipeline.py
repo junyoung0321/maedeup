@@ -39,6 +39,14 @@ WORK_HOUR_START = 9
 WORK_HOUR_END = 22
 SLOT_MINUTES = 60
 INTENT_CONFIDENCE_THRESHOLD = 0.7
+PREFERRED_TIME_RANGES = {
+    "평일오전": (9, 12),
+    "평일오후": (13, 17),
+    "평일저녁": (18, 21),
+    "주말오전": (9, 12),
+    "주말오후": (13, 17),
+    "주말저녁": (18, 21),
+}
 
 _KR_HOLIDAYS = holidays.KR()
 
@@ -782,6 +790,42 @@ def _build_flexible_time_options(state: GraphState) -> list[str]:
     return ["13:00", "14:00", "15:00"]
 
 
+def _normalize_preferred_time(value: Any) -> str:
+    return str(value or "").strip().replace(" ", "")
+
+
+def _normalize_preferred_times(values: list[Any] | None) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        item = _normalize_preferred_time(value)
+        if item in PREFERRED_TIME_RANGES and item not in seen:
+            seen.add(item)
+            normalized.append(item)
+    return normalized
+
+
+def _preference_score_for_start(start_at: datetime, pref_times: list[str]) -> int:
+    if not pref_times:
+        return 0
+    start_kst = start_at.astimezone(KST)
+    is_weekend = _is_weekend(start_kst)
+    score = 0
+    for pref_time in pref_times:
+        normalized = _normalize_preferred_time(pref_time)
+        hours = PREFERRED_TIME_RANGES.get(normalized)
+        if not hours:
+            continue
+        if normalized.startswith("평일") and is_weekend:
+            continue
+        if normalized.startswith("주말") and not is_weekend:
+            continue
+        start_hour, end_hour = hours
+        if start_hour <= start_kst.hour < end_hour:
+            score += 1
+    return score
+
+
 def _build_time_option_slots(state: GraphState) -> list[dict[str, Any]]:
     date_hint = state.get("date_hint")
     time_options = list(state.get("time_options") or [])
@@ -1182,10 +1226,13 @@ def _find_free_slots(
     time_max: datetime,
     minimum_available: int,
     require_exact_absent_count: int | None,
+    preferred_times: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """참여자 가용성을 기준으로 시간대를 SLOT_MINUTES 단위로 탐색합니다."""
     total = len(busy_by_user)
     free_slots: list[dict[str, Any]] = []
+    fallback_slots: list[dict[str, Any]] = []
+    normalized_preferred_times = _normalize_preferred_times(preferred_times)
     current = time_min
     slot_idx = 1
 
@@ -1208,7 +1255,7 @@ def _find_free_slots(
             if available_count >= minimum_available and absent_count_matches:
                 s = current.astimezone(KST)
                 holiday = _get_korean_holiday(s)
-                free_slots.append({
+                slot = {
                     "slot_id": f"slot-{slot_idx}",
                     "start_at": current.isoformat(),
                     "end_at": slot_end.isoformat(),
@@ -1223,12 +1270,21 @@ def _find_free_slots(
                     "is_holiday": bool(holiday),
                     "holiday_name": holiday,
                     "is_weekend": _is_weekend(s),
-                })
+                }
+                if normalized_preferred_times:
+                    if _preference_score_for_start(s, normalized_preferred_times) > 0:
+                        free_slots.append(slot)
+                    elif len(fallback_slots) < 5:
+                        fallback_slots.append(slot)
+                else:
+                    free_slots.append(slot)
                 slot_idx += 1
 
         current = current + timedelta(minutes=SLOT_MINUTES)
 
-    return free_slots
+    if normalized_preferred_times and free_slots:
+        return free_slots
+    return free_slots if free_slots else fallback_slots
 
 
 _SOCIAL_RECENT_LIMIT = 10
@@ -1398,8 +1454,29 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
     db = state["db"]
     room_pk = _room_id_as_int(state["room_id"])
     blocked_dates = await _load_blocked_dates(room_pk)
+    preferred_times = state.get("preference_common_times") or []
+    normalized_preferred_times = _normalize_preferred_times(preferred_times)
+    minimum_preferred_slots = 3
+
+    def _matching_preference_slots(slots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not normalized_preferred_times:
+            return slots
+        matching: list[dict[str, Any]] = []
+        for slot in slots:
+            start_at = slot.get("start_at")
+            if not isinstance(start_at, str):
+                continue
+            try:
+                slot_start = datetime.fromisoformat(start_at)
+            except ValueError:
+                continue
+            if _preference_score_for_start(slot_start, normalized_preferred_times) > 0:
+                matching.append(slot)
+        return matching
 
     if room_pk is None or not settings.GOOGLE_CLIENT_ID:
+        if preferred_times:
+            return _build_preference_time_slots(state, preferred_times, blocked_dates)
         now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
         base = now + timedelta(days=2, hours=10)
         return [
@@ -1486,6 +1563,8 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
         busy_by_user[_user_calendar_key(user)] = await _get_user_busy_periods(user, time_min, time_max, db)
 
     if not busy_by_user:
+        if preferred_times:
+            return _build_preference_time_slots(state, preferred_times, blocked_dates)
         return []
 
     full_slots = _find_free_slots(
@@ -1494,9 +1573,13 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
         time_max=time_max,
         minimum_available=len(busy_by_user),
         require_exact_absent_count=0,
+        preferred_times=preferred_times,
     )
     full_slots = _filter_out_blocked(full_slots, blocked_dates)
-    if full_slots:
+    full_slots = _matching_preference_slots(full_slots)
+    if full_slots and (
+        not normalized_preferred_times or len(full_slots) >= minimum_preferred_slots
+    ):
         state["calendar_strategy"] = "all_members_available"
         return full_slots
 
@@ -1506,13 +1589,17 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
         time_max=time_max,
         minimum_available=max(len(busy_by_user) - 1, 1),
         require_exact_absent_count=1 if len(busy_by_user) > 1 else 0,
+        preferred_times=preferred_times,
     )
     n_minus_one_slots = _filter_out_blocked(n_minus_one_slots, blocked_dates)
-    if n_minus_one_slots:
+    n_minus_one_slots = _matching_preference_slots(n_minus_one_slots)
+    if n_minus_one_slots and (
+        not normalized_preferred_times or len(n_minus_one_slots) >= minimum_preferred_slots
+    ):
         state["calendar_strategy"] = "n_minus_one"
         return n_minus_one_slots
 
-    extended_time_max = time_max + timedelta(days=7)
+    extended_time_max = time_max + timedelta(days=14 if normalized_preferred_times else 7)
     refreshed_busy_by_user: dict[str, list[dict[str, Any]]] = {}
     for user in consenting_users:
         refreshed_busy_by_user[_user_calendar_key(user)] = await _get_user_busy_periods(
@@ -1528,9 +1615,13 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
         time_max=extended_time_max,
         minimum_available=len(refreshed_busy_by_user),
         require_exact_absent_count=0,
+        preferred_times=preferred_times,
     )
     extended_full_slots = _filter_out_blocked(extended_full_slots, blocked_dates)
-    if extended_full_slots:
+    extended_full_slots = _matching_preference_slots(extended_full_slots)
+    if extended_full_slots and (
+        not normalized_preferred_times or len(extended_full_slots) >= minimum_preferred_slots
+    ):
         state["calendar_strategy"] = "all_members_available_extended"
         return extended_full_slots
 
@@ -1540,8 +1631,43 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
         time_max=extended_time_max,
         minimum_available=max(len(refreshed_busy_by_user) - 1, 1),
         require_exact_absent_count=1 if len(refreshed_busy_by_user) > 1 else 0,
+        preferred_times=preferred_times,
     )
     final_slots = _filter_out_blocked(final_slots, blocked_dates)
+    final_slots = _matching_preference_slots(final_slots)
+    if normalized_preferred_times and len(final_slots) < minimum_preferred_slots:
+        matching_slots: list[dict[str, Any]] = []
+        seen_matching_start_ats: set[str] = set()
+        for slot in extended_full_slots + final_slots:
+            start_at = slot.get("start_at")
+            if isinstance(start_at, str) and start_at not in seen_matching_start_ats:
+                seen_matching_start_ats.add(start_at)
+                matching_slots.append(slot)
+
+        fallback_slots = _find_free_slots(
+            busy_by_user=refreshed_busy_by_user,
+            time_min=time_min,
+            time_max=extended_time_max,
+            minimum_available=max(len(refreshed_busy_by_user) - 1, 1),
+            require_exact_absent_count=1 if len(refreshed_busy_by_user) > 1 else 0,
+            preferred_times=preferred_times,
+        )
+        fallback_slots = _filter_out_blocked(fallback_slots, blocked_dates)
+        fallback_slots = _matching_preference_slots(fallback_slots)
+        final_slots = matching_slots + [
+            slot for slot in fallback_slots
+            if slot.get("start_at") not in seen_matching_start_ats
+        ]
+        final_slots.sort(
+            key=lambda slot: (
+                -_preference_score_for_start(
+                    datetime.fromisoformat(str(slot.get("start_at"))).astimezone(KST),
+                    normalized_preferred_times,
+                ),
+                str(slot.get("start_at")),
+            )
+        )
+
     if final_slots:
         state["calendar_strategy"] = "n_minus_one_extended"
     return final_slots
@@ -1641,14 +1767,18 @@ async def _load_meeting_preferences(state: GraphState) -> dict[str, Any]:
     best_location = max(location_counts, key=location_counts.get) if location_counts else None
 
     # 시간대 교차 (모든 멤버가 공통으로 선택한 시간대)
-    time_sets = [set(p.preferred_times or []) for p in prefs if p.preferred_times]
+    time_sets = [
+        set(_normalize_preferred_times(p.preferred_times))
+        for p in prefs
+        if _normalize_preferred_times(p.preferred_times)
+    ]
     if time_sets:
         common_times = list(time_sets[0].intersection(*time_sets[1:]))
         if not common_times:
             # 교차 없으면 가장 많이 선택된 시간대 상위 3개
             time_counts: dict[str, int] = {}
             for p in prefs:
-                for t in p.preferred_times or []:
+                for t in _normalize_preferred_times(p.preferred_times):
                     time_counts[t] = time_counts.get(t, 0) + 1
             common_times = sorted(time_counts, key=time_counts.get, reverse=True)[:3]
     else:
@@ -1940,7 +2070,9 @@ async def intent_detection(state: GraphState) -> GraphState:
                 break
 
         # ── Fast-path: 명확한 패턴이 보이면 Gemini 의도 분류 생략 (−3~5s).
-        pref_keywords = ["선호 정보", "선호정보", "추천해줘", "추천해", "최적", "일정.*추천", "장소.*추천"]
+        _place_hint_pattern = re.compile(r"맛집|카페|식당|근처|동\s|역\s|장소.*추천|추천.*장소")
+        pref_keywords = ["선호 정보", "선호정보", "최적", "일정.*추천"]
+        pref_keywords_loose = ["추천해줘", "추천해"]
         fast_path_hit = False
         if latest_user_message:
             msg_lower = latest_user_message.lower()
@@ -1956,6 +2088,12 @@ async def intent_detection(state: GraphState) -> GraphState:
                 state["confidence_score"] = 0.95
                 fast_path_hit = True
                 logger.info("[INTENT] fast-path: pref recommendation pattern → meeting_schedule (skip Gemini)")
+            elif any(re.search(kw, msg_lower) for kw in pref_keywords_loose) and not _place_hint_pattern.search(msg_lower):
+                state["intent"] = "meeting_schedule"
+                state["intent_confidence"] = 0.9
+                state["confidence_score"] = 0.9
+                fast_path_hit = True
+                logger.info("[INTENT] fast-path: loose recommendation pattern → meeting_schedule (skip Gemini)")
 
         if not fast_path_hit:
             if state.get("conversation_summary"):
@@ -1996,6 +2134,7 @@ async def entity_extraction(state: GraphState) -> GraphState:
             and len(latest_msg) <= 20
             and not re.search(r"\d", latest_msg)
             and not re.search(r"(월|일|시|분|주말|평일|내일|모레|오늘|다음주|이번주)", latest_msg)
+            and not re.search(r"(맛집|카페|식당|근처|역|동\s)", latest_msg)
             and re.search(r"(추천|정리|제안|뽑아|추려)", latest_msg)
         )
         if is_short_cmd:
@@ -2123,7 +2262,7 @@ async def slot_filling(state: GraphState) -> GraphState:
 
         # 선호 정보 로드 및 반영 (대화 추출보다 우선)
         pref_data = await _load_meeting_preferences(state)
-        if pref_data.get("has_preferences"):
+        if pref_data.get("has_preferences") and state.get("intent") != "place_suggestion":
             # 장소: 대화에서 추출 안 됐으면 선호 데이터 사용
             if not state.get("place_hint") and pref_data.get("best_location"):
                 state["place_hint"] = pref_data["best_location"]
@@ -2154,6 +2293,10 @@ async def slot_filling(state: GraphState) -> GraphState:
                         logger.info("[PREF] All preferences submitted. Auto-suggesting with place=%s", state["place_hint"])
                     else:
                         logger.info("[PREF] All preferences submitted. Auto-suggesting (no place hint, time-only)")
+            elif not pref_data.get("all_submitted"):
+                common_times = pref_data.get("common_times", [])
+                if common_times:
+                    state["preference_common_times"] = common_times
 
         state["is_location_first"] = (
             bool(state.get("place_hint"))
@@ -2348,6 +2491,7 @@ def _build_multi_date_slots(state: GraphState) -> list[dict[str, Any]]:
     date_hints = state.get("date_hints") or []
     now_kst = datetime.now(KST)
     slots: list[dict[str, Any]] = []
+    preferred_times = _normalize_preferred_times(state.get("preference_common_times"))
 
     for index, hint in enumerate(date_hints, start=1):
         target_date: datetime | None = None
@@ -2370,9 +2514,23 @@ def _build_multi_date_slots(state: GraphState) -> list[dict[str, Any]]:
         if target_date is None:
             continue
 
-        # Default to afternoon time
-        start_at = target_date.replace(hour=14, minute=0, second=0, microsecond=0)
-        end_at = start_at + timedelta(hours=2)
+        start_hour = 14
+        end_hour = 17
+        is_weekend = target_date.weekday() >= 5
+        for pref_time in preferred_times:
+            if pref_time.startswith("평일") and is_weekend:
+                continue
+            if pref_time.startswith("주말") and not is_weekend:
+                continue
+            pref_range = PREFERRED_TIME_RANGES[pref_time]
+            start_hour, end_hour = pref_range
+            break
+
+        start_at = target_date.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+        end_at = min(
+            start_at + timedelta(minutes=SLOT_MINUTES),
+            target_date.replace(hour=end_hour, minute=0, second=0, microsecond=0),
+        )
         holiday = _get_korean_holiday(target_date)
 
         slots.append({
@@ -2402,16 +2560,7 @@ def _build_preference_time_slots(
     slots: list[dict[str, Any]] = []
     slot_index = 0
     _blocked = blocked_dates or set()
-
-    # 시간대 → (시작 시, 종료 시) 매핑
-    time_map = {
-        "평일오전": (10, 12),
-        "평일오후": (14, 16),
-        "평일저녁": (18, 20),
-        "주말오전": (10, 12),
-        "주말오후": (14, 16),
-        "주말저녁": (18, 20),
-    }
+    normalized_pref_times = _normalize_preferred_times(pref_times)
 
     # 이번 주 + 다음 주 날짜 중 선호 시간대에 맞는 슬롯 생성
     for day_offset in range(1, 29):  # 향후 4주 (불가능 날짜 많아도 여유 확보)
@@ -2421,20 +2570,23 @@ def _build_preference_time_slots(
         if target.strftime("%Y-%m-%d") in _blocked:
             continue
 
-        for pref_time in pref_times:
+        for pref_time in normalized_pref_times:
             # 평일/주말 필터
             if pref_time.startswith("평일") and is_weekend:
                 continue
             if pref_time.startswith("주말") and not is_weekend:
                 continue
 
-            hours = time_map.get(pref_time)
+            hours = PREFERRED_TIME_RANGES.get(pref_time)
             if not hours:
                 continue
 
             start_h, end_h = hours
             start_at = target.replace(hour=start_h, minute=0, second=0, microsecond=0)
-            end_at = target.replace(hour=end_h, minute=0, second=0, microsecond=0)
+            end_at = min(
+                start_at + timedelta(minutes=SLOT_MINUTES),
+                target.replace(hour=end_h, minute=0, second=0, microsecond=0),
+            )
 
             # 과거 시간 건너뛰기
             if start_at <= now_kst:
@@ -2462,8 +2614,10 @@ def _build_preference_time_slots(
         if len(slots) >= 5:
             break
 
-    # 최소 3개 슬롯 보장: 선호 시간대가 좁아서 슬롯이 부족하면 기본 슬롯 추가
-    if len(slots) < 3:
+    # 최소 3개 슬롯 보장: 선호 시간대가 좁아서 슬롯이 부족하면 같은 시간 창에서 보강
+    if len(slots) < 3 and normalized_pref_times:
+        fallback_pref = normalized_pref_times[0]
+        fallback_hours = PREFERRED_TIME_RANGES[fallback_pref]
         for day_offset in range(1, 29):
             if len(slots) >= 3:
                 break
@@ -2471,10 +2625,18 @@ def _build_preference_time_slots(
             date_str = target.strftime("%Y-%m-%d")
             if date_str in _blocked:
                 continue
-            start_at = target.replace(hour=19, minute=0, second=0, microsecond=0)
+            is_weekend = target.weekday() >= 5
+            if fallback_pref.startswith("평일") and is_weekend:
+                continue
+            if fallback_pref.startswith("주말") and not is_weekend:
+                continue
+            start_at = target.replace(hour=fallback_hours[0], minute=0, second=0, microsecond=0)
             if start_at <= now_kst:
                 continue
-            end_at = start_at + timedelta(hours=2)
+            end_at = min(
+                start_at + timedelta(minutes=SLOT_MINUTES),
+                target.replace(hour=fallback_hours[1], minute=0, second=0, microsecond=0),
+            )
             # 중복 날짜 체크
             existing_dates = {s["start_at"][:10] for s in slots}
             if date_str in existing_dates:
@@ -2515,13 +2677,20 @@ async def function_calling(state: GraphState) -> GraphState:
         if isinstance(pl, str) and pl.strip() in _NOISE_PLACE_HINTS:
             state["place_hint"] = None
 
+        if state.get("intent") == "place_suggestion":
+            place_results = await search_place(state)
+            state["place_search_results"] = place_results
+            state["status"] = "functions_called"
+            logger.info("[TIMING] function_calling (place-suggestion): %.2fs", time.monotonic() - _t0)
+            return state
+
         # 방의 '불가능 날짜' — 모든 경로의 최종 후보에서 제외.
         room_pk = _room_id_as_int(state["room_id"])
         blocked_dates = await _load_blocked_dates(room_pk)
 
         # 여러 날짜 선택지 → 각 날짜별 슬롯 생성
         multi_date_hints = state.get("date_hints") or []
-        if len(multi_date_hints) >= 2:
+        if state.get("intent") != "place_suggestion" and len(multi_date_hints) >= 2:
             multi_slots = _filter_out_blocked(_build_multi_date_slots(state), blocked_dates)
             if multi_slots:
                 state["calendar_free_slots"] = multi_slots
@@ -2534,7 +2703,11 @@ async def function_calling(state: GraphState) -> GraphState:
 
         # 선호 데이터 기반 자동 제안: preference_common_times로 슬롯 생성
         pref_times = state.get("preference_common_times") or []
-        if pref_times and not state.get("date_hint"):
+        if (
+            pref_times
+            and not state.get("date_hint")
+            and state.get("intent") != "place_suggestion"
+        ):
             # 생성 단계부터 blocked_dates를 제외하면서 만들어야 5개 채우기 가능.
             pref_slots = _build_preference_time_slots(state, pref_times, blocked_dates)
             state["calendar_free_slots"] = pref_slots
@@ -2545,10 +2718,18 @@ async def function_calling(state: GraphState) -> GraphState:
             logger.info("[TIMING] function_calling (preference-based): %.2fs", time.monotonic() - _t0)
             return state
 
-        if state.get("is_location_first") and not state.get("date_hint"):
+        if (
+            state.get("intent") != "place_suggestion"
+            and state.get("is_location_first")
+            and not state.get("date_hint")
+        ):
             state["calendar_free_slots"] = []
             place_results = await search_place(state)
-        elif state.get("time_options"):
+        elif (
+            state.get("intent") != "place_suggestion"
+            and state.get("time_options")
+            and not state.get("preference_common_times")
+        ):
             state["calendar_free_slots"] = _filter_out_blocked(
                 _build_time_option_slots(state), blocked_dates,
             )
@@ -2635,7 +2816,8 @@ async def supervisor_validation(state: GraphState) -> GraphState:
 
         is_preference_based = state.get("calendar_strategy") == "preference_based"
 
-        if not valid_slots and not is_location_first:
+        is_place_only = state.get("intent") == "place_suggestion"
+        if not valid_slots and not is_location_first and not is_place_only:
             errors.append("no valid free time slots available")
         # preference_based 추천은 시간 후보가 주된 결과물 — 장소 검색이 실패해도
         # 일정 투표 카드라도 내보내기 위해 통과.
@@ -2653,7 +2835,7 @@ async def supervisor_validation(state: GraphState) -> GraphState:
 
         # location_first 모드에서는 장소 결과만 중요 — 시간 슬롯 없어도 통과
         # multi_date_vote 모드에서는 시간 슬롯만 중요 — 장소 없어도 통과
-        if is_location_first or is_multi_date_vote:
+        if is_location_first or is_multi_date_vote or is_place_only:
             state["validation_passed"] = bool(valid_slots) if is_multi_date_vote else True
             state["status"] = "validated"
         else:
@@ -2713,11 +2895,18 @@ async def vote_card_creation(state: GraphState) -> GraphState:
             else f"{state.get('meeting_type') or '모임'} 시간 투표"
         )
 
-        # meeting_id가 없으면 DB에 pending meeting 생성
+        pref_times = _normalize_preferred_times(state.get("preference_common_times"))
+        has_weekday_pref = any(t.startswith("평일") for t in pref_times)
+        vote_slots = state.get("calendar_free_slots", [])
+        if has_weekday_pref:
+            weekday_only = [s for s in vote_slots if not s.get("is_weekend", False)]
+            if weekday_only:
+                vote_slots = weekday_only
+
+        # meeting_id가 없으면 DB에 pending meeting 생성 (필터된 vote_slots 사용)
         if not meeting_id:
             db = state["db"]
             room_pk = _room_id_as_int(state["room_id"])
-            # room 첫 번째 멤버를 created_by로 사용
             created_by = 1
             if room_pk is not None:
                 member_result = await db.execute(
@@ -2726,7 +2915,7 @@ async def vote_card_creation(state: GraphState) -> GraphState:
                 first_member = member_result.scalar_one_or_none()
                 if first_member:
                     created_by = first_member.user_id
-            first_slot = calendar_slots[0] if calendar_slots else {}
+            first_slot = vote_slots[0] if vote_slots else {}
             slot_start = _parse_iso_datetime(first_slot.get("start_at")) if first_slot.get("start_at") else datetime.now(timezone.utc).replace(tzinfo=None)
             slot_end = _parse_iso_datetime(first_slot.get("end_at")) if first_slot.get("end_at") else slot_start + timedelta(hours=2)
             new_meeting = MeetingSchedule(
@@ -2736,7 +2925,7 @@ async def vote_card_creation(state: GraphState) -> GraphState:
                 end_at=slot_end if not hasattr(slot_end, 'tzinfo') or slot_end.tzinfo is None else slot_end.replace(tzinfo=None),
                 vote_options=[
                     {"slot_id": s.get("slot_id"), "label": s.get("label"), "start_at": s.get("start_at"), "end_at": s.get("end_at")}
-                    for s in calendar_slots
+                    for s in vote_slots
                 ],
                 votes={},
                 status="pending",
@@ -2763,7 +2952,7 @@ async def vote_card_creation(state: GraphState) -> GraphState:
                     "holiday_name": slot.get("holiday_name"),
                     "is_weekend": slot.get("is_weekend", False),
                 }
-                for slot in state.get("calendar_free_slots", [])
+                for slot in vote_slots
             ],
             "headcount": state.get("headcount"),
             "blocker_notification": state.get("blocker_notification_payload"),
@@ -3067,8 +3256,10 @@ def _route_after_validation(state: GraphState) -> Literal["vote_card_creation", 
         return END
     if not state.get("validation_passed"):
         return END
+    if state.get("intent") == "place_suggestion" and state.get("place_search_results"):
+        return "place_recommendation"
     # 선호 데이터 기반 자동 제안: 투표 카드를 먼저 생성 (시간대 투표)
-    if state.get("preference_common_times"):
+    if state.get("preference_common_times") and state.get("intent") != "place_suggestion":
         return "vote_card_creation"
     if state.get("is_location_first") and not state.get("date_hint"):
         return "place_recommendation"
@@ -3080,6 +3271,8 @@ def _route_after_vote_card_creation(state: GraphState) -> Literal["place_recomme
         return END
     if state.get("confirmed_place"):
         return "maedeup_card_creation"
+    if state.get("place_search_results"):
+        return "place_recommendation"
     # 일정 추천 카드를 보여준 뒤 사용자가 확정할 때까지 대기.
     # 장소 추천은 사용자가 시간을 확정한 뒤 별도 메시지로 트리거됨.
     return END

@@ -18,6 +18,7 @@ class AuthUser:
     name: str
     picture: Optional[str]
     calendar_consent: bool = False
+    is_guest: bool = False
 
 
 def issue_jwt(
@@ -27,6 +28,7 @@ def issue_jwt(
     name: str,
     picture: Optional[str],
     calendar_consent: bool,
+    is_guest: bool = False,
 ) -> str:
     payload = {
         "sub": str(user_id),
@@ -34,6 +36,7 @@ def issue_jwt(
         "name": name,
         "picture": picture,
         "calendar_consent": calendar_consent,
+        "is_guest": is_guest,
         "exp": datetime.now(timezone.utc) + timedelta(days=7),
     }
     return jwt.encode(payload, settings.JWT_SECRET, algorithm="HS256")
@@ -62,4 +65,5 @@ async def get_current_user(
         name=payload["name"],
         picture=payload.get("picture"),
         calendar_consent=payload.get("calendar_consent", False),
+        is_guest=payload.get("is_guest", False),
     )

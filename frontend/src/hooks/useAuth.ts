@@ -8,6 +8,7 @@ export interface AuthUser {
   name: string;
   picture?: string;
   calendar_consent: boolean;
+  is_guest?: boolean;
 }
 
 function decodeJwt(token: string): AuthUser & { exp: number } {
@@ -31,6 +32,7 @@ export function useAuth() {
             name: decoded.name,
             picture: decoded.picture,
             calendar_consent: decoded.calendar_consent ?? false,
+            is_guest: (decoded as { is_guest?: boolean }).is_guest ?? false,
           });
         } else {
           localStorage.removeItem("auth_token");

@@ -1,45 +1,38 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-.venv/
-venv/
-dist/
-*.egg-info/
-
-# Env
-.env
-.env.local
-.env.*.local
-
-# Node
-node_modules/
-.next/
-out/
-
-# Docker volumes
-postgres_data/
-redis_data/
-
-# Data crawler
-data/.venv/
-data/output/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Virtual envs (any name)
-aovenv/
-*env/
 
 # Aider
-.aider*
-
 # Claude local settings
-.claude/settings.local.json
-
+# Data crawler
+# Docker volumes
+# Env
 # Misc
-main.py
-temp_write_test.txt
+# Node
+# OS
+# Python
+# Virtual envs (any name)
+*.egg-info/
+*.py[cod]
+*.pyo
+*env/
+.DS_Store
+.aider*
+.claude/
+.claude/settings.local.json
+.env
+.env.*.local
+.env.local
 .gstack/
+.next/
+.venv/
+Thumbs.db
+__pycache__/
+aovenv/
+data/.venv/
+data/output/
+dist/
+main.py
+node_modules/
+out/
+postgres_data/
+redis_data/
+temp_write_test.txt
+venv/

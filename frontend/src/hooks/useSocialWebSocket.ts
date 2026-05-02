@@ -68,6 +68,16 @@ export interface UnavailableSnapshotPayload {
   by_user: Record<string, string[]>;
 }
 
+export interface AvailabilitySnapshotPayload {
+  type: "availability_snapshot";
+  by_user: Record<string, { date: string; start: number; end: number }>;
+}
+
+export interface DateSelectionSnapshotPayload {
+  type: "date_selection_snapshot";
+  by_user: Record<string, string>;
+}
+
 // ── Finalization (AI proposal → host approval) payloads ──────────────────
 export type FinalizationStatus =
   | "pending_ai"
@@ -274,6 +284,18 @@ function isUnavailableSnapshotPayload(data: unknown): data is UnavailableSnapsho
   return c.type === "unavailable_snapshot" && c.by_user != null && typeof c.by_user === "object";
 }
 
+function isAvailabilitySnapshotPayload(data: unknown): data is AvailabilitySnapshotPayload {
+  if (!data || typeof data !== "object") return false;
+  const c = data as Partial<AvailabilitySnapshotPayload>;
+  return c.type === "availability_snapshot" && c.by_user != null && typeof c.by_user === "object";
+}
+
+function isDateSelectionSnapshotPayload(data: unknown): data is DateSelectionSnapshotPayload {
+  if (!data || typeof data !== "object") return false;
+  const c = data as Partial<DateSelectionSnapshotPayload>;
+  return c.type === "date_selection_snapshot" && c.by_user != null && typeof c.by_user === "object";
+}
+
 function isVoteReminderPayload(data: unknown): data is VoteReminderPayload {
   if (!data || typeof data !== "object") {
     return false;
@@ -298,6 +320,12 @@ export function useSocialWebSocket(roomId: string, sender: string) {
   const [peerTimeSelections, setPeerTimeSelections] = useState<Record<string, PeerTimeSelection>>({});
   // user_id → 해당 유저가 표시한 불가능 날짜 배열. 내 것과 남 것을 한 dict에 담음.
   const [unavailabilityByUser, setUnavailabilityByUser] = useState<Record<number, string[]>>({});
+  // 본인의 TimeBar 선택 — 리프레시 시 Redis 스냅샷에서 복구되어 TimeBarSelector가 초기값으로 씀.
+  const [myTimeSelection, setMyTimeSelection] = useState<
+    { date: string; start: number; end: number } | null
+  >(null);
+  // 본인의 날짜 선택 — 리프레시 시 Redis 스냅샷에서 복구.
+  const [myDateSelection, setMyDateSelection] = useState<string | null>(null);
   const [finalizationProposal, setFinalizationProposal] = useState<FinalizationState | null>(null);
   const [finalizationPending, setFinalizationPending] = useState<boolean>(false);
   const [lastConfirmedMeeting, setLastConfirmedMeeting] = useState<MeetingConfirmedPayload | null>(null);
@@ -575,6 +603,48 @@ export function useSocialWebSocket(roomId: string, sender: string) {
           return;
         }
 
+        if (isAvailabilitySnapshotPayload(data)) {
+          // 접속 시 서버가 1회 푸시. self 것은 myTimeSelection, others는 peerTimeSelections.
+          const nextPeers: Record<string, PeerTimeSelection> = {};
+          let mine: { date: string; start: number; end: number } | null = null;
+          for (const [uidStr, sel] of Object.entries(data.by_user)) {
+            const uid = Number(uidStr);
+            if (!Number.isFinite(uid) || !sel || typeof sel !== "object") continue;
+            const date = typeof sel.date === "string" ? sel.date : null;
+            const start = typeof sel.start === "number" ? sel.start : null;
+            const end = typeof sel.end === "number" ? sel.end : null;
+            if (!date || start === null || end === null) continue;
+            if (myUserId !== null && uid === myUserId) {
+              mine = { date, start, end };
+            } else {
+              nextPeers[`u${uid}`] = {
+                userId: uid, name: "익명", date, start, end,
+              };
+            }
+          }
+          setPeerTimeSelections((prev) => ({ ...nextPeers, ...prev }));
+          if (mine) setMyTimeSelection(mine);
+          return;
+        }
+
+        if (isDateSelectionSnapshotPayload(data)) {
+          // 접속 시 서버가 1회 푸시. self는 myDateSelection, others는 peerSelections.
+          const nextPeers: Record<string, PeerSelection> = {};
+          let mine: string | null = null;
+          for (const [uidStr, date] of Object.entries(data.by_user)) {
+            const uid = Number(uidStr);
+            if (!Number.isFinite(uid) || typeof date !== "string") continue;
+            if (myUserId !== null && uid === myUserId) {
+              mine = date;
+            } else {
+              nextPeers[`u${uid}`] = { userId: uid, name: "익명", date };
+            }
+          }
+          setPeerSelections((prev) => ({ ...nextPeers, ...prev }));
+          setMyDateSelection(mine);
+          return;
+        }
+
         if (isUnavailableSnapshotPayload(data)) {
           // 접속 직후 서버가 직접 푸시하는 현재 상태. 덮어쓰기.
           const next: Record<number, string[]> = {};
@@ -759,6 +829,8 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     sendTimeSelection,
     sendUnavailableToggle,
     unavailabilityByUser,
+    myTimeSelection,
+    myDateSelection,
     status,
     detectedIntent,
     dismissIntent,

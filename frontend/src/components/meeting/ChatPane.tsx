@@ -95,6 +95,8 @@ export default function ChatPane() {
     peerTimeSelections,
     unavailabilityByUser,
     sendUnavailableToggle,
+    myTimeSelection,
+    myDateSelection,
     finalizationProposal,
     finalizationPending,
     lastConfirmedMeeting,
@@ -107,6 +109,8 @@ export default function ChatPane() {
   const setSendTimeSelection = meetingContext?.setSendTimeSelection;
   const setUnavailabilityByUser = meetingContext?.setUnavailabilityByUser;
   const setSendUnavailableToggle = meetingContext?.setSendUnavailableToggle;
+  const setMyTimeSelection = meetingContext?.setMyTimeSelection;
+  const setMyDateSelection = meetingContext?.setMyDateSelection;
   const setFinalizationProposal = meetingContext?.setFinalizationProposal;
   const setFinalizationPending = meetingContext?.setFinalizationPending;
   const setLastConfirmedMeeting = meetingContext?.setLastConfirmedMeeting;
@@ -131,6 +135,12 @@ export default function ChatPane() {
     setSendUnavailableToggle?.(sendUnavailableToggle);
     return () => setSendUnavailableToggle?.(null);
   }, [sendUnavailableToggle, setSendUnavailableToggle]);
+  useEffect(() => {
+    setMyTimeSelection?.(myTimeSelection);
+  }, [myTimeSelection, setMyTimeSelection]);
+  useEffect(() => {
+    setMyDateSelection?.(myDateSelection);
+  }, [myDateSelection, setMyDateSelection]);
   useEffect(() => {
     setFinalizationProposal?.(finalizationProposal);
   }, [finalizationProposal, setFinalizationProposal]);

@@ -272,21 +272,56 @@ async def social_ws(
         logger.exception("Redis client unavailable for social room %s", room_id)
         r = None
 
-    # 접속 직후 현재 불가능 날짜 스냅샷을 이 소켓에만 전달 (새로고침/재접속 복구).
+    # 접속 직후 현재 불가능 날짜 + TimeBar 선택 스냅샷을 이 소켓에만 전달
+    # (새로고침/재접속 복구).
     if r is not None:
         try:
-            snapshot = await sr.load_room_unavailability(r, room_id=room_pk)
+            unavail_snap = await sr.load_room_unavailability(r, room_id=room_pk)
             await websocket.send_text(
                 json.dumps(
                     {
                         "type": "unavailable_snapshot",
-                        "by_user": {str(uid): dates for uid, dates in snapshot.items()},
+                        "by_user": {str(uid): dates for uid, dates in unavail_snap.items()},
                     },
                     ensure_ascii=False,
                 )
             )
         except Exception:
             logger.debug("unavailable_snapshot push failed room=%s", room_id, exc_info=True)
+
+        try:
+            avail_snap = await sr.load_room_availability(r, room_id=room_pk)
+            # load_room_availability는 {uid: [{date, start, end}]} 형태.
+            # 현재 스키마상 user당 하나의 entry — 첫 원소만 추출해 단순 dict로 내려보냄.
+            simplified: dict[str, dict] = {}
+            for uid, entries in avail_snap.items():
+                if entries and isinstance(entries[0], dict):
+                    simplified[str(uid)] = entries[0]
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "availability_snapshot",
+                        "by_user": simplified,
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        except Exception:
+            logger.debug("availability_snapshot push failed room=%s", room_id, exc_info=True)
+
+        try:
+            date_snap = await sr.load_room_date_selections(r, room_id=room_pk)
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "date_selection_snapshot",
+                        "by_user": {str(uid): d for uid, d in date_snap.items()},
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        except Exception:
+            logger.debug("date_selection_snapshot push failed room=%s", room_id, exc_info=True)
 
     try:
         while True:
@@ -418,7 +453,7 @@ async def social_ws(
                         )
                 continue
 
-            # ── 날짜 선택 공유 이벤트: DB 저장 없이 broadcast만 ─────────────
+            # ── 날짜 선택 공유 이벤트: Redis 영속화 + broadcast ────────────
             if msg_type == "date_selection":
                 raw_date = payload.get("date")
                 date_value: str | None = None
@@ -426,6 +461,10 @@ async def social_ws(
                     # YYYY-MM-DD 기본 검증
                     if raw_date[4] == "-" and raw_date[7] == "-":
                         date_value = raw_date
+                if r is not None and authed_user_id is not None:
+                    await sr.record_date_selection(
+                        r, room_id=room_pk, user_id=authed_user_id, date=date_value,
+                    )
                 # sender/user_id는 서버에서 인증된 값만 사용 (클라이언트 payload 신뢰 X)
                 out = json.dumps(
                     {

@@ -258,6 +258,8 @@ async def get_friends(
     session: AsyncSession = Depends(get_session),
 ):
     """현재 로그인한 유저의 수락된 친구 목록을 반환합니다."""
+    if current_user.is_guest:
+        return []
     user_id = int(current_user.sub)
 
     result = await session.execute(
@@ -292,6 +294,8 @@ async def search_users(
     session: AsyncSession = Depends(get_session),
 ):
     """이름 또는 이메일로 유저를 검색합니다. 본인은 제외됩니다."""
+    if current_user.is_guest:
+        raise HTTPException(status_code=403, detail="게스트는 유저 검색을 할 수 없습니다.")
     user_id = int(current_user.sub)
     pattern = f"%{q}%"
     result = await session.execute(
@@ -313,6 +317,8 @@ async def send_friend_request(
     session: AsyncSession = Depends(get_session),
 ):
     """친구 요청을 보냅니다. 이미 요청이 존재하면 409를 반환합니다."""
+    if current_user.is_guest:
+        raise HTTPException(status_code=403, detail="게스트는 친구를 추가할 수 없습니다.")
     requester_id = int(current_user.sub)
 
     if requester_id == body.addressee_id:

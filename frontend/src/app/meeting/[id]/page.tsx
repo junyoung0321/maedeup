@@ -6,6 +6,7 @@ import type { Step } from "@/components/layout/StepIndicator";
 import ChatPane from "@/components/meeting/ChatPane";
 import AiAssistantPane from "@/components/meeting/AiAssistantPane";
 import CompletionPage from "@/components/meeting/CompletionPage";
+import GuestJoinGate from "@/components/meeting/GuestJoinGate";
 import InfoPane from "@/components/meeting/InfoPane";
 import { MeetingProvider, useMeeting } from "@/contexts/MeetingContext";
 import MeetingPreferencePopup from "@/components/meeting/MeetingPreferencePopup";
@@ -39,7 +40,7 @@ export default function MeetingPage() {
 
 function MeetingPageInner() {
   const { contextMode, setContextMode, roomId } = useMeeting();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [showPreferencePopup, setShowPreferencePopup] = useState(false);
   const [preferenceChecked, setPreferenceChecked] = useState(false);
 
@@ -68,6 +69,25 @@ function MeetingPageInner() {
   const handlePreferenceSubmitted = () => {
     setShowPreferencePopup(false);
   };
+
+  // 로그인/게스트 가입 전에는 나머지 UI를 로드하지 않음. 모든 hook 호출 이후에
+  // 조건부 렌더링을 수행해 hook 순서 규칙을 유지.
+  if (authLoading) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8" }}>
+        불러오는 중…
+      </div>
+    );
+  }
+  if (!user) {
+    return (
+      <GuestJoinGate
+        roomId={roomId}
+        onJoined={() => window.location.reload()}
+      />
+    );
+  }
+
   const currentStep: Step = contextMode === "agent" ? "schedule" : contextMode;
 
   if (contextMode === "done") {

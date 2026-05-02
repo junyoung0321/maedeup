@@ -473,8 +473,9 @@ async def agent_ws(
 
                     place_recommendation_payload = result.get("place_recommendation_payload")
                     if place_recommendation_payload:
+                        # 모임 차원 카드는 방 전체 공유 (private→private이면 다른 멤버가 못 봄).
                         await _publish_agent_message(
-                            r, user_channel,
+                            r, shared_channel,
                             json.dumps(
                                 {"type": "place_recommendation", **place_recommendation_payload},
                                 ensure_ascii=False,
@@ -484,7 +485,7 @@ async def agent_ws(
                     maedeup_card_payload = result.get("maedeup_card_payload")
                     if maedeup_card_payload:
                         await _publish_agent_message(
-                            r, user_channel,
+                            r, shared_channel,
                             json.dumps(
                                 {"type": "maedeup_card", **maedeup_card_payload},
                                 ensure_ascii=False,
@@ -675,10 +676,10 @@ async def agent_ws(
 
                 vote_card_payload = result.get("vote_card_payload")
                 if vote_card_payload:
-                    # user-driven pipeline vote card → private (share 버튼으로 공용화)
+                    # 모임 일정 투표는 방 전체 공유 — 방장 혼자 본다면 투표 자체가 성립 안 함.
                     await _publish_agent_message(
                         r,
-                        user_channel,
+                        shared_channel,
                         json.dumps(
                             {"type": "vote_card", **vote_card_payload},
                             ensure_ascii=False,
@@ -715,9 +716,10 @@ async def agent_ws(
 
                 place_recommendation_payload = result.get("place_recommendation_payload")
                 if place_recommendation_payload:
+                    # 장소 추천도 모임 전체 공유 — 모두가 보고 선택에 참고해야 함.
                     await _publish_agent_message(
                         r,
-                        user_channel,
+                        shared_channel,
                         json.dumps(
                             {
                                 "type": "place_recommendation",
@@ -729,9 +731,10 @@ async def agent_ws(
 
                 maedeup_card_payload = result.get("maedeup_card_payload")
                 if maedeup_card_payload:
+                    # 최종 매듭 카드도 공유.
                     await _publish_agent_message(
                         r,
-                        user_channel,
+                        shared_channel,
                         json.dumps(
                             {"type": "maedeup_card", **maedeup_card_payload},
                             ensure_ascii=False,

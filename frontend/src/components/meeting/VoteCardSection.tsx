@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarDays, MapPin, Users, CheckCircle2 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useMeeting } from "@/contexts/MeetingContext";
@@ -8,6 +8,26 @@ import type { PlaceResult } from "@/types";
 
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function getCurrentUserIdFromToken(): number | null {
+  if (typeof window === "undefined") return null;
+  const token = localStorage.getItem("auth_token");
+  if (!token) return null;
+  try {
+    const payloadPart = token.split(".")[1];
+    if (!payloadPart) return null;
+    const normalized = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const decoded = JSON.parse(atob(padded));
+    if (decoded?.sub) {
+      const asNum = Number(decoded.sub);
+      if (Number.isFinite(asNum)) return asNum;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
 }
 
 export default function VoteCardSection() {
@@ -40,6 +60,24 @@ export default function VoteCardSection() {
   const [isConfirmingPlace, setIsConfirmingPlace] = useState(false);
   const [isPlaceConfirmed, setIsPlaceConfirmed] = useState(false);
   const [placeConfirmError, setPlaceConfirmError] = useState<string | null>(null);
+
+  // 방장 판정: GET /rooms/{id}로 created_by 조회 후 JWT sub와 비교.
+  const [hostUserId, setHostUserId] = useState<number | null>(null);
+  const currentUserId = useMemo(() => getCurrentUserIdFromToken(), []);
+  const isHost = currentUserId !== null && hostUserId === currentUserId;
+  const [showConfirmPopup, setShowConfirmPopup] = useState(false);
+  const [pendingPlaceId, setPendingPlaceId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!roomId) return;
+    let cancelled = false;
+    apiFetch<{ created_by: number }>(`/api/v1/rooms/${roomId}`)
+      .then((room) => {
+        if (!cancelled) setHostUserId(room.created_by);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [roomId]);
 
   const activeMeetingId = confirmedMeetingId ?? voteCard?.meeting_id ?? null;
 
@@ -349,24 +387,41 @@ export default function VoteCardSection() {
                 ✓ 일정이 확정되었습니다
               </div>
             ) : votedOptionIndex !== null ? (
-              <button
-                onClick={handleConfirmSchedule}
-                disabled={selectedSlotId === null || isConfirmingSchedule}
-                style={{
-                  width: "100%",
-                  padding: "12px 14px",
-                  borderRadius: 14,
-                  border: "none",
-                  background: selectedSlotId === null || isConfirmingSchedule ? "#cbd5e1" : "#4f46e5",
-                  color: "#ffffff",
-                  cursor: selectedSlotId === null || isConfirmingSchedule ? "not-allowed" : "pointer",
-                  fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                  fontSize: 14,
-                  fontWeight: 700,
-                }}
-              >
-                {isConfirmingSchedule ? "확정 중..." : "일정 확정하기"}
-              </button>
+              isHost ? (
+                <button
+                  onClick={() => setShowConfirmPopup(true)}
+                  disabled={selectedSlotId === null || isConfirmingSchedule}
+                  style={{
+                    width: "100%",
+                    padding: "12px 14px",
+                    borderRadius: 14,
+                    border: "none",
+                    background: selectedSlotId === null || isConfirmingSchedule ? "#cbd5e1" : "#4f46e5",
+                    color: "#ffffff",
+                    cursor: selectedSlotId === null || isConfirmingSchedule ? "not-allowed" : "pointer",
+                    fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                    fontSize: 14,
+                    fontWeight: 700,
+                  }}
+                >
+                  {isConfirmingSchedule ? "확정 중..." : "일정 확정하기"}
+                </button>
+              ) : (
+                <div
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: 14,
+                    background: "#eef2ff",
+                    border: "1px solid #c7d2fe",
+                    color: "#4338ca",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    textAlign: "center",
+                  }}
+                >
+                  ⏳ 방장이 확정하기를 기다리는 중이에요
+                </div>
+              )
             ) : (
               <div style={{ padding: "8px 14px", borderRadius: 14, background: "#f1f5f9", color: "#64748b", fontSize: 13, fontWeight: 500, textAlign: "center" }}>
                 투표 후 일정을 확정할 수 있어요
@@ -375,6 +430,96 @@ export default function VoteCardSection() {
             {scheduleConfirmError && <span style={{ fontSize: 13, fontWeight: 500, color: "#dc2626" }}>{scheduleConfirmError}</span>}
             {voteError && <span style={{ fontSize: 13, fontWeight: 500, color: "#dc2626" }}>{voteError}</span>}
           </div>
+
+          {/* Host 확정 팝업 */}
+          {showConfirmPopup && (() => {
+            const selectedSlot = voteCard?.time_options.find((o) => o.slot_id === selectedSlotId);
+            return (
+              <div
+                onClick={() => !isConfirmingSchedule && setShowConfirmPopup(false)}
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  zIndex: 100,
+                  background: "rgba(0,0,0,0.4)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: 20,
+                }}
+              >
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    width: "100%",
+                    maxWidth: 380,
+                    background: "#ffffff",
+                    borderRadius: 16,
+                    padding: "24px 22px",
+                    boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 14,
+                    fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <CalendarDays size={20} style={{ color: "#4f46e5" }} />
+                    <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#1e1b4b" }}>
+                      이 일정으로 확정할까요?
+                    </h3>
+                  </div>
+                  <div style={{ padding: "12px 14px", background: "#f8fafc", borderRadius: 10, fontSize: 14, color: "#334155", fontWeight: 600 }}>
+                    {selectedSlot?.label ?? "선택된 시간"}
+                  </div>
+                  <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
+                    확정하면 다른 멤버에게도 알림이 가고, 되돌리려면 따로 작업이 필요해요.
+                  </p>
+                  <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                    <button
+                      onClick={() => setShowConfirmPopup(false)}
+                      disabled={isConfirmingSchedule}
+                      style={{
+                        flex: 1,
+                        padding: "10px 14px",
+                        borderRadius: 10,
+                        border: "1px solid #e2e8f0",
+                        background: "#ffffff",
+                        color: "#475569",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        cursor: isConfirmingSchedule ? "not-allowed" : "pointer",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      취소
+                    </button>
+                    <button
+                      onClick={async () => {
+                        await handleConfirmSchedule();
+                        setShowConfirmPopup(false);
+                      }}
+                      disabled={isConfirmingSchedule}
+                      style={{
+                        flex: 1,
+                        padding: "10px 14px",
+                        borderRadius: 10,
+                        border: "none",
+                        background: isConfirmingSchedule ? "#a5b4fc" : "#4f46e5",
+                        color: "#ffffff",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        cursor: isConfirmingSchedule ? "not-allowed" : "pointer",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      {isConfirmingSchedule ? "확정 중…" : "확정하기"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -439,24 +584,30 @@ export default function VoteCardSection() {
                       ✓ 장소가 확정되었습니다
                     </div>
                   ) : !isPlaceConfirmed && confirmedMeetingId ? (
-                    <button
-                      onClick={() => handleConfirmPlace(place.place_id)}
-                      disabled={isConfirmingPlace}
-                      style={{
-                        padding: "7px 12px",
-                        borderRadius: 10,
-                        border: "none",
-                        background: isConfirmingPlace && isSelected ? "#cbd5e1" : "#4f46e5",
-                        color: "#ffffff",
-                        fontSize: 13,
-                        fontWeight: 600,
-                        cursor: isConfirmingPlace ? "not-allowed" : "pointer",
-                        alignSelf: "flex-start",
-                        fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                      }}
-                    >
-                      {isConfirmingPlace && isSelected ? "확정 중..." : "이 장소로 확정"}
-                    </button>
+                    isHost ? (
+                      <button
+                        onClick={() => setPendingPlaceId(place.place_id)}
+                        disabled={isConfirmingPlace}
+                        style={{
+                          padding: "7px 12px",
+                          borderRadius: 10,
+                          border: "none",
+                          background: isConfirmingPlace && isSelected ? "#cbd5e1" : "#4f46e5",
+                          color: "#ffffff",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          cursor: isConfirmingPlace ? "not-allowed" : "pointer",
+                          alignSelf: "flex-start",
+                          fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                        }}
+                      >
+                        {isConfirmingPlace && isSelected ? "확정 중..." : "이 장소로 확정"}
+                      </button>
+                    ) : (
+                      <span style={{ fontSize: 12, color: "#6366f1", fontWeight: 600, alignSelf: "flex-start" }}>
+                        ⏳ 방장이 확정하기를 기다리는 중이에요
+                      </span>
+                    )
                   ) : !isPlaceConfirmed && !confirmedMeetingId ? (
                     <span style={{ fontSize: 12, color: "#94a3b8", fontStyle: "italic" }}>
                       일정을 먼저 확정하면 장소를 선택할 수 있어요
@@ -467,6 +618,103 @@ export default function VoteCardSection() {
             })}
           </div>
           {placeConfirmError && <span style={{ fontSize: 13, fontWeight: 500, color: "#dc2626" }}>{placeConfirmError}</span>}
+
+          {/* Host 장소 확정 팝업 */}
+          {pendingPlaceId && (() => {
+            const pendingPlace = placeRecommendation?.recommendations.find((p) => p.place_id === pendingPlaceId);
+            return (
+              <div
+                onClick={() => !isConfirmingPlace && setPendingPlaceId(null)}
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  zIndex: 100,
+                  background: "rgba(0,0,0,0.4)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: 20,
+                }}
+              >
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    width: "100%",
+                    maxWidth: 380,
+                    background: "#ffffff",
+                    borderRadius: 16,
+                    padding: "24px 22px",
+                    boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 14,
+                    fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <MapPin size={20} style={{ color: "#4f46e5" }} />
+                    <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#1e1b4b" }}>
+                      이 장소로 확정할까요?
+                    </h3>
+                  </div>
+                  <div style={{ padding: "12px 14px", background: "#f8fafc", borderRadius: 10, display: "flex", flexDirection: "column", gap: 4 }}>
+                    <span style={{ fontSize: 14, color: "#1e293b", fontWeight: 700 }}>
+                      {pendingPlace?.name ?? "선택된 장소"}
+                    </span>
+                    {pendingPlace?.address && (
+                      <span style={{ fontSize: 12, color: "#64748b" }}>{pendingPlace.address}</span>
+                    )}
+                  </div>
+                  <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
+                    확정하면 다른 멤버에게도 알림이 가고, 되돌리려면 따로 작업이 필요해요.
+                  </p>
+                  <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                    <button
+                      onClick={() => setPendingPlaceId(null)}
+                      disabled={isConfirmingPlace}
+                      style={{
+                        flex: 1,
+                        padding: "10px 14px",
+                        borderRadius: 10,
+                        border: "1px solid #e2e8f0",
+                        background: "#ffffff",
+                        color: "#475569",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        cursor: isConfirmingPlace ? "not-allowed" : "pointer",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      취소
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const id = pendingPlaceId;
+                        if (!id) return;
+                        await handleConfirmPlace(id);
+                        setPendingPlaceId(null);
+                      }}
+                      disabled={isConfirmingPlace}
+                      style={{
+                        flex: 1,
+                        padding: "10px 14px",
+                        borderRadius: 10,
+                        border: "none",
+                        background: isConfirmingPlace ? "#a5b4fc" : "#4f46e5",
+                        color: "#ffffff",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        cursor: isConfirmingPlace ? "not-allowed" : "pointer",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      {isConfirmingPlace ? "확정 중…" : "확정하기"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import type { Room, MeetingItem } from "@/types";
+import EmptyState from "@/components/ui/EmptyState";
 
 const CATEGORY_MAP: Record<string, { badge: string; badgeColor: string }> = {
   study:  { badge: "스터디",  badgeColor: "#4f46e5" },
@@ -55,13 +56,13 @@ export default function MeetingList() {
           불러오는 중...
         </div>
       ) : error ? (
-        <div className="flex-1 flex items-center justify-center text-[#ef4444] text-sm">
-          모임 정보를 불러올 수 없습니다
-        </div>
+        <EmptyState message="모임 정보를 불러올 수 없습니다" icon={Users} />
       ) : meetings.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center text-[#94a3b8] text-sm">
-          참여중인 모임이 없어요
-        </div>
+        <EmptyState
+          icon={Users}
+          message="참여중인 모임이 없어요"
+          sub="새 모임을 만들거나 친구에게 초대를 받아보세요"
+        />
       ) : (
         <div className="flex flex-col gap-[26px] flex-1 overflow-y-auto min-h-0">
           {meetings.map((meeting) => (

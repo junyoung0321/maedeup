@@ -34,6 +34,7 @@ interface DayAvail {
   available: string[];
   busy: string[];
   unconnected: string[];
+  blocked?: string[];
 }
 
 interface CalendarApiResponse {
@@ -62,14 +63,66 @@ export default function CalendarPane() {
   const sendDateSelection = meeting?.sendDateSelection ?? null;
   const unavailabilityByUser = meeting?.unavailabilityByUser ?? {};
   const sendUnavailableToggle = meeting?.sendUnavailableToggle ?? null;
+  const myDateSelection = meeting?.myDateSelection ?? null;
   const currentUserId = useMemo(() => getCurrentUserIdFromToken(), []);
+
+  // localStorage 키 — 방별로 분리. 본인 UI 선호만 저장 (뷰 월/클릭 날짜).
+  const viewStorageKey = `maedeup:cal:${roomId}:view`;
+  const initialView = (() => {
+    if (typeof window === "undefined") {
+      const now = new Date();
+      return { year: now.getFullYear(), month: now.getMonth() + 1, clickedDay: null as number | null };
+    }
+    try {
+      const raw = localStorage.getItem(viewStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (
+          typeof parsed?.year === "number" &&
+          typeof parsed?.month === "number" &&
+          (parsed.clickedDay === null || typeof parsed.clickedDay === "number")
+        ) {
+          return { year: parsed.year, month: parsed.month, clickedDay: parsed.clickedDay };
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() + 1, clickedDay: null as number | null };
+  })();
+
   const [availabilityData, setAvailabilityData] = useState<Record<number, DayAvail>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const [year, setYear] = useState(new Date().getFullYear());
-  const [month, setMonth] = useState(new Date().getMonth() + 1);
-  const [clickedDay, setClickedDay] = useState<number | null>(null);
+  const [year, setYear] = useState(initialView.year);
+  const [month, setMonth] = useState(initialView.month);
+  const [clickedDay, setClickedDay] = useState<number | null>(initialView.clickedDay);
   const [blockMode, setBlockMode] = useState(false);
+
+  // 월/클릭 날짜 변경 시 localStorage에 저장 (본인만 쓰는 UI 선호).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(
+        viewStorageKey,
+        JSON.stringify({ year, month, clickedDay }),
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [viewStorageKey, year, month, clickedDay]);
+
+  // 서버 스냅샷으로 복구된 내 date_selection이 오면 그 날짜가 현재 월과 맞으면 clickedDay로.
+  // 단, localStorage에 이미 clickedDay가 저장돼 있었다면 localStorage 우선.
+  useEffect(() => {
+    if (!myDateSelection) return;
+    if (clickedDay !== null) return; // 사용자가 이미 골라둔 게 있으면 덮어쓰지 않음
+    const [py, pm, pd] = myDateSelection.split("-").map(Number);
+    if (py === year && pm === month) {
+      setClickedDay(pd);
+    }
+  }, [myDateSelection, year, month, clickedDay]);
 
   // 날짜 문자열 → 그 날 불가능 처리한 user_id 수. 내 것도 포함.
   const unavailableCountByDate: Record<string, number> = {};
@@ -146,6 +199,7 @@ export default function CalendarPane() {
             available: avail.available ?? [],
             busy: avail.busy ?? [],
             unconnected: avail.unconnected ?? [],
+            blocked: avail.blocked ?? [],
           };
         }
         setAvailabilityData(dayMap);
@@ -596,6 +650,14 @@ export default function CalendarPane() {
                 </span>
               </div>
             )}
+            {(availabilityData[clickedDay]?.blocked ?? []).length > 0 && (
+              <div style={{ display: "flex", gap: 4, marginTop: 3, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, color: "#ef4444" }}>🚫</span>
+                <span style={{ fontSize: 11, color: "#ef4444", fontFamily: "Inter, sans-serif" }}>
+                  {availabilityData[clickedDay]!.blocked!.join(", ")} 불가능 표시
+                </span>
+              </div>
+            )}
             {(availabilityData[clickedDay]?.available ?? []).length === 0 &&
               (availabilityData[clickedDay]?.busy ?? []).length === 0 &&
               (availabilityData[clickedDay]?.unconnected ?? []).length === 0 && (
@@ -614,6 +676,8 @@ export default function CalendarPane() {
               const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(clickedDay).padStart(2, "0")}`;
               const isAiDate = aiHighlightedDates.includes(dateStr);
               const slotsForDay = candidateSlots.filter((s) => s.start_at.startsWith(dateStr));
+              const dayIsMyBlocked = myUnavailableDates.has(dateStr);
+              const dayBlockedOthers = (unavailableCountByDate[dateStr] ?? 0) - (dayIsMyBlocked ? 1 : 0);
               return (
                 <>
                   {isAiDate && (
@@ -628,6 +692,40 @@ export default function CalendarPane() {
                       marginTop: 6,
                     }}>
                       AI 추천 날짜
+                    </div>
+                  )}
+                  {dayIsMyBlocked && (
+                    <div
+                      role="note"
+                      style={{
+                        marginTop: 6,
+                        padding: "6px 10px",
+                        borderRadius: 8,
+                        background: "#fef2f2",
+                        border: "1px solid #fecaca",
+                        color: "#991b1b",
+                        fontSize: 11,
+                        fontWeight: 500,
+                      }}
+                    >
+                      🚫 이 날은 불가능으로 표시했어요. 시간을 골라도 집계에서 제외됩니다.
+                    </div>
+                  )}
+                  {!dayIsMyBlocked && dayBlockedOthers > 0 && (
+                    <div
+                      role="note"
+                      style={{
+                        marginTop: 6,
+                        padding: "6px 10px",
+                        borderRadius: 8,
+                        background: "#fff7ed",
+                        border: "1px solid #fed7aa",
+                        color: "#9a3412",
+                        fontSize: 11,
+                        fontWeight: 500,
+                      }}
+                    >
+                      ⚠️ {dayBlockedOthers}명이 이 날을 불가능으로 표시했어요.
                     </div>
                   )}
                   <MiniTimeBar

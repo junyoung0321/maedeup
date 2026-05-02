@@ -12,7 +12,11 @@ import logging
 
 from sqlalchemy import func as sa_func
 
-from app.core.security import AuthUser, get_current_user
+import uuid
+
+from fastapi import HTTPException
+
+from app.core.security import AuthUser, get_current_user, issue_jwt
 from app.db.session import get_session
 from app.models.chat import ChatMessage, PaneType, Visibility
 from app.models.meeting_preference import MeetingPreference
@@ -33,6 +37,16 @@ class CreateRoomRequest(BaseModel):
     description: Optional[str] = None
     category: Optional[str] = None
     member_emails: list[str] = []
+
+
+class GuestJoinRequest(BaseModel):
+    display_name: str
+
+
+class GuestJoinResponse(BaseModel):
+    token: str
+    user_id: int
+    name: str
 
 
 class RoomResponse(BaseModel):
@@ -79,6 +93,8 @@ async def create_room(
     session: AsyncSession = Depends(get_session),
 ):
     """모임을 생성하고 초대 멤버를 room_members에 추가합니다."""
+    if current_user.is_guest:
+        raise HTTPException(status_code=403, detail="게스트는 방을 생성할 수 없습니다.")
     creator_id = int(current_user.sub)
 
     room = Room(
@@ -112,6 +128,85 @@ async def create_room(
         created_by=room.created_by,
         created_at=room.created_at,
     )
+
+
+@router.get("/{room_id}", response_model=RoomResponse)
+async def get_room(
+    room_id: int,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """방 단건 조회. 멤버만 접근 가능 (created_by 포함 — 방장 판정에 사용)."""
+    room = await session.get(Room, room_id)
+    if room is None:
+        raise HTTPException(status_code=404, detail="Room not found")
+    membership = await session.execute(
+        select(RoomMember).where(
+            RoomMember.room_id == room_id,
+            RoomMember.user_id == int(current_user.sub),
+        )
+    )
+    if membership.scalar_one_or_none() is None:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return RoomResponse(
+        id=room.id,
+        name=room.name,
+        description=room.description,
+        category=room.category,
+        created_by=room.created_by,
+        created_at=room.created_at,
+    )
+
+
+@router.post("/{room_id}/guest-join", response_model=GuestJoinResponse)
+async def guest_join_room(
+    room_id: int,
+    body: GuestJoinRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    로그인 없이 방에 게스트로 참여. 링크 기반 초대(카카오톡 공유 등)용.
+    - 방 존재 확인
+    - User 테이블에 is_guest=True로 신규 row 생성 (synthetic email)
+    - RoomMember 연결
+    - JWT 발급 (is_guest claim 포함)
+
+    주의: 매 호출마다 새 게스트가 생김. 재접속 시에도 동일 세션 유지는 클라이언트가
+    발급받은 토큰을 localStorage에 보관해 재사용함으로써 구현.
+    """
+    name = (body.display_name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="이름을 입력해주세요.")
+    if len(name) > 32:
+        raise HTTPException(status_code=400, detail="이름은 32자 이하로 입력해주세요.")
+
+    room = await session.get(Room, room_id)
+    if room is None:
+        raise HTTPException(status_code=404, detail="존재하지 않는 방입니다.")
+
+    synthetic_email = f"guest-{uuid.uuid4().hex[:12]}@maedeup.local"
+    guest = User(
+        email=synthetic_email,
+        name=name,
+        is_guest=True,
+        calendar_consent=False,
+    )
+    session.add(guest)
+    await session.flush()  # guest.id 확보
+
+    session.add(RoomMember(room_id=room.id, user_id=guest.id, role=MemberRole.member))
+    await session.commit()
+    await session.refresh(guest)
+
+    token = issue_jwt(
+        user_id=guest.id,
+        email=guest.email,
+        name=guest.name,
+        picture=None,
+        calendar_consent=False,
+        is_guest=True,
+    )
+    return GuestJoinResponse(token=token, user_id=guest.id, name=guest.name)
 
 
 @router.get("/", response_model=list[RoomResponse])

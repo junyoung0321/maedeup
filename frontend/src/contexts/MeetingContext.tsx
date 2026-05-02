@@ -56,6 +56,10 @@ interface MeetingState {
   peerTimeSelections: Record<string, PeerTimeSelection>;
   // 유저별 불가능 날짜 배열 (내 것 + 남 것. user_id를 키로 사용)
   unavailabilityByUser: Record<number, string[]>;
+  // 본인 TimeBar 선택 — 리프레시 복구용. 서버 스냅샷에서 초기화됨.
+  myTimeSelection: { date: string; start: number; end: number } | null;
+  // 본인 날짜 선택 — 리프레시 복구용 (peer에겐 peerDateSelections로 따로 전송됨).
+  myDateSelection: string | null;
   // AI 제안 카드 상태 (과반 도달 시 백엔드가 푸시)
   finalizationProposal: FinalizationState | null;
   // AI reason 생성 대기 중이면 shimmer 카드 렌더
@@ -95,6 +99,10 @@ interface MeetingContextValue extends MeetingState {
   setUnavailabilityByUser: (by: Record<number, string[]>) => void;
   sendUnavailableToggle: ((date: string, unavailable: boolean) => void) | null;
   setSendUnavailableToggle: (fn: ((date: string, unavailable: boolean) => void) | null) => void;
+  // 본인 TimeBar 선택 복구 bridge
+  setMyTimeSelection: (sel: { date: string; start: number; end: number } | null) => void;
+  // 본인 날짜 선택 복구 bridge
+  setMyDateSelection: (date: string | null) => void;
   // Finalization bridge — ChatPane(social WS)이 여기로 push, InfoPane/Card가 소비
   setFinalizationProposal: (proposal: FinalizationState | null) => void;
   setFinalizationPending: (pending: boolean) => void;
@@ -131,6 +139,8 @@ export function MeetingProvider({
     peerDateSelections: {},
     peerTimeSelections: {},
     unavailabilityByUser: {},
+    myTimeSelection: null,
+    myDateSelection: null,
     finalizationProposal: null,
     finalizationPending: false,
     lastConfirmedMeeting: null,
@@ -174,6 +184,17 @@ export function MeetingProvider({
 
   const setUnavailabilityByUser = useCallback((by: Record<number, string[]>) => {
     setState((prev) => ({ ...prev, unavailabilityByUser: by }));
+  }, []);
+
+  const setMyTimeSelection = useCallback(
+    (sel: { date: string; start: number; end: number } | null) => {
+      setState((prev) => ({ ...prev, myTimeSelection: sel }));
+    },
+    [],
+  );
+
+  const setMyDateSelection = useCallback((date: string | null) => {
+    setState((prev) => ({ ...prev, myDateSelection: date }));
   }, []);
 
   const setFinalizationProposal = useCallback((proposal: FinalizationState | null) => {
@@ -359,6 +380,10 @@ export function MeetingProvider({
       setUnavailabilityByUser,
       sendUnavailableToggle,
       setSendUnavailableToggle,
+      myTimeSelection: state.myTimeSelection,
+      setMyTimeSelection,
+      myDateSelection: state.myDateSelection,
+      setMyDateSelection,
       finalizationProposal: state.finalizationProposal,
       finalizationPending: state.finalizationPending,
       lastConfirmedMeeting: state.lastConfirmedMeeting,
@@ -409,6 +434,10 @@ export function MeetingProvider({
       setUnavailabilityByUser,
       sendUnavailableToggle,
       setSendUnavailableToggle,
+      state.myTimeSelection,
+      setMyTimeSelection,
+      state.myDateSelection,
+      setMyDateSelection,
       state.finalizationProposal,
       state.finalizationPending,
       state.lastConfirmedMeeting,

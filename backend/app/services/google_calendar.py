@@ -200,6 +200,87 @@ async def update_calendar_event(
     return response.json()
 
 
+async def delete_calendar_event(
+    user: User,
+    session: AsyncSession,
+    event_id: str,
+) -> bool:
+    """Delete an event from `user`'s primary calendar via DELETE.
+
+    Returns True if Google reports the event removed (or it was already gone —
+    404/410 is treated as success). Raises on auth or other transport errors.
+    """
+    url = f"{GOOGLE_EVENTS_URL}/{event_id}"
+    access_token = await get_google_access_token(user, session)
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.delete(url, headers=headers)
+            if response.status_code == 401:
+                refreshed_token = await get_google_access_token(user, session, force_refresh=True)
+                response = await client.delete(
+                    url,
+                    headers={"Authorization": f"Bearer {refreshed_token}"},
+                )
+    except httpx.HTTPError as exc:
+        raise GoogleCalendarError("Google Calendar request failed") from exc
+
+    if response.status_code == 401:
+        raise GoogleCalendarAuthError()
+    # 200/204 = deleted; 404/410 = already gone — both count as success.
+    if response.status_code in (200, 204, 404, 410):
+        return True
+    raise GoogleCalendarError(
+        f"Google Calendar event deletion failed with status {response.status_code}"
+    )
+
+
+async def delete_events_for_meeting_members(
+    meeting: MeetingSchedule,
+    members: Iterable[User],
+    session: AsyncSession,
+) -> dict[str, str]:
+    """Delete every member's Google Calendar event for this meeting.
+
+    Best-effort: per-member failures are logged. All entries are dropped from
+    the returned mapping regardless of outcome — orphan events on a member's
+    calendar are an accepted edge case (re-deleting on a soft-cancelled meeting
+    has no UI path anyway).
+
+    Returns the residual mapping (typically empty; only entries whose member
+    isn't in `members` survive).
+    """
+    remaining = dict(meeting.google_event_ids or {})
+    members_by_id = {m.id: m for m in members}
+
+    for user_id_str, event_id in list(remaining.items()):
+        try:
+            user_id = int(user_id_str)
+        except ValueError:
+            del remaining[user_id_str]
+            continue
+        member = members_by_id.get(user_id)
+        if member is None or member.is_guest:
+            del remaining[user_id_str]
+            continue
+        try:
+            await delete_calendar_event(member, session, event_id)
+        except GoogleCalendarAuthError:
+            logger.info(
+                "Calendar deletion skipped for user_id=%s meeting_id=%s — auth expired",
+                user_id, meeting.id,
+            )
+        except (GoogleCalendarError, Exception):
+            logger.warning(
+                "Failed to delete Google Calendar event for user_id=%s meeting_id=%s",
+                user_id, meeting.id, exc_info=True,
+            )
+        del remaining[user_id_str]
+
+    return remaining
+
+
 async def sync_events_for_meeting_members(
     meeting: MeetingSchedule,
     members: Iterable[User],

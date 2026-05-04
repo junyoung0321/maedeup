@@ -20,7 +20,10 @@ from app.models.meeting import MeetingSchedule, MeetingStatus
 from app.models.room import Room, RoomMember
 from app.models.user import User
 from app.services import scheduling_round as sr
-from app.services.google_calendar import sync_events_for_meeting_members
+from app.services.google_calendar import (
+    delete_events_for_meeting_members,
+    sync_events_for_meeting_members,
+)
 from app.services.langgraph_pipeline import suggest_alternative_slots
 from app.services.meeting_history import save_meeting_record
 
@@ -585,6 +588,83 @@ async def confirm_place(
             "Failed to save meeting record for meeting_id=%s",
             meeting.id,
             exc_info=True,
+        )
+
+    return ConfirmMeetingResponse(id=meeting.id)
+
+
+@router.post("/{meeting_id}/cancel", response_model=ConfirmMeetingResponse)
+async def cancel_meeting(
+    meeting_id: int,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+    redis=Depends(get_finalization_redis),
+):
+    """Soft-cancel a confirmed (or pending) meeting.
+
+    - Host-only.
+    - Marks the meeting cancelled, broadcasts `meeting_cancelled` to the room,
+      and removes the corresponding events from each member's Google Calendar
+      best-effort.
+    - Idempotent: cancelling an already-cancelled meeting is a no-op.
+    """
+    result = await session.execute(
+        select(MeetingSchedule).where(MeetingSchedule.id == meeting_id)
+    )
+    meeting = result.scalar_one_or_none()
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    if meeting.created_by != int(current_user.sub):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if meeting.status == MeetingStatus.cancelled:
+        return ConfirmMeetingResponse(id=meeting.id)
+
+    # Capture members BEFORE status flip — used by the calendar fan-out below.
+    members_result = await session.execute(
+        select(User)
+        .join(RoomMember, RoomMember.user_id == User.id)
+        .where(RoomMember.room_id == meeting.room_id)
+    )
+    members = members_result.scalars().all()
+
+    meeting.status = MeetingStatus.cancelled
+    meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    session.add(meeting)
+    await session.commit()
+    await session.refresh(meeting)
+
+    # Broadcast cancellation so every client transitions UI together.
+    try:
+        await _publish_finalization_event(
+            redis,
+            meeting.room_id,
+            {
+                "type": "meeting_cancelled",
+                "room_id": meeting.room_id,
+                "meeting_id": meeting.id,
+            },
+        )
+    except Exception:
+        logger.warning(
+            "Failed to broadcast meeting_cancelled (meeting_id=%s)",
+            meeting.id, exc_info=True,
+        )
+
+    # Best-effort: delete the matching event from each member's calendar.
+    # Failures here MUST NOT undo the cancellation.
+    try:
+        remaining = await delete_events_for_meeting_members(
+            meeting, members, session
+        )
+        if remaining != (meeting.google_event_ids or {}):
+            meeting.google_event_ids = remaining
+            session.add(meeting)
+            await session.commit()
+            await session.refresh(meeting)
+    except Exception:
+        logger.warning(
+            "Google Calendar delete fan-out failed (meeting_id=%s)",
+            meeting.id, exc_info=True,
         )
 
     return ConfirmMeetingResponse(id=meeting.id)

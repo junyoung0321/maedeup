@@ -1,11 +1,40 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Check, Share2, List, Calendar, MapPin, Users } from "lucide-react";
 import Avatar from "@/components/ui/Avatar";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@/hooks/useAuth";
+import { apiFetch } from "@/lib/api";
+import { useMeeting } from "@/contexts/MeetingContext";
 
-function formatMeetingDate(date: Date): string {
+interface MemberInfo {
+  id: number;
+  name: string;
+  picture: string | null;
+  is_guest: boolean;
+}
+
+interface MeetingDetail {
+  id: number;
+  room_id: number;
+  room_name: string;
+  title: string;
+  scheduled_at: string;
+  end_at: string | null;
+  location_name: string | null;
+  location_address: string | null;
+  status: string;
+  members: MemberInfo[];
+}
+
+const AVATAR_PALETTE = ["#818cf8", "#f472b6", "#34d399", "#fbbf24", "#60a5fa", "#fb7185", "#a78bfa", "#facc15"];
+
+function colorForUserId(id: number): string {
+  return AVATAR_PALETTE[id % AVATAR_PALETTE.length];
+}
+
+function formatMeetingDate(iso: string): string {
+  const date = new Date(iso);
   const y = date.getFullYear();
   const m = date.getMonth() + 1;
   const d = date.getDate();
@@ -19,26 +48,31 @@ function formatMeetingDate(date: Date): string {
 
 export default function CompletionPage() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { confirmedMeetingId } = useMeeting();
+  const [data, setData] = useState<MeetingDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const meetingDate = new Date();
-  meetingDate.setDate(meetingDate.getDate() + 1);
-  meetingDate.setHours(15, 0, 0, 0);
+  useEffect(() => {
+    if (!confirmedMeetingId) {
+      setLoading(false);
+      setError("모임 정보를 불러올 수 없습니다");
+      return;
+    }
+    setLoading(true);
+    apiFetch<MeetingDetail>(`/api/v1/meetings/${confirmedMeetingId}`)
+      .then((d) => {
+        setData(d);
+        setError(null);
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "모임 정보를 불러올 수 없습니다");
+      })
+      .finally(() => setLoading(false));
+  }, [confirmedMeetingId]);
 
-  const meetingInfo = {
-    title: "졸업 프로젝트 회의",
-    date: formatMeetingDate(meetingDate),
-    location: "강남역 스타벅스 3층",
-    members: [
-      { name: user?.name ?? "나", color: "#818cf8" },
-      { name: "정은빈", color: "#f472b6" },
-      { name: "한도이", color: "#34d399" },
-      { name: "가인영", color: "#fbbf24" },
-    ],
-  };
-
-  const visibleMembers = meetingInfo.members.slice(0, 2);
-  const extraCount = meetingInfo.members.length - visibleMembers.length;
+  const visibleMembers = (data?.members ?? []).slice(0, 2);
+  const extraCount = Math.max(0, (data?.members.length ?? 0) - visibleMembers.length);
 
   return (
     <div
@@ -94,92 +128,99 @@ export default function CompletionPage() {
         >
           모임 정보
         </h3>
-        <div className="flex flex-col gap-4">
-          {/* 모임명 */}
-          <div className="flex items-center gap-3">
-            <Calendar className="w-5 h-5 shrink-0" style={{ color: "#64748b" }} />
-            <div className="flex items-baseline gap-3">
-              <span
-                className="text-[14px]"
-                style={{ fontWeight: 300, color: "#64748b", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}
-              >
-                모임명
-              </span>
-              <span
-                className="text-[14px]"
-                style={{ fontWeight: 300, color: "#1e293b", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}
-              >
-                {meetingInfo.title}
-              </span>
-            </div>
-          </div>
 
-          {/* 일시 */}
-          <div className="flex items-center gap-3">
-            <Calendar className="w-5 h-5 shrink-0" style={{ color: "#64748b" }} />
-            <div className="flex items-baseline gap-3">
-              <span
-                className="text-[14px]"
-                style={{ fontWeight: 300, color: "#64748b", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}
-              >
-                일시
-              </span>
-              <span
-                className="text-[14px]"
-                style={{ fontWeight: 300, color: "#1e293b", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}
-              >
-                {meetingInfo.date}
-              </span>
-            </div>
-          </div>
-
-          {/* 장소 */}
-          <div className="flex items-center gap-3">
-            <MapPin className="w-5 h-5 shrink-0" style={{ color: "#64748b" }} />
-            <div className="flex items-baseline gap-3">
-              <span
-                className="text-[14px]"
-                style={{ fontWeight: 300, color: "#64748b", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}
-              >
-                장소
-              </span>
-              <span
-                className="text-[14px]"
-                style={{ fontWeight: 300, color: "#1e293b", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}
-              >
-                {meetingInfo.location}
-              </span>
-            </div>
-          </div>
-
-          {/* 참여자 */}
-          <div className="flex items-center gap-3">
-            <Users className="w-5 h-5 shrink-0" style={{ color: "#64748b" }} />
+        {loading ? (
+          <div className="text-[14px]" style={{ color: "#94a3b8" }}>불러오는 중…</div>
+        ) : error || !data ? (
+          <div className="text-[14px]" style={{ color: "#ef4444" }}>{error ?? "모임 정보를 불러올 수 없습니다"}</div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            {/* 모임명 */}
             <div className="flex items-center gap-3">
-              <span
-                className="text-[14px]"
-                style={{ fontWeight: 300, color: "#64748b", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}
-              >
-                참여자
-              </span>
-              <div className="flex items-center">
-                <div className="flex -space-x-2">
-                  {visibleMembers.map((m) => (
-                    <Avatar key={m.name} name={m.name} color={m.color} size="sm" />
-                  ))}
+              <Calendar className="w-5 h-5 shrink-0" style={{ color: "#64748b" }} />
+              <div className="flex items-baseline gap-3">
+                <span
+                  className="text-[14px]"
+                  style={{ fontWeight: 300, color: "#64748b", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}
+                >
+                  모임명
+                </span>
+                <span
+                  className="text-[14px]"
+                  style={{ fontWeight: 300, color: "#1e293b", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}
+                >
+                  {data.room_name || data.title}
+                </span>
+              </div>
+            </div>
+
+            {/* 일시 */}
+            <div className="flex items-center gap-3">
+              <Calendar className="w-5 h-5 shrink-0" style={{ color: "#64748b" }} />
+              <div className="flex items-baseline gap-3">
+                <span
+                  className="text-[14px]"
+                  style={{ fontWeight: 300, color: "#64748b", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}
+                >
+                  일시
+                </span>
+                <span
+                  className="text-[14px]"
+                  style={{ fontWeight: 300, color: "#1e293b", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}
+                >
+                  {formatMeetingDate(data.scheduled_at)}
+                </span>
+              </div>
+            </div>
+
+            {/* 장소 */}
+            <div className="flex items-center gap-3">
+              <MapPin className="w-5 h-5 shrink-0" style={{ color: "#64748b" }} />
+              <div className="flex items-baseline gap-3">
+                <span
+                  className="text-[14px]"
+                  style={{ fontWeight: 300, color: "#64748b", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}
+                >
+                  장소
+                </span>
+                <span
+                  className="text-[14px]"
+                  style={{ fontWeight: 300, color: "#1e293b", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}
+                >
+                  {data.location_name ?? "장소 미정"}
+                </span>
+              </div>
+            </div>
+
+            {/* 참여자 */}
+            <div className="flex items-center gap-3">
+              <Users className="w-5 h-5 shrink-0" style={{ color: "#64748b" }} />
+              <div className="flex items-center gap-3">
+                <span
+                  className="text-[14px]"
+                  style={{ fontWeight: 300, color: "#64748b", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}
+                >
+                  참여자
+                </span>
+                <div className="flex items-center">
+                  <div className="flex -space-x-2">
+                    {visibleMembers.map((m) => (
+                      <Avatar key={m.id} name={m.name} color={colorForUserId(m.id)} size="sm" />
+                    ))}
+                  </div>
+                  {extraCount > 0 && (
+                    <span
+                      className="text-[11px] ml-1"
+                      style={{ fontWeight: 300, color: "#64748b", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}
+                    >
+                      +{extraCount}
+                    </span>
+                  )}
                 </div>
-                {extraCount > 0 && (
-                  <span
-                    className="text-[11px] ml-1"
-                    style={{ fontWeight: 300, color: "#64748b", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}
-                  >
-                    +{extraCount}
-                  </span>
-                )}
               </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* 버튼 행 */}

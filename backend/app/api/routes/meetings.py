@@ -246,6 +246,86 @@ async def get_pending_vote_card(
     }
 
 
+class MeetingMemberInfo(BaseModel):
+    id: int
+    name: str
+    picture: Optional[str] = None
+    is_guest: bool = False
+
+
+class MeetingDetailResponse(BaseModel):
+    id: int
+    room_id: int
+    room_name: str
+    title: str
+    scheduled_at: datetime
+    end_at: Optional[datetime] = None
+    location_name: Optional[str] = None
+    location_address: Optional[str] = None
+    kakao_place_url: Optional[str] = None
+    status: str
+    members: list[MeetingMemberInfo]
+
+
+@router.get("/{meeting_id}", response_model=MeetingDetailResponse)
+async def get_meeting_detail(
+    meeting_id: int,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """모임 + 방 이름 + 멤버 목록을 한 번에 반환. 완료 페이지에서 사용."""
+    meeting_result = await session.execute(
+        select(MeetingSchedule).where(MeetingSchedule.id == meeting_id)
+    )
+    meeting = meeting_result.scalar_one_or_none()
+    if meeting is None:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+
+    user_id = int(current_user.sub)
+    membership_result = await session.execute(
+        select(RoomMember).where(
+            RoomMember.room_id == meeting.room_id,
+            RoomMember.user_id == user_id,
+        )
+    )
+    if membership_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    room_result = await session.execute(
+        select(Room).where(Room.id == meeting.room_id)
+    )
+    room = room_result.scalar_one_or_none()
+
+    members_result = await session.execute(
+        select(User)
+        .join(RoomMember, RoomMember.user_id == User.id)
+        .where(RoomMember.room_id == meeting.room_id)
+    )
+    members = members_result.scalars().all()
+
+    return MeetingDetailResponse(
+        id=meeting.id,
+        room_id=meeting.room_id,
+        room_name=room.name if room else "",
+        title=meeting.title,
+        scheduled_at=meeting.scheduled_at,
+        end_at=meeting.end_at,
+        location_name=meeting.location_name,
+        location_address=meeting.location_address,
+        kakao_place_url=meeting.kakao_place_url,
+        status=meeting.status,
+        members=[
+            MeetingMemberInfo(
+                id=u.id,
+                name=u.name,
+                picture=u.picture,
+                is_guest=u.is_guest,
+            )
+            for u in members
+        ],
+    )
+
+
 @router.post("/confirm", response_model=ConfirmMeetingResponse, status_code=201)
 async def confirm_meeting(
     body: ConfirmMeetingRequest,

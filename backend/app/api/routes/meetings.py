@@ -24,6 +24,7 @@ from app.services.google_calendar import (
     GoogleCalendarAuthError,
     GoogleCalendarError,
     create_calendar_event,
+    create_events_for_meeting_members,
     get_google_access_token,
 )
 from app.services.langgraph_pipeline import suggest_alternative_slots
@@ -354,6 +355,30 @@ async def confirm_meeting(
                 "Finalization post-confirm bookkeeping failed (proposal_id=%s, meeting_id=%s)",
                 body.proposal_id, meeting.id, exc_info=True,
             )
+
+    # Best-effort: push the confirmed meeting onto each consenting member's
+    # Google Calendar. Failures here MUST NOT unwind the DB commit.
+    try:
+        members_result = await session.execute(
+            select(User)
+            .join(RoomMember, RoomMember.user_id == User.id)
+            .where(RoomMember.room_id == body.room_id)
+        )
+        members = members_result.scalars().all()
+        new_event_ids = await create_events_for_meeting_members(
+            meeting, members, session
+        )
+        if new_event_ids:
+            merged = {**(meeting.google_event_ids or {}), **new_event_ids}
+            meeting.google_event_ids = merged
+            session.add(meeting)
+            await session.commit()
+            await session.refresh(meeting)
+    except Exception:
+        logger.warning(
+            "Google Calendar fan-out failed (meeting_id=%s, room_id=%s)",
+            meeting.id, body.room_id, exc_info=True,
+        )
 
     return ConfirmMeetingResponse(id=meeting.id)
 

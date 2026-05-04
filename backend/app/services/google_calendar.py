@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
-from typing import Any
+import logging
+from datetime import datetime, timedelta
+from typing import Any, Iterable
 
 import httpx
 from fastapi import HTTPException
@@ -12,7 +13,10 @@ from google.oauth2.credentials import Credentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.meeting import MeetingSchedule
 from app.models.user import User
+
+logger = logging.getLogger(__name__)
 
 GOOGLE_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -133,3 +137,66 @@ async def create_calendar_event(
             f"Google Calendar event creation failed with status {response.status_code}"
         )
     return response.json()
+
+
+def _user_can_receive_calendar_event(user: User) -> bool:
+    if user.is_guest:
+        return False
+    if not user.calendar_consent:
+        return False
+    if not (user.google_access_token or user.google_refresh_token):
+        return False
+    return True
+
+
+async def create_events_for_meeting_members(
+    meeting: MeetingSchedule,
+    members: Iterable[User],
+    session: AsyncSession,
+) -> dict[str, str]:
+    """Create a Google Calendar event in each eligible member's primary calendar.
+
+    Best-effort: per-member failures are logged and skipped, never raised.
+    Idempotent: members already present in `meeting.google_event_ids` are skipped.
+
+    Returns the newly-created entries (user_id-as-str → event_id). Caller is
+    responsible for merging into `meeting.google_event_ids` and committing.
+    """
+    existing = meeting.google_event_ids or {}
+    new_entries: dict[str, str] = {}
+
+    end_dt = meeting.end_at or (meeting.scheduled_at + timedelta(hours=1))
+
+    for member in members:
+        key = str(member.id)
+        if key in existing:
+            continue
+        if not _user_can_receive_calendar_event(member):
+            continue
+        try:
+            response = await create_calendar_event(
+                member,
+                session,
+                title=meeting.title,
+                start_datetime=meeting.scheduled_at,
+                end_datetime=end_dt,
+                location=meeting.location_name,
+            )
+        except GoogleCalendarAuthError:
+            logger.info(
+                "Skipping Google Calendar event for user_id=%s meeting_id=%s — auth expired",
+                member.id, meeting.id,
+            )
+            continue
+        except (GoogleCalendarError, Exception):
+            logger.warning(
+                "Failed to create Google Calendar event for user_id=%s meeting_id=%s",
+                member.id, meeting.id, exc_info=True,
+            )
+            continue
+
+        event_id = (response or {}).get("id")
+        if event_id:
+            new_entries[key] = event_id
+
+    return new_entries

@@ -35,7 +35,7 @@ function groupByDate(options: VoteCardPayload["time_options"]) {
 }
 
 export default function ScheduleRecommendationCard() {
-  const { voteCard, roomId, refreshCalendar, setContextMode, sendMessageToAi } = useMeeting();
+  const { voteCard, roomId, refreshCalendar, setContextMode, sendMessageToAi, setCalendarSyncStatus } = useMeeting();
 
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   const [showAlternatives, setShowAlternatives] = useState(false);
@@ -79,7 +79,11 @@ export default function ScheduleRecommendationCard() {
     setIsConfirming(true);
     setError(null);
     try {
-      await apiFetch<{ id: number }>("/api/v1/meetings/confirm", {
+      const result = await apiFetch<{
+        id: number;
+        calendar_event_for_self?: boolean;
+        calendar_member_count?: number;
+      }>("/api/v1/meetings/confirm", {
         method: "POST",
         body: JSON.stringify({
           room_id: parsedRoomId,
@@ -95,6 +99,10 @@ export default function ScheduleRecommendationCard() {
       });
       setIsConfirmed(true);
       setConfirmedLabel(slot.label);
+      setCalendarSyncStatus(
+        result.calendar_event_for_self ?? false,
+        result.calendar_member_count ?? 0,
+      );
       refreshCalendar();
       if (sendMessageToAi) {
         sendMessageToAi("일정이 확정되었습니다. 장소를 추천해주세요.");

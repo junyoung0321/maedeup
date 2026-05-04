@@ -53,6 +53,9 @@ export default function InfoPane() {
     refreshCalendar,
     finalizationProposal,
     finalizationPending,
+    calendarEventForSelf,
+    calendarMemberCount,
+    setCalendarSyncStatus,
   } = useMeeting();
 
   const currentUserId = useMemo(() => getCurrentUserIdFromToken(), []);
@@ -77,7 +80,11 @@ export default function InfoPane() {
     if (Number.isNaN(parsedRoomId)) return;
 
     try {
-      const result = await apiFetch<{ id: number }>("/api/v1/meetings/confirm", {
+      const result = await apiFetch<{
+        id: number;
+        calendar_event_for_self?: boolean;
+        calendar_member_count?: number;
+      }>("/api/v1/meetings/confirm", {
         method: "POST",
         body: JSON.stringify({
           room_id: parsedRoomId,
@@ -95,6 +102,10 @@ export default function InfoPane() {
         }),
       });
       confirmTime(startAt, endAt, result.id);
+      setCalendarSyncStatus(
+        result.calendar_event_for_self ?? false,
+        result.calendar_member_count ?? 0,
+      );
       refreshCalendar();
     } catch (error) {
       console.error("Failed to confirm meeting:", error);
@@ -113,7 +124,11 @@ export default function InfoPane() {
     const { apiFetch } = await import("@/lib/api");
     const parsedRoomId = Number.parseInt(roomId, 10);
     if (Number.isNaN(parsedRoomId)) return;
-    const result = await apiFetch<{ id: number }>("/api/v1/meetings/confirm", {
+    const result = await apiFetch<{
+      id: number;
+      calendar_event_for_self?: boolean;
+      calendar_member_count?: number;
+    }>("/api/v1/meetings/confirm", {
       method: "POST",
       body: JSON.stringify({
         room_id: parsedRoomId,
@@ -124,6 +139,10 @@ export default function InfoPane() {
       }),
     });
     confirmTime(slot.start_at, slot.end_at, result.id);
+    setCalendarSyncStatus(
+      result.calendar_event_for_self ?? false,
+      result.calendar_member_count ?? 0,
+    );
     refreshCalendar();
   };
 
@@ -298,6 +317,32 @@ export default function InfoPane() {
                   <div style={{ fontSize: fs(16, 13), fontWeight: 700, color: "#166534" }}>
                     ✓ 모임이 확정되었습니다!
                   </div>
+                  {calendarEventForSelf === true && (
+                    <div style={{
+                      marginTop: 8,
+                      fontSize: fs(13, 11),
+                      color: "#047857",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 6,
+                    }}>
+                      <CalendarDays size={fs(14, 12)} strokeWidth={2} />
+                      <span>
+                        내 구글 캘린더에 추가됨
+                        {calendarMemberCount > 1 && ` · 참여자 ${calendarMemberCount}명`}
+                      </span>
+                    </div>
+                  )}
+                  {calendarEventForSelf === false && (
+                    <div style={{
+                      marginTop: 8,
+                      fontSize: fs(12, 10),
+                      color: "#6b7280",
+                    }}>
+                      구글 캘린더 연동을 켜면 다음 모임부터 자동 추가됩니다
+                    </div>
+                  )}
                 </div>
               )}
             </div>

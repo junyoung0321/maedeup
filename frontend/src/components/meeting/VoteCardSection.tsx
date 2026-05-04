@@ -43,6 +43,7 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
     refreshCalendar,
     setSelectedPlace,
     setContextMode,
+    setCalendarSyncStatus,
   } = useMeeting();
 
   // Schedule vote state
@@ -160,7 +161,11 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
     setIsConfirmingSchedule(true);
     setScheduleConfirmError(null);
     try {
-      const result = await apiFetch<{ id: number }>("/api/v1/meetings/confirm", {
+      const result = await apiFetch<{
+        id: number;
+        calendar_event_for_self?: boolean;
+        calendar_member_count?: number;
+      }>("/api/v1/meetings/confirm", {
         method: "POST",
         body: JSON.stringify({
           room_id: parsedRoomId,
@@ -182,6 +187,10 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
       setConfirmedMeetingId(result.id);
       setConfirmedSlot({ label: selectedSlot.label, start_at: selectedSlot.start_at, end_at: selectedSlot.end_at });
       setIsScheduleConfirmed(true);
+      setCalendarSyncStatus(
+        result.calendar_event_for_self ?? false,
+        result.calendar_member_count ?? 0,
+      );
       refreshCalendar();
       // 장소도 이미 확정되어 있으면 → 2초 후 생성완료
       if (isPlaceConfirmed) {
@@ -212,7 +221,11 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
     setIsConfirmingPlace(true);
     setPlaceConfirmError(null);
     try {
-      await apiFetch<{ id: number }>(`/api/v1/meetings/${confirmedMeetingId}/place`, {
+      const result = await apiFetch<{
+        id: number;
+        calendar_event_for_self?: boolean;
+        calendar_member_count?: number;
+      }>(`/api/v1/meetings/${confirmedMeetingId}/place`, {
         method: "PATCH",
         body: JSON.stringify({
           place_id: place.place_id,
@@ -223,6 +236,10 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
       });
       setConfirmedPlace({ name: place.name, address: place.address });
       setIsPlaceConfirmed(true);
+      setCalendarSyncStatus(
+        result.calendar_event_for_self ?? false,
+        result.calendar_member_count ?? 0,
+      );
       // 일정 + 장소 둘 다 확정 → 2초 후 생성완료 페이지로 이동
       if (isScheduleConfirmed) {
         setTimeout(() => setContextMode("done"), 2000);

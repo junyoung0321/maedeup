@@ -47,6 +47,21 @@ class ConfirmMeetingRequest(BaseModel):
 
 class ConfirmMeetingResponse(BaseModel):
     id: int
+    # True if the caller's own user_id appears in meeting.google_event_ids after
+    # the operation — i.e. their personal Google Calendar has the event.
+    # False when the user revoked consent, never linked Google, or the operation
+    # cancelled/removed events. Frontends use this to render "내 캘린더에 추가됨".
+    calendar_event_for_self: bool = False
+    # Total members whose calendars currently hold this meeting's event.
+    calendar_member_count: int = 0
+
+
+def _calendar_response_fields(meeting: MeetingSchedule, user_id: int) -> dict:
+    event_ids = meeting.google_event_ids or {}
+    return {
+        "calendar_event_for_self": str(user_id) in event_ids,
+        "calendar_member_count": len(event_ids),
+    }
 
 
 class ConfirmPlaceRequest(BaseModel):
@@ -376,7 +391,10 @@ async def confirm_meeting(
             meeting.id, body.room_id, exc_info=True,
         )
 
-    return ConfirmMeetingResponse(id=meeting.id)
+    return ConfirmMeetingResponse(
+        id=meeting.id,
+        **_calendar_response_fields(meeting, int(current_user.sub)),
+    )
 
 
 @router.post("/{meeting_id}/vote", response_model=VoteResponse)
@@ -590,7 +608,10 @@ async def confirm_place(
             exc_info=True,
         )
 
-    return ConfirmMeetingResponse(id=meeting.id)
+    return ConfirmMeetingResponse(
+        id=meeting.id,
+        **_calendar_response_fields(meeting, int(current_user.sub)),
+    )
 
 
 @router.post("/{meeting_id}/cancel", response_model=ConfirmMeetingResponse)
@@ -617,7 +638,10 @@ async def cancel_meeting(
     if meeting.created_by != int(current_user.sub):
         raise HTTPException(status_code=403, detail="Forbidden")
     if meeting.status == MeetingStatus.cancelled:
-        return ConfirmMeetingResponse(id=meeting.id)
+        return ConfirmMeetingResponse(
+            id=meeting.id,
+            **_calendar_response_fields(meeting, int(current_user.sub)),
+        )
 
     # Capture members BEFORE status flip — used by the calendar fan-out below.
     members_result = await session.execute(
@@ -667,4 +691,7 @@ async def cancel_meeting(
             meeting.id, exc_info=True,
         )
 
-    return ConfirmMeetingResponse(id=meeting.id)
+    return ConfirmMeetingResponse(
+        id=meeting.id,
+        **_calendar_response_fields(meeting, int(current_user.sub)),
+    )

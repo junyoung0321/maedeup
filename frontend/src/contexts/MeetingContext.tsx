@@ -66,6 +66,11 @@ interface MeetingState {
   finalizationPending: boolean;
   // 최근 meeting_confirmed 이벤트 (성공 배너용)
   lastConfirmedMeeting: MeetingConfirmedPayload | null;
+  // 직전 confirm/place/cancel 후 본인 구글 캘린더에 이벤트가 들어가 있는지.
+  // null = 아직 확정 액션이 일어나지 않음. true/false = 마지막 응답 기준.
+  calendarEventForSelf: boolean | null;
+  // 직전 액션 후 캘린더 이벤트를 가진 멤버 수.
+  calendarMemberCount: number;
 }
 
 interface MeetingContextValue extends MeetingState {
@@ -107,6 +112,7 @@ interface MeetingContextValue extends MeetingState {
   setFinalizationProposal: (proposal: FinalizationState | null) => void;
   setFinalizationPending: (pending: boolean) => void;
   setLastConfirmedMeeting: (payload: MeetingConfirmedPayload | null) => void;
+  setCalendarSyncStatus: (forSelf: boolean | null, memberCount: number) => void;
 }
 
 export const MeetingContext = createContext<MeetingContextValue | null>(null);
@@ -144,6 +150,8 @@ export function MeetingProvider({
     finalizationProposal: null,
     finalizationPending: false,
     lastConfirmedMeeting: null,
+    calendarEventForSelf: null,
+    calendarMemberCount: 0,
   });
 
   const [sendMessageToAi, setSendMessageToAiRaw] = useState<((msg: string) => void) | null>(null);
@@ -208,6 +216,17 @@ export function MeetingProvider({
   const setLastConfirmedMeeting = useCallback(
     (payload: MeetingConfirmedPayload | null) => {
       setState((prev) => ({ ...prev, lastConfirmedMeeting: payload }));
+    },
+    [],
+  );
+
+  const setCalendarSyncStatus = useCallback(
+    (forSelf: boolean | null, memberCount: number) => {
+      setState((prev) => ({
+        ...prev,
+        calendarEventForSelf: forSelf,
+        calendarMemberCount: memberCount,
+      }));
     },
     [],
   );
@@ -387,9 +406,12 @@ export function MeetingProvider({
       finalizationProposal: state.finalizationProposal,
       finalizationPending: state.finalizationPending,
       lastConfirmedMeeting: state.lastConfirmedMeeting,
+      calendarEventForSelf: state.calendarEventForSelf,
+      calendarMemberCount: state.calendarMemberCount,
       setFinalizationProposal,
       setFinalizationPending,
       setLastConfirmedMeeting,
+      setCalendarSyncStatus,
       setContextMode,
       setSelectedPlace,
       setRoom,
@@ -441,9 +463,12 @@ export function MeetingProvider({
       state.finalizationProposal,
       state.finalizationPending,
       state.lastConfirmedMeeting,
+      state.calendarEventForSelf,
+      state.calendarMemberCount,
       setFinalizationProposal,
       setFinalizationPending,
       setLastConfirmedMeeting,
+      setCalendarSyncStatus,
       setAiTriggerIntent,
       setContextMode,
       refreshCalendar,

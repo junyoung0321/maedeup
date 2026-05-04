@@ -149,54 +149,115 @@ def _user_can_receive_calendar_event(user: User) -> bool:
     return True
 
 
-async def create_events_for_meeting_members(
+async def update_calendar_event(
+    user: User,
+    session: AsyncSession,
+    event_id: str,
+    title: str,
+    start_datetime: datetime,
+    end_datetime: datetime,
+    location: str | None = None,
+) -> dict[str, Any] | None:
+    """Update an existing event in `user`'s primary calendar via PATCH."""
+    event_body = {
+        "summary": title,
+        "location": location or "",
+        "start": {
+            "dateTime": start_datetime.isoformat(),
+            "timeZone": "Asia/Seoul",
+        },
+        "end": {
+            "dateTime": end_datetime.isoformat(),
+            "timeZone": "Asia/Seoul",
+        },
+    }
+    url = f"{GOOGLE_EVENTS_URL}/{event_id}"
+    access_token = await get_google_access_token(user, session)
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.patch(url, json=event_body, headers=headers)
+            if response.status_code == 401:
+                refreshed_token = await get_google_access_token(user, session, force_refresh=True)
+                response = await client.patch(
+                    url,
+                    json=event_body,
+                    headers={"Authorization": f"Bearer {refreshed_token}"},
+                )
+    except httpx.HTTPError as exc:
+        raise GoogleCalendarError("Google Calendar request failed") from exc
+
+    if response.status_code == 401:
+        raise GoogleCalendarAuthError()
+    if response.status_code == 404:
+        # Event was deleted on Google's side. Caller may want to recreate.
+        raise GoogleCalendarError(f"Calendar event {event_id} not found")
+    if response.status_code not in (200, 201):
+        raise GoogleCalendarError(
+            f"Google Calendar event update failed with status {response.status_code}"
+        )
+    return response.json()
+
+
+async def sync_events_for_meeting_members(
     meeting: MeetingSchedule,
     members: Iterable[User],
     session: AsyncSession,
 ) -> dict[str, str]:
-    """Create a Google Calendar event in each eligible member's primary calendar.
+    """Create-or-update a Google Calendar event for each eligible member.
+
+    For each consenting member:
+      - If `meeting.google_event_ids[user_id]` exists → PATCH that event
+      - Else → POST a new event
 
     Best-effort: per-member failures are logged and skipped, never raised.
-    Idempotent: members already present in `meeting.google_event_ids` are skipped.
 
-    Returns the newly-created entries (user_id-as-str → event_id). Caller is
-    responsible for merging into `meeting.google_event_ids` and committing.
+    Returns the FULL updated mapping (user_id-as-str → event_id), including
+    pre-existing entries that were just updated. Caller assigns the result
+    back to `meeting.google_event_ids` and commits.
     """
-    existing = meeting.google_event_ids or {}
-    new_entries: dict[str, str] = {}
-
+    updated = dict(meeting.google_event_ids or {})
     end_dt = meeting.end_at or (meeting.scheduled_at + timedelta(hours=1))
 
     for member in members:
         key = str(member.id)
-        if key in existing:
-            continue
         if not _user_can_receive_calendar_event(member):
             continue
         try:
-            response = await create_calendar_event(
-                member,
-                session,
-                title=meeting.title,
-                start_datetime=meeting.scheduled_at,
-                end_datetime=end_dt,
-                location=meeting.location_name,
-            )
+            if key in updated:
+                await update_calendar_event(
+                    member,
+                    session,
+                    event_id=updated[key],
+                    title=meeting.title,
+                    start_datetime=meeting.scheduled_at,
+                    end_datetime=end_dt,
+                    location=meeting.location_name,
+                )
+            else:
+                response = await create_calendar_event(
+                    member,
+                    session,
+                    title=meeting.title,
+                    start_datetime=meeting.scheduled_at,
+                    end_datetime=end_dt,
+                    location=meeting.location_name,
+                )
+                event_id = (response or {}).get("id")
+                if event_id:
+                    updated[key] = event_id
         except GoogleCalendarAuthError:
             logger.info(
-                "Skipping Google Calendar event for user_id=%s meeting_id=%s — auth expired",
+                "Skipping Google Calendar sync for user_id=%s meeting_id=%s — auth expired",
                 member.id, meeting.id,
             )
             continue
         except (GoogleCalendarError, Exception):
             logger.warning(
-                "Failed to create Google Calendar event for user_id=%s meeting_id=%s",
+                "Failed to sync Google Calendar event for user_id=%s meeting_id=%s",
                 member.id, meeting.id, exc_info=True,
             )
             continue
 
-        event_id = (response or {}).get("id")
-        if event_id:
-            new_entries[key] = event_id
-
-    return new_entries
+    return updated

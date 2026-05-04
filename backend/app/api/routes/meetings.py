@@ -20,13 +20,7 @@ from app.models.meeting import MeetingSchedule, MeetingStatus
 from app.models.room import Room, RoomMember
 from app.models.user import User
 from app.services import scheduling_round as sr
-from app.services.google_calendar import (
-    GoogleCalendarAuthError,
-    GoogleCalendarError,
-    create_calendar_event,
-    create_events_for_meeting_members,
-    get_google_access_token,
-)
+from app.services.google_calendar import sync_events_for_meeting_members
 from app.services.langgraph_pipeline import suggest_alternative_slots
 from app.services.meeting_history import save_meeting_record
 
@@ -365,12 +359,11 @@ async def confirm_meeting(
             .where(RoomMember.room_id == body.room_id)
         )
         members = members_result.scalars().all()
-        new_event_ids = await create_events_for_meeting_members(
+        updated_event_ids = await sync_events_for_meeting_members(
             meeting, members, session
         )
-        if new_event_ids:
-            merged = {**(meeting.google_event_ids or {}), **new_event_ids}
-            meeting.google_event_ids = merged
+        if updated_event_ids != (meeting.google_event_ids or {}):
+            meeting.google_event_ids = updated_event_ids
             session.add(meeting)
             await session.commit()
             await session.refresh(meeting)
@@ -556,92 +549,33 @@ async def confirm_place(
     meeting.kakao_place_url = body.url
     meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.add(meeting)
+    await session.commit()
+    await session.refresh(meeting)
 
-    # Calendar registration BEFORE commit so we can rollback on failure
+    # Best-effort: propagate the new place to each member's existing Google
+    # Calendar event (or create it if they consented since confirm_meeting).
+    # Failures are logged and tolerated — the place change must not be undone.
     if meeting.scheduled_at and meeting.location_name:
         try:
-            participant_result = await session.execute(
+            members_result = await session.execute(
                 select(User)
                 .join(RoomMember, RoomMember.user_id == User.id)
                 .where(RoomMember.room_id == meeting.room_id)
-                .where(User.calendar_consent == True)  # noqa: E712
             )
-            participants = participant_result.scalars().all()
-            event_end = meeting.end_at or meeting.scheduled_at
-            event_location = meeting.location_address or meeting.location_name
-            auth_error_users: list[str] = []
-            calendar_error_users: list[str] = []
-
-            eligible_participants = [
-                participant
-                for participant in participants
-                if participant.google_access_token or participant.google_refresh_token
-            ]
-
-            for participant in eligible_participants:
-                try:
-                    await get_google_access_token(participant, session)
-                except GoogleCalendarAuthError:
-                    auth_error_users.append(participant.name)
-
-            if auth_error_users:
-                joined_names = ", ".join(sorted(set(auth_error_users)))
-                await session.rollback()
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "Google Calendar authorization is invalid for: "
-                        f"{joined_names}. Reconnect Google Calendar and try again."
-                    ),
-                )
-
-            for participant in eligible_participants:
-                try:
-                    await create_calendar_event(
-                        user=participant,
-                        session=session,
-                        title=meeting.title,
-                        start_datetime=meeting.scheduled_at,
-                        end_datetime=event_end,
-                        location=event_location,
-                    )
-                except GoogleCalendarAuthError:
-                    auth_error_users.append(participant.name)
-                except GoogleCalendarError:
-                    calendar_error_users.append(participant.name)
-                except Exception:
-                    logger.warning("Unexpected calendar sync failure for meeting_id=%s user_id=%s", meeting.id, participant.id, exc_info=True)
-                    calendar_error_users.append(participant.name)
-
-            if auth_error_users:
-                joined_names = ", ".join(sorted(set(auth_error_users)))
-                await session.rollback()
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "Google Calendar authorization expired for: "
-                        f"{joined_names}. Reconnect Google Calendar and try again."
-                    ),
-                )
-            if calendar_error_users:
-                joined_names = ", ".join(sorted(set(calendar_error_users)))
-                await session.rollback()
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Failed to create Google Calendar events for: {joined_names}.",
-                )
-        except HTTPException:
-            raise
+            members = members_result.scalars().all()
+            updated_event_ids = await sync_events_for_meeting_members(
+                meeting, members, session
+            )
+            if updated_event_ids != (meeting.google_event_ids or {}):
+                meeting.google_event_ids = updated_event_ids
+                session.add(meeting)
+                await session.commit()
+                await session.refresh(meeting)
         except Exception:
-            logger.exception("Calendar registration failed for meeting_id=%s", meeting.id)
-            await session.rollback()
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to register calendar events. Place was not saved.",
+            logger.warning(
+                "Google Calendar place-update fan-out failed (meeting_id=%s)",
+                meeting.id, exc_info=True,
             )
-
-    await session.commit()
-    await session.refresh(meeting)
 
     # 모임 히스토리 저장 (non-critical, after commit)
     try:

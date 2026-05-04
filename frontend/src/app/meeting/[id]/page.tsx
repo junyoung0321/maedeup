@@ -8,6 +8,7 @@ import AiAssistantPane from "@/components/meeting/AiAssistantPane";
 import CompletionPage from "@/components/meeting/CompletionPage";
 import GuestJoinGate from "@/components/meeting/GuestJoinGate";
 import InfoPane from "@/components/meeting/InfoPane";
+import LeaveRoomButton from "@/components/meeting/LeaveRoomButton";
 import { MeetingProvider, useMeeting } from "@/contexts/MeetingContext";
 import MeetingPreferencePopup from "@/components/meeting/MeetingPreferencePopup";
 import { useEffect, useState } from "react";
@@ -102,27 +103,30 @@ function MeetingPageInner() {
   return (
     <div style={{ height: "100vh", overflow: "hidden", background: "#ffffff", fontFamily: "Pretendard, sans-serif", display: "flex", flexDirection: "column" }}>
       <Header showSteps currentStep={currentStep}>
-        <button
-          onClick={() => setContextMode("done")}
-          type="button"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            padding: "6px 18px",
-            borderRadius: 20,
-            border: "1px solid rgba(255,255,255,0.3)",
-            background: "rgba(255,255,255,0.15)",
-            color: "#ffffff",
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: "pointer",
-            fontFamily: "Pretendard, sans-serif",
-            transition: "all 0.2s",
-            backdropFilter: "blur(4px)",
-          }}
-        >
-          생성 완료
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <LeaveRoomButton roomId={roomId} />
+          <button
+            onClick={() => setContextMode("done")}
+            type="button"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              padding: "6px 18px",
+              borderRadius: 20,
+              border: "1px solid rgba(255,255,255,0.3)",
+              background: "rgba(255,255,255,0.15)",
+              color: "#ffffff",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+              fontFamily: "Pretendard, sans-serif",
+              transition: "all 0.2s",
+              backdropFilter: "blur(4px)",
+            }}
+          >
+            생성 완료
+          </button>
+        </div>
       </Header>
 
       <main

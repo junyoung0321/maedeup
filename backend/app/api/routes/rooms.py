@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends
@@ -18,11 +18,24 @@ from fastapi import HTTPException
 
 from app.core.security import AuthUser, get_current_user, issue_jwt
 from app.db.session import get_session
+from sqlalchemy import delete as sa_delete
+
+from app.api.routes.finalization import (
+    _publish_finalization_event,
+    get_redis as get_finalization_redis,
+)
 from app.models.chat import ChatMessage, PaneType, Visibility
+from app.models.meeting import MeetingParticipant, MeetingSchedule, MeetingStatus
 from app.models.meeting_preference import MeetingPreference
 from app.models.room import MemberRole, Room, RoomMember
 from app.models.user import User
 from app.repositories.messages import MessageReader
+from app.services.google_calendar import (
+    GoogleCalendarAuthError,
+    GoogleCalendarError,
+    delete_calendar_event,
+    delete_events_for_meeting_members,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -346,6 +359,195 @@ async def get_preferences(
         submitted_count=len(preferences),
         all_submitted=len(preferences) >= total_members,
         preferences=preferences,
+    )
+
+
+class LeaveRoomResponse(BaseModel):
+    room_id: int
+    cancelled_meeting_ids: list[int] = []
+    triggered_meeting_cancellation: bool = False
+
+
+@router.post("/{room_id}/leave", response_model=LeaveRoomResponse)
+async def leave_room(
+    room_id: int,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+    redis=Depends(get_finalization_redis),
+):
+    """현재 사용자가 모임 방에서 나갑니다.
+
+    - 모든 사용자: 본인 RoomMember + MeetingPreference + MeetingParticipant 삭제,
+      이 방의 confirmed 모임에서 본인 캘린더 이벤트 best-effort 삭제.
+    - 호스트(room.created_by) + 다른 멤버 존재 시: 이 방의 모든 활성(pending|confirmed)
+      모임을 cancelled로 전환 → 모든 멤버의 캘린더 이벤트 삭제 + meeting_cancelled
+      WS 브로드캐스트.
+    - Idempotent: 이미 방에 없으면 빈 응답으로 200.
+    """
+    user_id = int(current_user.sub)
+
+    room_result = await session.execute(select(Room).where(Room.id == room_id))
+    room = room_result.scalar_one_or_none()
+    if room is None:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    membership_result = await session.execute(
+        select(RoomMember).where(
+            RoomMember.room_id == room_id,
+            RoomMember.user_id == user_id,
+        )
+    )
+    membership = membership_result.scalar_one_or_none()
+    if membership is None:
+        return LeaveRoomResponse(room_id=room_id)
+
+    is_host = room.created_by == user_id
+
+    other_members_count_result = await session.execute(
+        select(sa_func.count(RoomMember.id)).where(
+            RoomMember.room_id == room_id,
+            RoomMember.user_id != user_id,
+        )
+    )
+    other_members_count = other_members_count_result.scalar() or 0
+
+    cancelled_meeting_ids: list[int] = []
+    triggered_cancellation = False
+
+    if is_host and other_members_count > 0:
+        # 호스트가 다른 멤버 두고 나감 → 활성 모임 전체 cancel.
+        triggered_cancellation = True
+        active_result = await session.execute(
+            select(MeetingSchedule).where(
+                MeetingSchedule.room_id == room_id,
+                MeetingSchedule.status != MeetingStatus.cancelled,
+            )
+        )
+        active_meetings = active_result.scalars().all()
+
+        room_members_result = await session.execute(
+            select(User)
+            .join(RoomMember, RoomMember.user_id == User.id)
+            .where(RoomMember.room_id == room_id)
+        )
+        room_member_users = room_members_result.scalars().all()
+
+        for meeting in active_meetings:
+            meeting.status = MeetingStatus.cancelled
+            meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            session.add(meeting)
+            cancelled_meeting_ids.append(meeting.id)
+
+        await session.commit()
+
+        for meeting in active_meetings:
+            await session.refresh(meeting)
+            try:
+                await _publish_finalization_event(
+                    redis,
+                    room_id,
+                    {
+                        "type": "meeting_cancelled",
+                        "room_id": room_id,
+                        "meeting_id": meeting.id,
+                    },
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to broadcast meeting_cancelled on host leave (meeting_id=%s)",
+                    meeting.id, exc_info=True,
+                )
+            try:
+                remaining = await delete_events_for_meeting_members(
+                    meeting, room_member_users, session
+                )
+                if remaining != (meeting.google_event_ids or {}):
+                    meeting.google_event_ids = remaining
+                    session.add(meeting)
+                    await session.commit()
+                    await session.refresh(meeting)
+            except Exception:
+                logger.warning(
+                    "Calendar fan-out delete failed on host leave (meeting_id=%s)",
+                    meeting.id, exc_info=True,
+                )
+    else:
+        # 일반 멤버 OR 호스트 단독: 본인 캘린더 이벤트만 정리.
+        confirmed_result = await session.execute(
+            select(MeetingSchedule).where(
+                MeetingSchedule.room_id == room_id,
+                MeetingSchedule.status == MeetingStatus.confirmed,
+            )
+        )
+        confirmed_meetings = confirmed_result.scalars().all()
+
+        user_obj_result = await session.execute(
+            select(User).where(User.id == user_id)
+        )
+        user_obj = user_obj_result.scalar_one_or_none()
+
+        for meeting in confirmed_meetings:
+            event_ids = dict(meeting.google_event_ids or {})
+            event_id = event_ids.get(str(user_id))
+            if not event_id:
+                continue
+            if user_obj is not None and not user_obj.is_guest:
+                try:
+                    await delete_calendar_event(user_obj, session, event_id)
+                except (GoogleCalendarAuthError, GoogleCalendarError, Exception):
+                    logger.info(
+                        "Calendar self-delete skipped for user_id=%s meeting_id=%s on leave",
+                        user_id, meeting.id, exc_info=True,
+                    )
+            del event_ids[str(user_id)]
+            meeting.google_event_ids = event_ids
+            session.add(meeting)
+        await session.commit()
+
+    # 본인 종속 데이터 정리 (preference, participant, room_member)
+    await session.execute(
+        sa_delete(MeetingParticipant).where(
+            MeetingParticipant.user_id == user_id,
+            MeetingParticipant.meeting_id.in_(
+                select(MeetingSchedule.id).where(MeetingSchedule.room_id == room_id)
+            ),
+        )
+    )
+    await session.execute(
+        sa_delete(MeetingPreference).where(
+            MeetingPreference.room_id == room_id,
+            MeetingPreference.user_id == user_id,
+        )
+    )
+    await session.execute(
+        sa_delete(RoomMember).where(
+            RoomMember.room_id == room_id,
+            RoomMember.user_id == user_id,
+        )
+    )
+    await session.commit()
+
+    # 다른 멤버에게 본인 퇴장 알림.
+    try:
+        await _publish_finalization_event(
+            redis,
+            room_id,
+            {
+                "type": "member_left",
+                "room_id": room_id,
+                "user_id": user_id,
+            },
+        )
+    except Exception:
+        logger.warning(
+            "Failed to broadcast member_left (room_id=%s, user_id=%s)",
+            room_id, user_id, exc_info=True,
+        )
+
+    return LeaveRoomResponse(
+        room_id=room_id,
+        cancelled_meeting_ids=cancelled_meeting_ids,
+        triggered_meeting_cancellation=triggered_cancellation,
     )
 
 

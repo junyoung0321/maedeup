@@ -285,12 +285,18 @@ async def sync_events_for_meeting_members(
     meeting: MeetingSchedule,
     members: Iterable[User],
     session: AsyncSession,
+    *,
+    event_title: str | None = None,
 ) -> dict[str, str]:
     """Create-or-update a Google Calendar event for each eligible member.
 
     For each consenting member:
       - If `meeting.google_event_ids[user_id]` exists → PATCH that event
       - Else → POST a new event
+
+    `event_title` overrides the calendar event summary line. Defaults to
+    `meeting.title`. Callers typically pass the room name so the calendar
+    shows "친구들과의 저녁" instead of the internal slot label.
 
     Best-effort: per-member failures are logged and skipped, never raised.
 
@@ -300,6 +306,7 @@ async def sync_events_for_meeting_members(
     """
     updated = dict(meeting.google_event_ids or {})
     end_dt = meeting.end_at or (meeting.scheduled_at + timedelta(hours=1))
+    title = event_title or meeting.title
 
     for member in members:
         key = str(member.id)
@@ -311,7 +318,7 @@ async def sync_events_for_meeting_members(
                     member,
                     session,
                     event_id=updated[key],
-                    title=meeting.title,
+                    title=title,
                     start_datetime=meeting.scheduled_at,
                     end_datetime=end_dt,
                     location=meeting.location_name,
@@ -320,7 +327,7 @@ async def sync_events_for_meeting_members(
                 response = await create_calendar_event(
                     member,
                     session,
-                    title=meeting.title,
+                    title=title,
                     start_datetime=meeting.scheduled_at,
                     end_datetime=end_dt,
                     location=meeting.location_name,

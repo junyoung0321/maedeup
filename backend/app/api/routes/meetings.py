@@ -378,7 +378,7 @@ async def confirm_meeting(
         )
         members = members_result.scalars().all()
         updated_event_ids = await sync_events_for_meeting_members(
-            meeting, members, session
+            meeting, members, session, event_title=room.name,
         )
         if updated_event_ids != (meeting.google_event_ids or {}):
             meeting.google_event_ids = updated_event_ids
@@ -578,6 +578,10 @@ async def confirm_place(
     # Failures are logged and tolerated — the place change must not be undone.
     if meeting.scheduled_at and meeting.location_name:
         try:
+            room_row = await session.execute(
+                select(Room).where(Room.id == meeting.room_id)
+            )
+            room = room_row.scalar_one_or_none()
             members_result = await session.execute(
                 select(User)
                 .join(RoomMember, RoomMember.user_id == User.id)
@@ -585,7 +589,8 @@ async def confirm_place(
             )
             members = members_result.scalars().all()
             updated_event_ids = await sync_events_for_meeting_members(
-                meeting, members, session
+                meeting, members, session,
+                event_title=room.name if room else None,
             )
             if updated_event_ids != (meeting.google_event_ids or {}):
                 meeting.google_event_ids = updated_event_ids

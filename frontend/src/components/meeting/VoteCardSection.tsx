@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarDays, MapPin, Users, CheckCircle2 } from "lucide-react";
+import { CalendarDays, MapPin, Users, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useMeeting } from "@/contexts/MeetingContext";
 import type { PlaceResult } from "@/types";
@@ -30,7 +30,11 @@ function getCurrentUserIdFromToken(): number | null {
   return null;
 }
 
-export default function VoteCardSection() {
+interface VoteCardSectionProps {
+  mode?: "all" | "vote-only" | "place-only";
+}
+
+export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) {
   const {
     voteCard,
     voteUpdate,
@@ -67,6 +71,7 @@ export default function VoteCardSection() {
   const isHost = currentUserId !== null && hostUserId === currentUserId;
   const [showConfirmPopup, setShowConfirmPopup] = useState(false);
   const [pendingPlaceId, setPendingPlaceId] = useState<string | null>(null);
+  const [placeCollapsed, setPlaceCollapsed] = useState(false);
 
   useEffect(() => {
     if (!roomId) return;
@@ -247,7 +252,10 @@ export default function VoteCardSection() {
     setContextMode("place");
   }, [setSelectedPlace, setContextMode]);
 
-  if (!voteCard && !placeRecommendation) return null;
+  const showVote = mode !== "place-only" && !!voteCard;
+  const showPlace = mode !== "vote-only" && !!placeRecommendation;
+
+  if (!showVote && !showPlace) return null;
 
   return (
     <div
@@ -260,7 +268,7 @@ export default function VoteCardSection() {
       }}
     >
       {/* Schedule Vote Card */}
-      {voteCard && (
+      {showVote && (
         <div
           style={{
             display: "flex",
@@ -305,7 +313,7 @@ export default function VoteCardSection() {
           >
             <Users style={{ width: 16, height: 16, color: "#4f46e5" }} />
             <span style={{ fontSize: 13, fontWeight: 500, color: "#1e293b" }}>
-              총 {voteCard.headcount}명 기준
+              총 {voteCard.headcount ?? "-"}명 기준
             </span>
           </div>
 
@@ -524,7 +532,7 @@ export default function VoteCardSection() {
       )}
 
       {/* Place Recommendation Card */}
-      {placeRecommendation && (
+      {showPlace && placeRecommendation && (
         <div
           style={{
             display: "flex",
@@ -536,16 +544,33 @@ export default function VoteCardSection() {
             border: "1px solid #cbd5e1",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 40, height: 40, borderRadius: 14, background: "#e0e7ff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <button
+            onClick={() => setPlaceCollapsed((v) => !v)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              width: "100%",
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              padding: 0,
+              textAlign: "left",
+            }}
+          >
+            <div style={{ width: 40, height: 40, borderRadius: 14, background: "#e0e7ff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
               <MapPin style={{ width: 20, height: 20, color: "#4f46e5" }} />
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: "#4f46e5" }}>장소 추천</span>
               <span style={{ fontSize: 17, fontWeight: 700, color: "#1e293b" }}>{placeRecommendation.place_hint} 추천 장소</span>
             </div>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {placeCollapsed
+              ? <ChevronDown style={{ width: 20, height: 20, color: "#94a3b8", flexShrink: 0 }} />
+              : <ChevronUp style={{ width: 20, height: 20, color: "#94a3b8", flexShrink: 0 }} />
+            }
+          </button>
+          {!placeCollapsed && (<><div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {placeRecommendation.recommendations.map((place) => {
               const isSelected = selectedPlaceId === place.place_id;
               const distanceMeters = place.distance_m;
@@ -618,6 +643,7 @@ export default function VoteCardSection() {
             })}
           </div>
           {placeConfirmError && <span style={{ fontSize: 13, fontWeight: 500, color: "#dc2626" }}>{placeConfirmError}</span>}
+          </>)}
 
           {/* Host 장소 확정 팝업 */}
           {pendingPlaceId && (() => {

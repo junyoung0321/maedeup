@@ -21,7 +21,7 @@ export interface VoteCardPayload {
   room_id: string;
   meeting_id?: number;
   time_options: VoteCardTimeOption[];
-  headcount: number;
+  headcount: number | null;
 }
 
 export interface VoteUpdatePayload {
@@ -127,7 +127,7 @@ function isVoteCardPayload(data: unknown): data is VoteCardPayload {
     typeof candidate.title === "string" &&
     typeof candidate.room_id === "string" &&
     Array.isArray(candidate.time_options) &&
-    typeof candidate.headcount === "number"
+    (typeof candidate.headcount === "number" || candidate.headcount === null)
   );
 }
 
@@ -270,6 +270,40 @@ export function useAgentWebSocket(roomId: string, sender: string, options?: Agen
             return;
           }
           setMessages([]);
+        });
+
+      // 진행 중인 투표 카드 복구 — 새로고침해도 AI 추천 날짜가 유지되도록.
+      fetch(`${apiBase}/api/v1/meetings/rooms/${roomPk}/pending-vote`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((data: unknown) => {
+          if (!isActive || !data) {
+            return;
+          }
+          if (isVoteCardPayload(data)) {
+            setVoteCard(data);
+          }
+        })
+        .catch(() => {
+          /* 복구 실패 시 조용히 무시 */
+        });
+
+      // 장소 추천 카드 복구 — Redis 캐시에서 로드.
+      fetch(`${apiBase}/api/v1/meetings/rooms/${roomPk}/pending-place`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((data: unknown) => {
+          if (!isActive || !data) {
+            return;
+          }
+          if (isPlaceRecommendationPayload(data)) {
+            setPlaceRecommendation(data);
+          }
+        })
+        .catch(() => {
+          /* 복구 실패 시 조용히 무시 */
         });
     }
 

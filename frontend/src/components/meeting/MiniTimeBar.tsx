@@ -156,7 +156,7 @@ export default function MiniTimeBar({ date, roomId, aiSlots }: Props) {
           if (ratio >= 1) bg = "#22c55e";       // all available
           else if (ratio >= 0.5) bg = "#86efac"; // most available
           else if (ratio > 0) bg = "#fde68a";    // some available
-          else bg = "#fecaca";                    // nobody available
+          else bg = "#fdba74";                    // 다른 일정 겹침
 
           return (
             <div key={i} style={{
@@ -182,7 +182,7 @@ export default function MiniTimeBar({ date, roomId, aiSlots }: Props) {
           <span style={{ width: 8, height: 8, borderRadius: 2, background: "#fde68a", display: "inline-block" }} /> 일부
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <span style={{ width: 8, height: 8, borderRadius: 2, background: "#fecaca", display: "inline-block" }} /> 불가
+          <span style={{ width: 8, height: 8, borderRadius: 2, background: "#fdba74", display: "inline-block" }} /> 다른 일정
         </span>
         {aiHighlight.size > 0 && (
           <span style={{ display: "flex", alignItems: "center", gap: 2 }}>

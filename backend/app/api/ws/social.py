@@ -75,63 +75,34 @@ async def _maybe_emit_proposal(
         return
 
     availability = await sr.load_room_availability(redis_client, room_id=room_pk)
-    unavailability = await sr.load_room_unavailability(redis_client, room_id=room_pk)
-    result = sr.compute_majority_slot(
-        availability,
-        total_eligible_voters=member_count,
-        unavailability=unavailability,
-    )
-    if result is None:
+    if not availability:
         return
 
+    # 전원 시간대 선택 완료 체크: availability에 등록된 수 >= 멤버 수
+    if len(availability) < member_count:
+        return
+
+    # 중복 트리거 방지: 같은 availability 스냅샷이면 스킵
     snapshot_hash = sr.compute_snapshot_hash(availability)
-
-    # Optimistic pre-flight broadcast so clients can show a shimmer state
-    # while Gemini is composing the narrator line. This is safe even if the
-    # propose() call below dedupes — the real proposal will replace it.
-    existing = await sr.restore_for_room(redis_client, room_id=room_pk)
-    if existing is None or existing.snapshot_hash != snapshot_hash:
-        pending = json.dumps(
-            {
-                "type": "finalization_pending",
-                "room_id": room_pk,
-                "snapshot_hash": snapshot_hash,
-            },
-            ensure_ascii=False,
-        )
-        await _publish_social_message(redis_client, channel, pending)
-
-    proposal = await sr.propose(
-        redis_client,
-        room_id=room_pk,
-        host_user_id=room.created_by,
-        total_eligible_voters=member_count,
-        proposed_slot=result.primary,
-        alternate_slot=result.alternate,
-        snapshot_hash=snapshot_hash,
-        reason_generator=generate_finalization_reason,
-    )
-    if proposal is None:
+    nx_key = f"schedule_auto_trigger:{room_pk}:{snapshot_hash}"
+    already = await redis_client.set(nx_key, "1", ex=300, nx=True)
+    if not already:
         return
 
-    payload = {
-        "type": "finalization_proposal",
-        "room_id": room_pk,
-        "proposal_id": proposal.proposal_id,
-        "version": proposal.version,
-        "status": proposal.status.value,
-        "proposed_slot": proposal.proposed_slot,
-        "alternate_slot": proposal.alternate_slot,
-        "reason": proposal.reason,
-        "host_user_id": proposal.host_user_id,
-        "total_eligible_voters": proposal.total_eligible_voters,
-        "votes": dict(proposal.votes),
-        "deadline_at": proposal.deadline_at,
-        "created_at": proposal.created_at,
-    }
-    await _publish_social_message(
-        redis_client, channel, json.dumps(payload, ensure_ascii=False)
+    # 전원 선택 완료 → agent 채널로 AI 파이프라인 자동 트리거
+    agent_channel = f"agent:{room_pk}"
+    trigger_payload = json.dumps(
+        {
+            "type": "ai_auto_trigger",
+            "intent": "meeting_schedule",
+            "confidence": 1.0,
+            "content": "모두 시간대를 선택했어요. 일정을 조율해볼게요!",
+            "trigger_reason": "all_members_selected",
+        },
+        ensure_ascii=False,
     )
+    await redis_client.publish(agent_channel, trigger_payload)
+    logger.info("Auto-triggered schedule recommendation for room %s (all %d members selected)", room_pk, member_count)
 
 
 async def _publish_social_message(

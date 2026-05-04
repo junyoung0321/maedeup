@@ -16,13 +16,13 @@ const CELL_HEIGHT = 28;
 const NAME_WIDTH = 64;
 
 // TODO(tech-debt): hex 색상 → 디자인 토큰(Tailwind theme) 이관 예정
-const COLOR_BUSY = "#e2e8f0";
+const COLOR_CALENDAR_CONFLICT = "#fdba74";  // 다른 일정 겹침 (옅은 주황, orange-300)
 const COLOR_AVAILABLE_IDLE = "#dcfce7";     // 미선택 가능 (연한 초록)
-const COLOR_MY_PICK = "#6366f1";            // 내가 고른 시간 (인디고)
-const COLOR_PEERS_BASE = "#fb923c";         // 다른 분들 집계 기본 (주황). alpha로 빈도 표현
+const COLOR_MY_PICK = "#93c5fd";            // 내가 고른 시간 (옅은 파랑, blue-300)
+const COLOR_PEERS_BASE = "#38bdf8";         // 다른 분들 집계 기본 (하늘색, sky-400)
 const COLOR_EVERYONE_AGREE = "#22c55e";     // 전원 row: 나 + 남 모두 고른 시간 (초록)
 const COLOR_RECOMMEND_OUTLINE = "#3B82F6";
-const COLOR_SELECTION_BORDER = "#4f46e5";
+const COLOR_SELECTION_BORDER = "#3b82f6";
 
 function isSlotInRange(slotIdx: number, start: number | null, end: number | null): boolean {
   if (start === null) return false;
@@ -159,6 +159,15 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
       members.every((m) => !isBusyAtSlot(m.periods, date, slotIdx))
     );
   }, [members, date]);
+
+  // 나 제외 다른 멤버들의 캘린더 겹침 수 (슬롯별)
+  const othersBusyPerSlot = useMemo(() => {
+    const others = members.filter((m) => m.name !== myName);
+    if (others.length === 0) return Array(TOTAL_SLOTS).fill(0);
+    return Array.from({ length: TOTAL_SLOTS }, (_, slotIdx) =>
+      others.filter((m) => isBusyAtSlot(m.periods, date, slotIdx)).length,
+    );
+  }, [members, date, myName]);
 
   // 해당 날짜에 다른 참여자들이 선택한 범위들. peer별 slot 포함 여부 집계
   const peerSelectionStats = useMemo(() => {
@@ -404,11 +413,11 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
                 slotIdx >= recommendedRange.start && slotIdx <= recommendedRange.end;
 
               let bg: string;
-              if (isBusy) bg = COLOR_BUSY;
-              else if (isMine) bg = COLOR_MY_PICK;
+              if (isMine) bg = COLOR_MY_PICK;
+              else if (isBusy) bg = COLOR_CALENDAR_CONFLICT;
               else bg = COLOR_AVAILABLE_IDLE;
 
-              const cellLabel = `내 시간 ${slotToTime(slotIdx)} ${isBusy ? "불가" : isMine ? "내가 선택함" : "가능"}`;
+              const cellLabel = `내 시간 ${slotToTime(slotIdx)} ${isMine ? "내가 선택함" : isBusy ? "다른 일정" : "가능"}`;
               return (
                 <div
                   key={slotIdx}
@@ -417,16 +426,16 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
                   tabIndex={-1}
                   aria-selected={isMine}
                   aria-label={cellLabel}
-                  onClick={() => !isBusy && handleSlotClick(slotIdx)}
+                  onClick={() => handleSlotClick(slotIdx)}
                   style={{
                     width: CELL_WIDTH,
                     height: CELL_HEIGHT,
                     background: bg,
                     borderLeft: slotIdx % 2 === 0 ? "1px solid rgba(0,0,0,0.06)" : "none",
                     borderBottom: "1px solid rgba(0,0,0,0.04)",
-                    cursor: isBusy ? "not-allowed" : "pointer",
+                    cursor: "pointer",
                     flexShrink: 0,
-                    outline: isRecommended && !isBusy ? `1px solid ${COLOR_RECOMMEND_OUTLINE}` : "none",
+                    outline: isRecommended ? `1px solid ${COLOR_RECOMMEND_OUTLINE}` : "none",
                     outlineOffset: -1,
                     boxShadow: isMine ? `inset 0 0 0 1px ${COLOR_SELECTION_BORDER}` : undefined,
                   }}
@@ -444,7 +453,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
                 width: NAME_WIDTH,
                 fontSize: 11,
                 fontWeight: 500,
-                color: "#92400e",
+                color: "#0369a1",
                 flexShrink: 0,
                 paddingRight: 4,
               }}
@@ -454,17 +463,14 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
             {Array.from({ length: TOTAL_SLOTS }, (_, slotIdx) => {
               const count = peerSelectionStats.counts[slotIdx];
               const total = peerSelectionStats.totalPeers;
-              // alpha = 0.15 + (응답률 count/total) * 0.7
-              //   total=3, 1/3 선택 → 0.38  (연한 주황)
-              //   total=3, 2/3 선택 → 0.62  (중간)
-              //   total=3, 3/3 선택 → 0.85  (진한 주황)
-              //   total=1, 1/1 선택 → 0.85  (유일 참여자 전부 동의 → 진하게, 의도대로)
-              const alpha = total > 0 ? 0.15 + (count / total) * 0.7 : 0;
               const hasPeer = count > 0;
-              const bg = hasPeer
-                ? `rgba(251, 146, 60, ${alpha.toFixed(2)})`
-                : "#f1f5f9";
-              const label = `다른 분들 ${slotToTime(slotIdx)} ${count}/${total}명 선택`;
+              const othersBusy = othersBusyPerSlot[slotIdx] > 0;
+              const alpha = total > 0 ? 0.15 + (count / total) * 0.7 : 0;
+              let bg: string;
+              if (hasPeer) bg = `rgba(56, 189, 248, ${alpha.toFixed(2)})`;
+              else if (othersBusy) bg = COLOR_CALENDAR_CONFLICT;
+              else bg = "#f1f5f9";
+              const label = `다른 분들 ${slotToTime(slotIdx)} ${hasPeer ? `${count}/${total}명 선택` : othersBusy ? "다른 일정" : ""}`;
               return (
                 <div
                   key={slotIdx}
@@ -509,15 +515,16 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
               if (isMine && hasPeer) bg = COLOR_EVERYONE_AGREE;
               else if (isMine) bg = COLOR_MY_PICK;
               else if (hasPeer) bg = COLOR_PEERS_BASE;
-              else bg = aggregateAvailability[slotIdx] ? "#dcfce7" : COLOR_BUSY;
+              else if (!aggregateAvailability[slotIdx]) bg = COLOR_CALENDAR_CONFLICT;
+              else bg = "#dcfce7";
 
               const stateLabel = isMine && hasPeer
-                ? `나 + 다른 ${peerCount}명 겹침`
+                ? `나 + 다른 ${peerCount}명 선택`
                 : isMine
                   ? "나만 선택"
                   : hasPeer
                     ? `다른 ${peerCount}명 선택`
-                    : aggregateAvailability[slotIdx] ? "가능" : "전원 불가";
+                    : aggregateAvailability[slotIdx] ? "가능" : "다른 일정";
               const aggLabel = `전원 ${slotToTime(slotIdx)} ${stateLabel}`;
 
               return (
@@ -554,10 +561,10 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
           <span style={{ width: 12, height: 12, borderRadius: 3, background: COLOR_PEERS_BASE, display: "inline-block" }} /> 다른 분들
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ width: 12, height: 12, borderRadius: 3, background: COLOR_EVERYONE_AGREE, display: "inline-block" }} /> 나+다른 분 겹침
+          <span style={{ width: 12, height: 12, borderRadius: 3, background: COLOR_EVERYONE_AGREE, display: "inline-block" }} /> 나+다른 분
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ width: 12, height: 12, borderRadius: 3, background: COLOR_BUSY, display: "inline-block" }} /> 불가
+          <span style={{ width: 12, height: 12, borderRadius: 3, background: COLOR_CALENDAR_CONFLICT, display: "inline-block" }} /> 다른 일정
         </span>
         {recommendedRange && (
           <span style={{ display: "flex", alignItems: "center", gap: 4 }}>

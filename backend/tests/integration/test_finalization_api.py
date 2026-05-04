@@ -267,8 +267,10 @@ async def test_get_room_proposal_includes_my_vote(client, redis_client):
 # ---------------------------------------------------------------------------
 
 
-async def test_confirm_rejects_non_host(client, redis_client):
-    _set_current_user(2)   # member, not host
+async def test_confirm_rejects_non_member(client, redis_client):
+    """룸 멤버가 아닌 외부 유저는 confirm 차단.
+    멤버라면 누구나 확정 가능하도록 host-only 제한이 해제됐으므로 비-멤버만 검증."""
+    _set_current_user(3)   # outsider — not a room member
     resp = await client.post(
         "/api/v1/meetings/confirm",
         json={
@@ -279,7 +281,22 @@ async def test_confirm_rejects_non_host(client, redis_client):
         },
     )
     assert resp.status_code == 403
-    assert "host" in resp.json()["detail"].lower()
+    assert "member" in resp.json()["detail"].lower()
+
+
+async def test_confirm_succeeds_for_member(client, redis_client):
+    """host가 아닌 룸 멤버도 confirm 가능."""
+    _set_current_user(2)   # member, not host
+    resp = await client.post(
+        "/api/v1/meetings/confirm",
+        json={
+            "room_id": 10,
+            "title": "저녁 모임",
+            "scheduled_at": "2026-05-02T15:00:00",
+            "end_at": "2026-05-02T17:00:00",
+        },
+    )
+    assert resp.status_code in (200, 201), resp.text
 
 
 async def test_confirm_succeeds_for_host_without_proposal(client, redis_client):

@@ -205,10 +205,10 @@ export default function CalendarPane() {
         setAvailabilityData(dayMap);
         setLoading(false);
       })
-      .catch((err) => {
+      .catch(() => {
         if (cancelled) return;
-        console.error("캘린더 데이터 로드 실패:", err);
-        setError(true);
+        setAvailabilityData({});
+        setError(false);
         setLoading(false);
       });
 
@@ -799,11 +799,11 @@ export default function CalendarPane() {
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              color: "#ef4444",
+              color: "#94a3b8",
               fontSize: 13,
             }}
           >
-            캘린더 데이터를 불러올 수 없습니다
+            캘린더 연동 멤버가 없어요. 날짜를 선택해서 일정을 잡아보세요.
           </div>
         )}
       </div>

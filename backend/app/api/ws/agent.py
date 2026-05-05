@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import suppress
+from datetime import datetime
 import json
 import logging
 import time
@@ -18,7 +19,7 @@ from app.models.room import Room, RoomMember
 from app.models.user import User
 from app.repositories.messages import MessageReader
 from app.services.gemini import call_gemini
-from app.services.langgraph_pipeline import extract_meeting_summary, run_pipeline
+from app.services.langgraph_pipeline import KST, _analyze_conversation, run_pipeline
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -124,7 +125,21 @@ async def _run_auto_trigger_pipeline(
     try:
         try:
             async with AsyncSessionLocal() as session:
-                summary = await extract_meeting_summary(room_id, session)
+                analysis = await _analyze_conversation(
+                    room_id,
+                    session,
+                    datetime.now(KST).strftime("%Y-%m-%d"),
+                )
+                if analysis is not None:
+                    card = analysis.get("card")
+                    summary = card if isinstance(card, dict) else {}
+                    signals = analysis.get("signals")
+                    slot_context["pre_extracted_signals"] = signals if isinstance(signals, dict) else None
+                else:
+                    # 해결점 D: legacy fallback (extract_meeting_summary) 제거.
+                    # _analyze_conversation 실패 시 빈 summary로 진행.
+                    slot_context["pre_extracted_signals"] = None
+                    summary = {}
             if summary and any(summary.get(k) for k in ("date", "place", "headcount", "type")):
                 await _publish_agent_message(
                     redis_client,
@@ -167,6 +182,9 @@ async def _run_auto_trigger_pipeline(
         except (TypeError, ValueError):
             room_pk_val = None
 
+        # 해결점 G: 트리거 시점 메시지 원문을 state에 박아 intent_detection race 방지.
+        slot_context["trigger_message_text"] = trigger_content
+
         async with AsyncSessionLocal() as session:
             context = await MessageReader.load_agent_context(
                 session=session,
@@ -199,8 +217,6 @@ async def _run_auto_trigger_pipeline(
         slot_context["message_count_since_last_trigger"] = 0
 
         for new_msg in result.get("new_assistant_messages", []):
-            if new_msg.get("emitted_early"):
-                continue
             await _publish_agent_message(
                 redis_client,
                 shared_channel,
@@ -208,7 +224,7 @@ async def _run_auto_trigger_pipeline(
             )
 
         vote_card_payload = result.get("vote_card_payload")
-        if vote_card_payload and not result.get("vote_card_emitted_early"):
+        if vote_card_payload:
             await _publish_agent_message(
                 redis_client,
                 shared_channel,
@@ -546,8 +562,6 @@ async def agent_ws(
                             slot_context[key] = result[key]
 
                     for new_msg in result.get("new_assistant_messages", []):
-                        if new_msg.get("emitted_early"):
-                            continue
                         await _publish_agent_message(
                             r, user_channel, json.dumps(new_msg, ensure_ascii=False),
                         )
@@ -709,8 +723,6 @@ async def agent_ws(
 
                 # 파이프라인이 발행한 어시스턴트 메시지 — shared는 전체, private는 user 전용
                 for new_msg in result.get("new_assistant_messages", []):
-                    if new_msg.get("emitted_early"):
-                        continue
                     target_ch = shared_channel if new_msg.get("visibility") == "shared" else user_channel
                     await _publish_agent_message(
                         r,
@@ -759,7 +771,7 @@ async def agent_ws(
                 })
 
                 vote_card_payload = result.get("vote_card_payload")
-                if vote_card_payload and not result.get("vote_card_emitted_early"):
+                if vote_card_payload:
                     # 모임 일정 투표는 방 전체 공유 — 방장 혼자 본다면 투표 자체가 성립 안 함.
                     await _publish_agent_message(
                         r,

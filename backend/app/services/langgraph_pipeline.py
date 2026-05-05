@@ -90,6 +90,9 @@ class GraphState(TypedDict, total=False):
     message_records: list[MessageRecord]
     recent_messages: list[str]
     conversation_summary: str
+    # 트리거 발화 시점의 user 메시지 원문 (해결점 G).
+    # intent_detection이 latest_user_message 대신 이 값을 우선 사용 → race condition 방지.
+    trigger_message_text: str | None
     # 방의 소셜(전체 공개) 채팅 최근 N개 + 그 이전 대화 요약.
     # entity_extraction / general_response 가 AI 패널 컨텍스트에 덧붙여 사용.
     social_recent: list[str]
@@ -138,6 +141,8 @@ class GraphState(TypedDict, total=False):
     conflict_type: str | None  # "date" | "place" | "time"
     conflict_options: list[str]
     conflict_users: list[str]
+    rejected_dates: list[dict[str, Any]]  # chat-level explicitly rejected dates
+    pre_extracted_signals: dict[str, Any] | None
     # 선호 정보
     preference_common_times: list[str]
     status: str
@@ -167,6 +172,7 @@ def _default_state(
         "message_records": normalized_messages,
         "recent_messages": recent_messages,
         "conversation_summary": conversation_summary,
+        "trigger_message_text": ctx.get("trigger_message_text"),
         "social_recent": [],
         "social_summary": "",
         "seen_message_ids": seen_ids,
@@ -212,6 +218,8 @@ def _default_state(
         "conflict_type": None,
         "conflict_options": [],
         "conflict_users": [],
+        "rejected_dates": [],
+        "pre_extracted_signals": ctx.get("pre_extracted_signals"),
         "preference_common_times": [],
         "status": "initialized",
     }
@@ -526,6 +534,40 @@ def _is_specific_iso_date(value: str | None) -> bool:
     if not isinstance(value, str):
         return False
     return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", value.strip()))
+
+
+def _resolve_rejected_date(raw: str | None, now_kst: datetime | None = None) -> str | None:
+    """LLM이 자연어로 반환한 거부 날짜를 ISO(YYYY-MM-DD) 문자열로 변환.
+
+    예: "2026-05-09" → "2026-05-09" (이미 ISO)
+        "금요일"      → 다음 금요일 ISO
+        "다음 금요일" → 다음주 금요일 ISO
+        "5월 9일"     → "{year}-05-09" (이미 지난 날이면 다음 해)
+        "5/9"         → "{year}-05-09"
+        변환 실패 시 None
+    """
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    if _is_specific_iso_date(text):
+        return text
+
+    base = now_kst or datetime.now(KST)
+
+    # "5/9" 같은 슬래시 형식 → "5월 9일"로 정규화 후 재시도
+    slash_match = re.fullmatch(r"(\d{1,2})/(\d{1,2})", text)
+    if slash_match:
+        text = f"{int(slash_match.group(1))}월 {int(slash_match.group(2))}일"
+
+    parsed = _fallback_parse_natural_date(text, base)
+    if not parsed:
+        return None
+    date_value = parsed.get("date")
+    if isinstance(date_value, str) and _is_specific_iso_date(date_value):
+        return date_value
+    return None
 
 
 def _detect_multi_date_options(text: str) -> bool:
@@ -1021,7 +1063,8 @@ async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
         '"conflict_detected": boolean, '
         '"conflict_type": "date" | "place" | "time" | null, '
         '"conflict_options": [string] | null, '
-        '"conflict_users": [string] | null'
+        '"conflict_users": [string] | null, '
+        '"rejected_dates": [{"date": string, "user": string | null, "reason": string | null}] | null'
         "}\n\n"
         "date_hint: 첫 번째 날짜 표현. 가능하면 YYYY-MM-DD 형식으로 변환, 범위면 "
         "'YYYY-MM-DD~YYYY-MM-DD'\n"
@@ -1056,6 +1099,16 @@ async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
         "conflict_type: 충돌 유형 (date/place/time)\n"
         "conflict_options: 충돌하는 선택지 배열 (예: ['목요일', '금요일'])\n"
         "conflict_users: 충돌하는 사용자 이름 배열 (메시지 발신자 기반, 알 수 없으면 null)\n\n"
+        "rejected_dates: 특정 사용자가 명시적으로 거부/불가능을 표현한 날짜 배열.\n"
+        f"  - date는 반드시 YYYY-MM-DD 형식. 요일만 언급되면 오늘({today_kst}) 이후 가장 가까운 미래 날짜로 변환.\n"
+        "  - user는 메시지 발신자 이름 (모르면 null).\n"
+        '  - reason은 거부 이유 (예: "알바", "가족 모임"). 모르면 null.\n'
+        '  - 단순 선호 ("금요일이 좋아", "토요일 가능")는 제외. 명시적 거부만 포함.\n'
+        "  - 거부 키워드 예: 안 돼, 못 가, 힘들어, 불가능, 어려워, 패스, 어렵다.\n"
+        "  예시:\n"
+        '  - "금요일은 알바 있어서 안 돼" → [{"date": "2026-05-08", "user": "민수", "reason": "알바"}]\n'
+        '  - "토요일 가족 모임이라 힘들어" → [{"date": "2026-05-09", "user": "수현", "reason": "가족 모임"}]\n'
+        '  - "그날은 좀..." → [] (모호하면 빈 배열)\n\n'
         f"대화 맥락:\n{context or '(empty)'}\n\n"
         "모르면 null로 반환하세요."
     )
@@ -1452,6 +1505,54 @@ def _filter_out_blocked(
     return [
         s for s in slots
         if isinstance(s.get("start_at"), str) and s["start_at"][:10] not in blocked_dates
+    ]
+
+
+_DATE_RANGE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})~(\d{4}-\d{2}-\d{2})$")
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _expand_date_hint(hint: Any) -> list[str]:
+    if not isinstance(hint, str):
+        return []
+
+    if _ISO_DATE_RE.match(hint):
+        try:
+            return [datetime.fromisoformat(hint).date().isoformat()]
+        except ValueError:
+            return []
+
+    range_match = _DATE_RANGE_RE.match(hint)
+    if not range_match:
+        return []
+
+    try:
+        start = datetime.fromisoformat(range_match.group(1)).date()
+        end = datetime.fromisoformat(range_match.group(2)).date()
+    except ValueError:
+        return []
+
+    if end < start:
+        return []
+
+    day_count = (end - start).days
+    if day_count > 14:
+        return []
+
+    return [(start + timedelta(days=offset)).isoformat() for offset in range(day_count + 1)]
+
+
+def _filter_out_rejected(
+    slots: list[dict[str, Any]], rejected_dates: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    if not rejected_dates:
+        return slots
+    rejected_set = {r["date"] for r in rejected_dates if isinstance(r.get("date"), str)}
+    if not rejected_set:
+        return slots
+    return [
+        s for s in slots
+        if isinstance(s.get("start_at"), str) and s["start_at"][:10] not in rejected_set
     ]
 
 
@@ -2168,11 +2269,14 @@ async def intent_detection(state: GraphState) -> GraphState:
     try:
         if _has_node_error(state):
             return state
-        latest_user_message = ""
-        for message in reversed(state["message_records"]):
-            if message.get("role") == "user" and message.get("content"):
-                latest_user_message = message["content"]
-                break
+        # 해결점 G: 트리거 시점 메시지 원문이 있으면 우선 사용 (race 방지).
+        # fallback: message_records에서 latest user message 검색.
+        latest_user_message = (state.get("trigger_message_text") or "").strip()
+        if not latest_user_message:
+            for message in reversed(state["message_records"]):
+                if message.get("role") == "user" and message.get("content"):
+                    latest_user_message = message["content"]
+                    break
 
         # ── Fast-path: 명확한 패턴이 보이면 Gemini 의도 분류 생략 (−3~5s).
         _place_hint_pattern = re.compile(r"맛집|카페|식당|근처|동\s|역\s|장소.*추천|추천.*장소")
@@ -2225,6 +2329,116 @@ async def entity_extraction(state: GraphState) -> GraphState:
     _t0 = time.monotonic()
     try:
         if _has_node_error(state):
+            return state
+
+        pre_extracted = state.get("pre_extracted_signals")
+        if isinstance(pre_extracted, dict):
+            raw_date_hints = pre_extracted.get("date_hints") or []
+            expanded_date_hints: list[str] = []
+            seen_iso: set[str] = set()
+            for raw in raw_date_hints:
+                for iso in _expand_date_hint(raw):
+                    if iso not in seen_iso:
+                        seen_iso.add(iso)
+                        expanded_date_hints.append(iso)
+            if not expanded_date_hints:
+                for pref in (pre_extracted.get("preferred_dates") or []):
+                    if isinstance(pref, dict):
+                        for iso in _expand_date_hint(pref.get("date")):
+                            if iso not in seen_iso:
+                                seen_iso.add(iso)
+                                expanded_date_hints.append(iso)
+            if expanded_date_hints:
+                logger.info("[DATE_HINTS] Expanded: %s -> %s", raw_date_hints, expanded_date_hints)
+
+            extracted: dict[str, Any] = {
+                "date_hint": expanded_date_hints[0] if expanded_date_hints else None,
+                "date_hints": expanded_date_hints,
+                "place_hint": pre_extracted.get("place_hint"),
+                "headcount": pre_extracted.get("headcount"),
+                "meeting_type": pre_extracted.get("meeting_type"),
+                "parsed_time_hint": pre_extracted.get("parsed_time_hint"),
+                "date_is_flexible": bool(pre_extracted.get("date_is_flexible", False)),
+                "date_hint_source_text": pre_extracted.get("date_hint_source_text"),
+                "preferred_dates": pre_extracted.get("preferred_dates") or [],
+                "conflict_detected": bool(pre_extracted.get("conflict_detected", False)),
+                "conflict_type": pre_extracted.get("conflict_type"),
+                "conflict_options": pre_extracted.get("conflict_options") or [],
+                "conflict_users": pre_extracted.get("conflict_users") or [],
+                "rejected_dates": pre_extracted.get("rejected_dates") or [],
+            }
+            state["extracted_entities"] = extracted
+            _update_slot_state(state, extracted)
+
+            state["conflict_detected"] = bool(extracted.get("conflict_detected"))
+            state["conflict_type"] = extracted.get("conflict_type") if state["conflict_detected"] else None
+            state["conflict_options"] = extracted.get("conflict_options") or []
+            state["conflict_users"] = extracted.get("conflict_users") or []
+            if state["conflict_detected"]:
+                logger.info(
+                    "[CONFLICT] Pre-extracted: type=%s options=%s users=%s",
+                    state["conflict_type"],
+                    state["conflict_options"],
+                    state["conflict_users"],
+                )
+
+            cleaned_rejected = []
+            raw_rejected = extracted.get("rejected_dates")
+            if isinstance(raw_rejected, list):
+                for item in raw_rejected:
+                    if not isinstance(item, dict) or not isinstance(item.get("date"), str):
+                        continue
+                    resolved = _resolve_rejected_date(item.get("date"))
+                    if not resolved:
+                        continue
+                    cleaned_rejected.append({
+                        "date": resolved,
+                        "user": item.get("user"),
+                        "reason": item.get("reason"),
+                    })
+            state["rejected_dates"] = cleaned_rejected
+            if cleaned_rejected and state.get("extracted_entities", {}).get("date_hints"):
+                rejected_set = {r["date"] for r in cleaned_rejected if isinstance(r.get("date"), str)}
+                current = state["extracted_entities"]["date_hints"]
+                filtered = [d for d in current if d not in rejected_set]
+                if len(filtered) != len(current):
+                    logger.info("[DATE_HINTS] Filtered to exclude rejected: %s -> %s", current, filtered)
+                    state["extracted_entities"]["date_hints"] = filtered
+                    state["extracted_entities"]["date_hint"] = filtered[0] if filtered else None
+                    state["date_hints"] = filtered
+                    state["date_hint"] = filtered[0] if filtered else None
+            # 방어 검증: rejected에 있는 날짜는 conflict_options에서 자동 제거.
+            # Gemini가 룰을 어겨 같은 날짜를 양쪽에 넣어도 시스템이 일관성 유지.
+            if cleaned_rejected and state.get("conflict_options"):
+                rejected_set = {r["date"] for r in cleaned_rejected if isinstance(r.get("date"), str)}
+                original_options = state.get("conflict_options") or []
+                filtered_options = [o for o in original_options if o not in rejected_set]
+                if len(filtered_options) != len(original_options):
+                    logger.info(
+                        "[CONFLICT] Filtered conflict_options to exclude rejected dates: %s -> %s",
+                        original_options, filtered_options,
+                    )
+                state["conflict_options"] = filtered_options
+                # 옵션이 1개 이하로 줄면 conflict_detected를 false로 (mediation 진입 차단)
+                if len(filtered_options) < 2:
+                    state["conflict_detected"] = False
+                    state["conflict_type"] = None
+                    state["conflict_options"] = []
+                    state["conflict_users"] = []
+                    logger.info("[CONFLICT] Suppressed: too few non-rejected options remaining")
+            if cleaned_rejected:
+                logger.info("[REJECTED_DATES] Pre-extracted: %s", cleaned_rejected)
+
+            place_coord = await _resolve_place_coord(state.get("place_hint"))
+            if place_coord:
+                state["place_coord"] = place_coord
+            state["is_location_first"] = (
+                bool(state.get("place_hint"))
+                and not bool(state.get("date_hint"))
+                and state.get("intent") != "meeting_schedule"
+            )
+            state["status"] = "entities_extracted"
+            logger.info("[TIMING] entity_extraction (pre-extracted): %.2fs", time.monotonic() - _t0)
             return state
 
         # ── Fast-skip: 명령형 추천 요청("일정 추천해줘" 등)은 뽑을 엔티티가 없음 → Gemini 호출 생략 (−3~4s).
@@ -2307,6 +2521,22 @@ async def entity_extraction(state: GraphState) -> GraphState:
                 state["conflict_options"],
                 state["conflict_users"],
             )
+
+        raw_rejected = extracted.get("rejected_dates")
+        if isinstance(raw_rejected, list):
+            cleaned_rejected = []
+            for item in raw_rejected:
+                if isinstance(item, dict) and isinstance(item.get("date"), str):
+                    resolved = _resolve_rejected_date(item.get("date"))
+                    if resolved:
+                        cleaned_rejected.append({
+                            "date": resolved,
+                            "user": item.get("user"),
+                            "reason": item.get("reason"),
+                        })
+            state["rejected_dates"] = cleaned_rejected
+            if cleaned_rejected:
+                logger.info("[REJECTED_DATES] Extracted: %s", cleaned_rejected)
 
         # place_suggestion intent인데 place_hint가 없으면 메시지에서 직접 추출
         if state.get("intent") == "place_suggestion" and not state.get("place_hint"):
@@ -2792,11 +3022,15 @@ async def function_calling(state: GraphState) -> GraphState:
         # 방의 '불가능 날짜' — 모든 경로의 최종 후보에서 제외.
         room_pk = _room_id_as_int(state["room_id"])
         blocked_dates = await _load_blocked_dates(room_pk)
+        rejected_dates = state.get("rejected_dates") or []
 
         # 여러 날짜 선택지 → 각 날짜별 슬롯 생성
         multi_date_hints = state.get("date_hints") or []
         if state.get("intent") != "place_suggestion" and len(multi_date_hints) >= 2:
-            multi_slots = _filter_out_blocked(_build_multi_date_slots(state), blocked_dates)
+            multi_slots = _filter_out_rejected(
+                _filter_out_blocked(_build_multi_date_slots(state), blocked_dates),
+                rejected_dates,
+            )
             if multi_slots:
                 state["calendar_free_slots"] = multi_slots
                 state["calendar_strategy"] = "multi_date_vote"
@@ -2815,6 +3049,7 @@ async def function_calling(state: GraphState) -> GraphState:
         ):
             # 생성 단계부터 blocked_dates를 제외하면서 만들어야 5개 채우기 가능.
             pref_slots = _build_preference_time_slots(state, pref_times, blocked_dates)
+            pref_slots = _filter_out_rejected(pref_slots, rejected_dates)
             state["calendar_free_slots"] = pref_slots
             state["calendar_strategy"] = "preference_based"
             place_results = await search_place(state)
@@ -2835,8 +3070,9 @@ async def function_calling(state: GraphState) -> GraphState:
             and state.get("time_options")
             and not state.get("preference_common_times")
         ):
-            state["calendar_free_slots"] = _filter_out_blocked(
-                _build_time_option_slots(state), blocked_dates,
+            state["calendar_free_slots"] = _filter_out_rejected(
+                _filter_out_blocked(_build_time_option_slots(state), blocked_dates),
+                rejected_dates,
             )
             state["calendar_strategy"] = "natural_language_time_options"
             place_results = await search_place(state)
@@ -2846,7 +3082,10 @@ async def function_calling(state: GraphState) -> GraphState:
                 search_place(state),
             )
             # get_free_slots에서 이미 필터링되지만, 이중 방어.
-            state["calendar_free_slots"] = _filter_out_blocked(free_slots, blocked_dates)
+            state["calendar_free_slots"] = _filter_out_rejected(
+                _filter_out_blocked(free_slots, blocked_dates),
+                rejected_dates,
+            )
             blocker_counts: dict[str, int] = {}
             if free_slots and any(slot.get("has_conflict") for slot in free_slots):
                 for slot in free_slots:
@@ -3003,6 +3242,10 @@ async def vote_card_creation(state: GraphState) -> GraphState:
         pref_times = _normalize_preferred_times(state.get("preference_common_times"))
         has_weekday_pref = any(t.startswith("평일") for t in pref_times)
         vote_slots = state.get("calendar_free_slots", [])
+        # 안전망: 상위 노드가 예외로 중단됐을 때도 거부 날짜는 카드에 안 들어가게.
+        rejected_safety = state.get("rejected_dates") or []
+        if rejected_safety:
+            vote_slots = _filter_out_rejected(vote_slots, rejected_safety)
         if has_weekday_pref:
             weekday_only = [s for s in vote_slots if not s.get("is_weekend", False)]
             if weekday_only:
@@ -3012,19 +3255,20 @@ async def vote_card_creation(state: GraphState) -> GraphState:
         if not meeting_id:
             db = state["db"]
             room_pk = _room_id_as_int(state["room_id"])
-            created_by = 1
-            if room_pk is not None:
-                member_result = await db.execute(
-                    select(RoomMember).where(RoomMember.room_id == room_pk).limit(1)
-                )
-                first_member = member_result.scalar_one_or_none()
-                if first_member:
-                    created_by = first_member.user_id
+            if room_pk is None:
+                raise ValueError(f"room_id is invalid for pending meeting creation: {state['room_id']!r}")
+            member_result = await db.execute(
+                select(RoomMember).where(RoomMember.room_id == room_pk).limit(1)
+            )
+            first_member = member_result.scalar_one_or_none()
+            if first_member is None:
+                raise ValueError(f"No members found in room {room_pk}; cannot determine created_by")
+            created_by = first_member.user_id
             first_slot = vote_slots[0] if vote_slots else {}
             slot_start = _parse_iso_datetime(first_slot.get("start_at")) if first_slot.get("start_at") else datetime.now(timezone.utc).replace(tzinfo=None)
             slot_end = _parse_iso_datetime(first_slot.get("end_at")) if first_slot.get("end_at") else slot_start + timedelta(hours=2)
             new_meeting = MeetingSchedule(
-                room_id=room_pk or 1,
+                room_id=room_pk,
                 title=vote_title,
                 scheduled_at=slot_start if not hasattr(slot_start, 'tzinfo') or slot_start.tzinfo is None else slot_start.replace(tzinfo=None),
                 end_at=slot_end if not hasattr(slot_end, 'tzinfo') or slot_end.tzinfo is None else slot_end.replace(tzinfo=None),
@@ -3061,11 +3305,11 @@ async def vote_card_creation(state: GraphState) -> GraphState:
             ],
             "headcount": state.get("headcount"),
             "blocker_notification": state.get("blocker_notification_payload"),
+            "calendar_strategy": state.get("calendar_strategy"),
         }
         state["status"] = "vote_card_created"
 
-        # ── 투표 카드 + Narrator 선발행: 장소 추천(7~12s)이 끝나기 전에 클라이언트로 먼저 보냄.
-        # agent.py는 vote_card_emitted_early / emitted_early 플래그를 보고 중복 발행을 스킵함.
+        # ── Narrator 메시지 큐에 넣기 (해결점 L: EARLY-EMIT 제거, 정상 emit 경로 단일화)
         try:
             best_label = state.get("calendar_free_slots", [{}])[0].get("label", "")
             if state.get("date_conflict"):
@@ -3078,28 +3322,6 @@ async def vote_card_creation(state: GraphState) -> GraphState:
                 await _emit_assistant_message(state["room_id"], db, narrator, state, shared=True)
         except Exception:
             logger.debug("vote_card narrator emit failed", exc_info=True)
-
-        try:
-            r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-            try:
-                channel = f"agent:{state['room_id']}"
-                # 1) Narrator 메시지 선발행 — 방금 큐에 들어간 마지막 항목을 즉시 publish
-                new_msgs = state.get("new_assistant_messages") or []  # type: ignore[typeddict-item]
-                if new_msgs:
-                    last_msg = new_msgs[-1]
-                    last_msg["emitted_early"] = True  # agent.py가 스킵하도록 표식
-                    await r.publish(channel, json.dumps(last_msg, ensure_ascii=False))
-                # 2) 투표 카드 선발행
-                await r.publish(
-                    channel,
-                    json.dumps(state["vote_card_payload"], ensure_ascii=False),
-                )
-                state["vote_card_emitted_early"] = True  # type: ignore[typeddict-unknown-key]
-                logger.info("[EARLY-EMIT] narrator + vote_card published to %s", channel)
-            finally:
-                await r.aclose()
-        except Exception:
-            logger.debug("vote_card early emit failed", exc_info=True)
 
         logger.info("[TIMING] vote_card_creation: %.2fs", time.monotonic() - _t0)
         return state
@@ -3726,7 +3948,6 @@ async def run_pipeline(
         "awaiting_user_reply": final_state.get("awaiting_user_reply", False),
         "validation_errors": final_state.get("validation_errors", []),
         "vote_card_payload": final_state.get("vote_card_payload"),
-        "vote_card_emitted_early": final_state.get("vote_card_emitted_early", False),
         "place_recommendation_payload": final_state.get("place_recommendation_payload"),
         "maedeup_card_payload": final_state.get("maedeup_card_payload"),
         "calendar_registration": final_state.get("calendar_registration"),
@@ -3755,24 +3976,28 @@ async def run_pipeline(
     }
 
 
-async def extract_meeting_summary(room_id: str, db: AsyncSession) -> dict:
-    """최근 소셜 채팅에서 모임 관련 정보를 추출합니다."""
+async def _analyze_conversation(
+    room_id: str,
+    db: AsyncSession,
+    today_kst: str,
+) -> dict[str, Any] | None:
+    """최근 소셜 채팅에서 카드 표시 정보와 파이프라인 신호를 한 번에 추출합니다."""
     try:
         room_pk = int(room_id)
     except (TypeError, ValueError):
-        return {}
+        return None
 
     result = await db.execute(
         select(ChatMessage)
         .where(ChatMessage.room_id == room_pk)
         .where(ChatMessage.pane_type == PaneType.social)
         .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
-        .limit(20)
+        .limit(50)
     )
     recent_messages = list(reversed(result.scalars().all()))
 
     if not recent_messages:
-        return {}
+        return None
 
     conversation = "\n".join(
         f"{msg.sender or msg.role}: {msg.content.strip()}"
@@ -3781,43 +4006,92 @@ async def extract_meeting_summary(room_id: str, db: AsyncSession) -> dict:
     )
 
     if not conversation:
-        return {}
+        return None
 
     prompt = (
-        "아래 대화에서 모임 관련 정보를 추출해서 JSON으로 정리해줘.\n"
-        "반드시 아래 JSON 형식만 출력하고, 다른 텍스트는 포함하지 마.\n"
-        "정보가 없는 필드는 null로 채워줘.\n\n"
+        "당신은 매듭 AI입니다. 한국인들의 모임 조율 대화를 분석합니다.\n"
+        f"오늘 날짜는 {today_kst}입니다.\n"
+        "아래 대화에서 카드 표시용 요약(card)과 파이프라인 신호(signals)를 한 번에 추출하세요.\n"
+        "반드시 JSON 객체만 출력하고, 다른 텍스트는 포함하지 마세요.\n"
+        "정보가 없는 필드는 null 또는 빈 배열로 채우세요.\n\n"
         "출력 형식:\n"
-        '{"date": "날짜/시간 정보", "place": "장소", "headcount": "인원", '
-        '"type": "모임 유형(식사/카페/술 등)", "notes": ["기타 메모"]}\n\n'
+        "{\n"
+        '  "card": {\n'
+        '    "date": "자연어 날짜/시간 정보 또는 null",\n'
+        '    "place": "표시용 장소 또는 null",\n'
+        '    "headcount": "표시용 인원 또는 null",\n'
+        '    "type": "모임 유형(식사/카페/술 등) 또는 null",\n'
+        '    "notes": ["기타 메모"]\n'
+        "  },\n"
+        '  "signals": {\n'
+        '    "date_hint": "YYYY-MM-DD 또는 YYYY-MM-DD~YYYY-MM-DD 또는 null",\n'
+        '    "date_hints": ["YYYY-MM-DD"],\n'
+        '    "preferred_dates": ["YYYY-MM-DD"],\n'
+        '    "rejected_dates": ['
+        '{"date": "YYYY-MM-DD", "user": "발신자 또는 null", "reason": "거부 이유 또는 null"}'
+        "],\n"
+        '    "place_hint": "구체적 장소 힌트 또는 null",\n'
+        '    "headcount": 0,\n'
+        '    "meeting_type": "모임 유형 또는 null",\n'
+        '    "conflict_detected": false,\n'
+        '    "conflict_type": "date 또는 place 또는 time 또는 null",\n'
+        '    "conflict_options": ["충돌 선택지"],\n'
+        '    "conflict_users": ["충돌 사용자"],\n'
+        '    "parsed_time_hint": "시간 표현 또는 null",\n'
+        '    "date_is_flexible": false,\n'
+        '    "date_hint_source_text": "원문 날짜 표현 또는 null"\n'
+        "  }\n"
+        "}\n\n"
+        "signals 작성 규칙:\n"
+        "- 날짜는 가능하면 ISO 형식(YYYY-MM-DD)으로 변환하세요. 요일만 언급되면 오늘 이후 가장 가까운 미래 날짜로 변환하세요.\n"
+        "- date_hints는 여러 날짜 선택지가 있을 때 모두 담고, preferred_dates는 가능/선호로 표현된 날짜를 담으세요.\n"
+        "[필드 의미 구분 - 반드시 따를 것]\n\n"
+        "rejected_dates: 어떤 사람이라도 다음 거부 표현을 명시적으로 사용한 날짜.\n"
+        "  거부 키워드: \"안 돼\", \"못 가\", \"힘들어\", \"불가능\", \"어려워\", \"패스\", \"어렵다\"\n"
+        "  - 한 명이라도 거부하면 무조건 여기. 다른 사람의 선호와 충돌하더라도 거부 우선.\n"
+        "  - 단순한 미언급/무관심은 거부 아님.\n\n"
+        "conflict_options: 서로 다른 사람이 서로 다른 날짜를 선호하지만, 누구도 거부하지 않은 옵션들만.\n"
+        "  - \"A는 X를 원함\" + \"B는 Y를 원함\" + 둘 다 명시적 거부 없음 → conflict_options=[X, Y]\n"
+        "  - 단 한 명이라도 어떤 옵션에 거부를 표시하면 그 날짜는 conflict_options에서 빠지고 rejected_dates로.\n\n"
+        "상호 배타성:\n"
+        "  - 같은 날짜가 rejected_dates와 conflict_options에 동시에 들어가면 안 됨.\n"
+        "  - 충돌 시 우선순위: rejected_dates가 conflict_options를 이김.\n\n"
+        "분류 예시:\n"
+        "  대화1: \"금요일 좋아\" / \"금요일 안 돼\"\n"
+        "    → rejected_dates=[금요일 ISO], conflict_options=[]\n\n"
+        "  대화2: \"목요일이 좋아\" / \"금요일이 좋아\" (둘 다 명시적 거부 없음)\n"
+        "    → rejected_dates=[], conflict_options=[\"목요일\", \"금요일\"]\n\n"
+        "  대화3: \"금요일 안 돼\" / \"토요일 안 돼\"\n"
+        "    → rejected_dates=[금요일 ISO, 토요일 ISO], conflict_options=[]\n\n"
+        "  대화4: \"금요일 좋아\" / \"금요일도 OK인데 토요일이 더 좋아\"\n"
+        "    → rejected_dates=[], conflict_options=[\"금요일\", \"토요일\"]\n"
+        "- place_hint는 구체적 지명/역/동/구/장소명만 담으세요. 아무데나, 근처, 다시 추천, 장소 정하자 같은 모호한 표현은 null입니다.\n"
         f"대화:\n{conversation}"
     )
 
     raw = await call_gemini(prompt)
     if not raw:
-        return {}
+        return None
 
-    # JSON 블록 추출 (```json ... ``` 또는 순수 JSON)
-    cleaned = raw.strip()
-    if "```" in cleaned:
-        # 코드 블록에서 JSON 추출
-        import re
-        match = re.search(r"```(?:json)?\s*(.*?)\s*```", cleaned, re.DOTALL)
-        if match:
-            cleaned = match.group(1).strip()
+    parsed = _extract_json_object(raw)
+    if not parsed:
+        logger.warning("Failed to parse unified conversation analysis JSON: %s", raw[:200])
+        return None
 
-    try:
-        summary = json.loads(cleaned)
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse meeting summary JSON: %s", cleaned[:200])
-        return {}
+    card = parsed.get("card")
+    signals = parsed.get("signals")
+    if not isinstance(card, dict) or not isinstance(signals, dict):
+        return None
 
     return {
-        "date": summary.get("date"),
-        "place": summary.get("place"),
-        "headcount": summary.get("headcount"),
-        "type": summary.get("type"),
-        "notes": summary.get("notes") or [],
+        "card": {
+            "date": card.get("date"),
+            "place": card.get("place"),
+            "headcount": card.get("headcount"),
+            "type": card.get("type"),
+            "notes": card.get("notes") or [],
+        },
+        "signals": signals,
     }
 
 

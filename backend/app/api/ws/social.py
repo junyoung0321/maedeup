@@ -590,9 +590,9 @@ async def _detect_and_notify_intent(
         count = await r.incr(counter_key)
         await r.expire(counter_key, 600)
 
-        if count < 3:
+        if count < 4:
             logger.debug(
-                "Social msg count for room %s: %d (threshold: 3, skipping judge)",
+                "Social msg count for room %s: %d (threshold: 4, skipping judge)",
                 room_id,
                 count,
             )

@@ -42,6 +42,7 @@ export default function AiAssistantPane() {
   const setContextMode = meetingContext?.setContextMode;
   const aiTriggerIntent = meetingContext?.aiTriggerIntent ?? null;
   const setAiTriggerIntent = meetingContext?.setAiTriggerIntent;
+  const setSelectedPlace = meetingContext?.setSelectedPlace;
   const setVoteCardCtx = meetingContext?.setVoteCard;
   const setVoteUpdateCtx = meetingContext?.setVoteUpdate;
   const setPlaceRecommendationCtx = meetingContext?.setPlaceRecommendation;
@@ -491,6 +492,11 @@ export default function AiAssistantPane() {
                 placeRecommendation={card.payload}
                 meetingId={card.meeting_id}
                 roomId={roomId}
+                onPlaceClick={(place) => {
+                  // 장소명 클릭 → 캘린더 패널(InfoPane)에 PlaceDetailPane 표시
+                  setSelectedPlace?.(place);
+                  setContextMode?.("place");
+                }}
               />
             );
           }

@@ -6,7 +6,6 @@ import CalendarPane from "@/components/meeting/CalendarPane";
 import FinalizationProposalCard from "@/components/meeting/FinalizationProposalCard";
 import PlaceDetailPane from "@/components/meeting/PlaceDetailPane";
 import VoteCardSection from "@/components/meeting/VoteCardSection";
-import PlaceRecommendationCard from "@/components/meeting/PlaceRecommendationCard";
 import TimeBarSelector from "@/components/meeting/TimeBarSelector";
 import { useMeeting } from "@/contexts/MeetingContext";
 import { fs } from "@/lib/responsive";
@@ -272,36 +271,9 @@ export default function InfoPane() {
                 </div>
               )}
 
-              {/* Phase: timeConfirmed → PlaceRecommendationCard (or waiting) */}
-              {infoPanePhase === "timeConfirmed" && (
-                <div style={{ padding: "0 4px" }}>
-                  {placeRecommendation ? (
-                    <PlaceRecommendationCard
-                      placeRecommendation={placeRecommendation}
-                      meetingId={confirmedMeetingId}
-                      roomId={roomId}
-                      onPlaceConfirmed={handlePlaceConfirmed}
-                      onPlaceClick={handlePlaceClick}
-                    />
-                  ) : (
-                    <div style={{
-                      padding: "24px 18px",
-                      borderRadius: 18,
-                      background: "#f1f5f9",
-                      border: "1px solid #cbd5e1",
-                      textAlign: "center",
-                      fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                    }}>
-                      <div style={{ fontSize: fs(14, 12), fontWeight: 600, color: "#4f46e5", marginBottom: 8 }}>
-                        장소 추천 대기 중...
-                      </div>
-                      <div style={{ fontSize: fs(13, 11), color: "#64748b" }}>
-                        AI가 장소를 찾고 있어요
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+              {/* Phase: timeConfirmed → 장소 추천 카드는 AI 패널에만 렌더.
+                  여기서 카드 중복 렌더 제거. 사용자가 AI 패널 카드의 장소명 클릭 시
+                  setSelectedPlace 호출 → 위쪽 PlaceDetailPane이 자동 열림. */}
 
               {/* Phase: placeConfirmed/done */}
               {(infoPanePhase === "placeConfirmed" || infoPanePhase === "done") && (
@@ -346,12 +318,8 @@ export default function InfoPane() {
                 </div>
               )}
             </div>
-          ) : isPlaceOnlyFlow ? (
-            /* Non-phased: place-only flow */
-            <div style={{ padding: "8px 0" }}>
-              <VoteCardSection mode="place-only" />
-            </div>
           ) : null}
+          {/* Non-phased place-only 카드도 AI 패널에서만 렌더. InfoPane은 calendar+detail만. */}
         </>
       )}
     </div>

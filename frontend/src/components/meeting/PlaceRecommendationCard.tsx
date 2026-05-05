@@ -82,6 +82,7 @@ export default function PlaceRecommendationCard({
       await apiFetch<{ id: number }>(`/api/v1/meetings/${meetingId}/place`, {
         method: "PATCH",
         body: JSON.stringify({
+          place: place.name,
           place_id: place.place_id,
           name: place.name,
           address: place.address,

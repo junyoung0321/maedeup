@@ -228,6 +228,7 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
       }>(`/api/v1/meetings/${confirmedMeetingId}/place`, {
         method: "PATCH",
         body: JSON.stringify({
+          place: place.name,
           place_id: place.place_id,
           name: place.name,
           address: place.address,

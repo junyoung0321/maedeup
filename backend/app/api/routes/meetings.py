@@ -19,11 +19,13 @@ from app.db.session import get_session
 from app.models.meeting import MeetingSchedule, MeetingStatus
 from app.models.room import Room, RoomMember
 from app.models.user import User
+from app.schemas.meetings import PlacePatchRequest, PlacePatchResponse
 from app.services import scheduling_round as sr
 from app.services.google_calendar import (
     delete_events_for_meeting_members,
     sync_events_for_meeting_members,
 )
+from app.services.kakao_maps import search_address, search_keyword
 from app.services.langgraph_pipeline import suggest_alternative_slots
 from app.services.meeting_history import save_meeting_record
 
@@ -62,13 +64,6 @@ def _calendar_response_fields(meeting: MeetingSchedule, user_id: int) -> dict:
         "calendar_event_for_self": str(user_id) in event_ids,
         "calendar_member_count": len(event_ids),
     }
-
-
-class ConfirmPlaceRequest(BaseModel):
-    place_id: str
-    name: str
-    address: str
-    url: Optional[str] = None
 
 
 class VoteRequest(BaseModel):
@@ -623,17 +618,72 @@ async def vote_meeting(
     )
 
 
-@router.patch("/{meeting_id}/place", response_model=ConfirmMeetingResponse)
-async def confirm_place(
+def _meeting_card_time(meeting: MeetingSchedule) -> dict[str, str]:
+    if meeting.end_at:
+        label = f"{meeting.scheduled_at:%Y-%m-%d %H:%M} - {meeting.end_at:%H:%M}"
+    else:
+        label = f"{meeting.scheduled_at:%Y-%m-%d %H:%M}"
+    payload = {
+        "label": label,
+        "start_at": meeting.scheduled_at.isoformat(),
+    }
+    if meeting.end_at:
+        payload["end_at"] = meeting.end_at.isoformat()
+    return payload
+
+
+async def _publish_maedeup_place_update(
+    meeting: MeetingSchedule,
+    *,
+    calendar_registered: bool,
+    headcount: int | None,
+) -> None:
+    payload = {
+        "type": "maedeup_card",
+        "room_id": str(meeting.room_id),
+        "meeting_id": meeting.id,
+        "title": meeting.title or "모임 매듭 카드",
+        "meeting_type": "모임",
+        "date_hint": meeting.scheduled_at.date().isoformat(),
+        "date": meeting.scheduled_at.date().isoformat(),
+        "time": _meeting_card_time(meeting),
+        "place": meeting.location_name,
+        "place_pending": False,
+        "headcount": headcount,
+        "calendar_registered": calendar_registered,
+        "selected_time": _meeting_card_time(meeting),
+        "selected_place": {
+            "name": meeting.location_name or "",
+            "address": meeting.location_address or "",
+            "url": meeting.kakao_place_url or "",
+            "place_id": meeting.kakao_place_id or "",
+        },
+    }
+    redis_client = aioredis.from_url(
+        settings.REDIS_URL,
+        decode_responses=True,
+        socket_connect_timeout=1,
+        socket_timeout=1,
+    )
+    try:
+        await redis_client.publish(
+            f"agent:{meeting.room_id}",
+            json.dumps(payload, ensure_ascii=False),
+        )
+    finally:
+        await redis_client.aclose()
+
+
+@router.patch("/{meeting_id}/place", response_model=PlacePatchResponse)
+async def patch_meeting_place(
     meeting_id: int,
-    body: ConfirmPlaceRequest,
+    body: PlacePatchRequest,
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    if not body.name.strip():
-        raise HTTPException(status_code=400, detail="name must not be empty")
-    if not body.address.strip():
-        raise HTTPException(status_code=400, detail="address must not be empty")
+    place = body.place.strip()
+    if not place:
+        raise HTTPException(status_code=400, detail="place must not be empty")
 
     result = await session.execute(
         select(MeetingSchedule).where(MeetingSchedule.id == meeting_id)
@@ -641,33 +691,62 @@ async def confirm_place(
     meeting = result.scalar_one_or_none()
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
-    if meeting.created_by != int(current_user.sub):
+
+    membership_result = await session.execute(
+        select(RoomMember).where(
+            RoomMember.room_id == meeting.room_id,
+            RoomMember.user_id == int(current_user.sub),
+        )
+    )
+    if membership_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    meeting.location_name = body.name
-    meeting.location_address = body.address
-    meeting.kakao_place_id = body.place_id
-    meeting.kakao_place_url = body.url
+    meeting.location_name = body.name.strip() if body.name and body.name.strip() else place
+    meeting.location_address = body.address.strip() if body.address and body.address.strip() else None
+    meeting.kakao_place_id = body.place_id.strip() if body.place_id and body.place_id.strip() else None
+    meeting.kakao_place_url = body.url.strip() if body.url and body.url.strip() else None
     meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.add(meeting)
     await session.commit()
     await session.refresh(meeting)
 
-    # Best-effort: propagate the new place to each member's existing Google
-    # Calendar event (or create it if they consented since confirm_meeting).
-    # Failures are logged and tolerated — the place change must not be undone.
-    if meeting.scheduled_at and meeting.location_name:
-        try:
+    calendar_registered = False
+    headcount: int | None = None
+    try:
+        members_result = await session.execute(
+            select(User)
+            .join(RoomMember, RoomMember.user_id == User.id)
+            .where(RoomMember.room_id == meeting.room_id)
+        )
+        members = members_result.scalars().all()
+        headcount = len(members)
+
+        if not meeting.location_address or not meeting.kakao_place_id or not meeting.kakao_place_url:
+            documents = await search_keyword(place, size=1)
+            if documents:
+                first = documents[0]
+                meeting.location_name = str(first.get("place_name") or meeting.location_name or place)
+                meeting.location_address = str(
+                    first.get("road_address_name") or first.get("address_name") or meeting.location_address or ""
+                )
+                meeting.kakao_place_id = str(first.get("id") or meeting.kakao_place_id or "")
+                meeting.kakao_place_url = str(first.get("place_url") or meeting.kakao_place_url or "")
+            else:
+                address = await search_address(place)
+                if not address:
+                    raise RuntimeError("Kakao place lookup returned no results")
+                meeting.location_address = address.get("address_name") or meeting.location_address
+
+            meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            session.add(meeting)
+            await session.commit()
+            await session.refresh(meeting)
+
+        if meeting.scheduled_at and meeting.location_name:
             room_row = await session.execute(
                 select(Room).where(Room.id == meeting.room_id)
             )
             room = room_row.scalar_one_or_none()
-            members_result = await session.execute(
-                select(User)
-                .join(RoomMember, RoomMember.user_id == User.id)
-                .where(RoomMember.room_id == meeting.room_id)
-            )
-            members = members_result.scalars().all()
             updated_event_ids = await sync_events_for_meeting_members(
                 meeting, members, session,
                 event_title=room.name if room else None,
@@ -677,11 +756,30 @@ async def confirm_place(
                 session.add(meeting)
                 await session.commit()
                 await session.refresh(meeting)
-        except Exception:
-            logger.warning(
-                "Google Calendar place-update fan-out failed (meeting_id=%s)",
-                meeting.id, exc_info=True,
+            calendar_registered = bool(updated_event_ids)
+    except Exception:
+        logger.warning(
+            "Place patch external sync failed after DB commit (meeting_id=%s)",
+            meeting.id, exc_info=True,
+        )
+
+    try:
+        if headcount is None:
+            member_result = await session.execute(
+                select(RoomMember).where(RoomMember.room_id == meeting.room_id)
             )
+            headcount = len(member_result.scalars().all())
+        await _publish_maedeup_place_update(
+            meeting,
+            calendar_registered=calendar_registered,
+            headcount=headcount,
+        )
+    except Exception:
+        logger.warning(
+            "Redis publish failed for place patch meeting_id=%s",
+            meeting.id,
+            exc_info=True,
+        )
 
     # 모임 히스토리 저장 (non-critical, after commit)
     try:
@@ -693,9 +791,10 @@ async def confirm_place(
             exc_info=True,
         )
 
-    return ConfirmMeetingResponse(
-        id=meeting.id,
-        **_calendar_response_fields(meeting, int(current_user.sub)),
+    return PlacePatchResponse(
+        meeting_id=meeting.id,
+        place=meeting.location_name or place,
+        calendar_registered=calendar_registered,
     )
 
 

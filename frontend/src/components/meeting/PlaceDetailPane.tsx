@@ -100,6 +100,7 @@ export default function PlaceDetailPane({ place, roomId, meetingId, onConfirmed 
       await apiFetch(`/api/v1/meetings/${meetingId}/place`, {
         method: "PATCH",
         body: JSON.stringify({
+          place: place.name,
           place_id: place.id,
           name: place.name,
           address: place.address,

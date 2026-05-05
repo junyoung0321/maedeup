@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles, Send, Square, MessageCircle, CalendarDays, MapPin, Users, CheckCircle2, ClipboardList, Share2, Check, AlertCircle } from "lucide-react";
+import { Sparkles, Send, Square, MessageCircle, CalendarDays, MapPin, Users, CheckCircle2, ClipboardList, Share2, Check, AlertCircle, Search } from "lucide-react";
 import ScheduleRecommendationCard from "./ScheduleRecommendationCard";
 import PlaceRecommendationCard from "./PlaceRecommendationCard";
+import PlaceInputModal from "./PlaceInputModal";
 import { useAgentWebSocket } from "@/hooks/useAgentWebSocket";
 import { useAuth } from "@/hooks/useAuth";
 import { MeetingContext } from "@/contexts/MeetingContext";
@@ -30,6 +31,7 @@ export default function AiAssistantPane() {
   const [input, setInput] = useState("");
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiTimeoutMessage, setAiTimeoutMessage] = useState<string | null>(null);
+  const [placeInputMeetingId, setPlaceInputMeetingId] = useState<number | null>(null);
   const aiLoadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const aiWarningTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -565,9 +567,33 @@ export default function AiAssistantPane() {
                 )}
                 {isPlacePending ? (
                   <>
-                    <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
-                      장소 🔍 장소 정해지면 자동으로 정리해드릴게요
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPlaceInputMeetingId(card.meeting_id)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        width: "100%",
+                        minHeight: 42,
+                        padding: "9px 12px",
+                        borderRadius: 12,
+                        border: "1px solid rgba(255,255,255,0.28)",
+                        background: "rgba(255,255,255,0.16)",
+                        color: "#ffffff",
+                        fontSize: fs(15, 12),
+                        fontWeight: 700,
+                        lineHeight: 1.4,
+                        textAlign: "left",
+                        cursor: "pointer",
+                        fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                      }}
+                    >
+                      <Search size={16} style={{ flexShrink: 0 }} />
+                      <span style={{ overflowWrap: "anywhere" }}>
+                        {partialCard.place_pending_message ?? "장소를 정해주세요"}
+                      </span>
+                    </button>
                     <span style={{ fontSize: fs(14, 12), lineHeight: 1.5, color: "rgba(255,255,255,0.84)" }}>
                       캘린더 추후 등록
                     </span>
@@ -935,6 +961,14 @@ export default function AiAssistantPane() {
           </div>
         )}
       </div>
+
+      {placeInputMeetingId !== null && (
+        <PlaceInputModal
+          meetingId={placeInputMeetingId}
+          onClose={() => setPlaceInputMeetingId(null)}
+          onSuccess={() => undefined}
+        />
+      )}
 
       <div
         style={{

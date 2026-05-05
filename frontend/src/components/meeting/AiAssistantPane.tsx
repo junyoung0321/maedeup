@@ -458,9 +458,19 @@ export default function AiAssistantPane() {
         )}
 
         {maedeupCard && (() => {
+          const partialCard = maedeupCard as NonNullable<typeof maedeupCard> & {
+            place_pending?: boolean;
+            place_pending_message?: string;
+            calendar_registered?: boolean;
+            time?: string | { label?: string } | null;
+          };
+          const isPlacePending = partialCard.place_pending === true;
           const displayTime = maedeupCard.selected_time;
           const displayPlace = maedeupCard.selected_place;
           const title = maedeupCard.title ?? `${maedeupCard.meeting_type ?? "모임"} 매듭 카드`;
+          const timeLabel =
+            displayTime?.label ??
+            (typeof partialCard.time === "string" ? partialCard.time : partialCard.time?.label);
 
           return (
             <div
@@ -507,12 +517,21 @@ export default function AiAssistantPane() {
                     </span>
                   </>
                 )}
-                {displayTime && (
+                {timeLabel && (
                   <span style={{ fontSize: 15, lineHeight: 1.5 }}>
-                    시간 {displayTime.label}
+                    시간 {timeLabel}
                   </span>
                 )}
-                {displayPlace && (
+                {isPlacePending ? (
+                  <>
+                    <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
+                      장소 🔍 장소 정해지면 자동으로 정리해드릴게요
+                    </span>
+                    <span style={{ fontSize: fs(14, 12), lineHeight: 1.5, color: "rgba(255,255,255,0.84)" }}>
+                      캘린더 추후 등록
+                    </span>
+                  </>
+                ) : displayPlace && (
                   <>
                     <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
                       장소 {displayPlace.name}
@@ -837,7 +856,7 @@ export default function AiAssistantPane() {
               </span>
             </div>
             <span style={{ fontSize: fs(18, 14), fontWeight: 600, color: "#ffffff", fontFamily: "Pretendard Variable, Pretendard, sans-serif" }}>
-              {isAiLoading ? "분석 중..." : "일정 조율을 시작하겠습니다"}
+              {isAiLoading ? "분석 중..." : "필요할 때 도와드릴게요"}
             </span>
             <span
               style={{
@@ -851,7 +870,7 @@ export default function AiAssistantPane() {
             >
               {isAiLoading
                 ? "채팅 내용을 분석하여 모임원들의\n가능한 시간대를 정리하고 있어요."
-                : "메시지를 보내 일정 조율을 시작해보세요."}
+                : "대화 중 일정 조율이 필요해 보이면 자동으로 추천해드려요. 직접 요청하셔도 좋아요."}
             </span>
             <div style={{ width: "100%", height: 1, background: "rgba(255,255,255,0.19)" }} />
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

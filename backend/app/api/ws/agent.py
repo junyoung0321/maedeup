@@ -4,7 +4,7 @@ from datetime import datetime
 import json
 import logging
 import time
-from typing import Optional
+from typing import Any, Optional
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
@@ -18,6 +18,7 @@ from app.models.chat import ChatMessage, PaneType, Visibility
 from app.models.room import Room, RoomMember
 from app.models.user import User
 from app.repositories.messages import MessageReader
+from app.services import scheduling_round as sr
 from app.services.gemini import call_gemini
 from app.services.langgraph_pipeline import KST, _analyze_conversation, run_pipeline
 from app.services.quick_classify import quick_classify
@@ -61,6 +62,82 @@ async def _build_conversation_summary(messages: list[ChatMessage]) -> str:
         f"{recent_text}"
     )
     return (await call_gemini(prompt)).strip()
+
+
+async def _build_entities_from_timebar(room_id: str, db: Any, redis_client: aioredis.Redis | None) -> dict[str, Any]:
+    """Build date/time signals from the room TimeBar availability snapshot."""
+    if redis_client is None:
+        return {}
+
+    try:
+        room_pk = int(room_id)
+    except (TypeError, ValueError):
+        return {}
+
+    try:
+        member_result = await db.execute(
+            select(RoomMember.user_id).where(RoomMember.room_id == room_pk)
+        )
+        member_ids = {int(user_id) for user_id in member_result.scalars().all()}
+        if not member_ids:
+            return {}
+
+        availability = await sr.load_room_availability(redis_client, room_id=room_pk)
+        if not availability:
+            return {}
+
+        cells_by_date: dict[str, dict[int, set[int]]] = {}
+        for user_id, entries in availability.items():
+            uid = int(user_id)
+            if uid not in member_ids:
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                date = entry.get("date")
+                start = entry.get("start")
+                end = entry.get("end")
+                if not isinstance(date, str) or len(date) != 10:
+                    continue
+                try:
+                    start_idx = int(start)
+                    end_idx = int(end)
+                except (TypeError, ValueError):
+                    continue
+                if start_idx > end_idx:
+                    start_idx, end_idx = end_idx, start_idx
+                start_idx = max(0, start_idx)
+                end_idx = min(sr.TIME_SLOT_MAX - 1, end_idx)
+                by_slot = cells_by_date.setdefault(date, {})
+                for slot_idx in range(start_idx, end_idx + 1):
+                    by_slot.setdefault(slot_idx, set()).add(uid)
+
+        common_slots: list[tuple[str, int]] = []
+        for date in sorted(cells_by_date):
+            for slot_idx in sorted(cells_by_date[date]):
+                if cells_by_date[date][slot_idx] >= member_ids:
+                    common_slots.append((date, slot_idx))
+
+        if not common_slots:
+            return {}
+
+        date_hint, first_slot_idx = common_slots[0]
+        parsed_time_hint = sr._slot_idx_to_time(first_slot_idx)
+        date_hints = list(dict.fromkeys(date for date, _ in common_slots))
+        time_options = [
+            {"label": f"{date} {sr._slot_idx_to_time(slot_idx)}"}
+            for date, slot_idx in common_slots[:5]
+        ]
+
+        return {
+            "date_hint": date_hint,
+            "date_hints": date_hints,
+            "parsed_time_hint": parsed_time_hint,
+            "time_options": time_options,
+        }
+    except Exception:
+        logger.warning("TimeBar entity extraction failed room=%s", room_id, exc_info=True)
+        return {}
 
 
 async def _emit_auto_trigger_greeting(
@@ -127,7 +204,6 @@ async def _run_auto_trigger_pipeline(
         # 해결점 B: trigger_reason별 분석중 메시지 즉시 발행 (LLM 분석 전)
         # — 5~15초 LLM 대기 동안 사용자에게 "AI가 일하는 중"임을 알림.
         _GREETING_BY_REASON = {
-            "conclusion_detected": "결론이 나오는 것 같네요, 정리해드릴게요 ✨",
             "stalemate_judged": "대화가 길어지네요, AI가 정리해볼게요 🗓️",
             "all_members_selected": "모두 시간 선택 완료! 일정 확정해드릴게요 📅",
         }
@@ -189,6 +265,19 @@ async def _run_auto_trigger_pipeline(
         # 해결점 C: trigger_reason을 state에 주입 → LangGraph entry conditional edge가
         # 이걸 보고 시작 노드 결정 (stalemate/conclusion → entity_extraction, all_members → slot_filling).
         slot_context["trigger_reason"] = trigger_reason
+        if trigger_reason == "all_members_selected":
+            async with AsyncSessionLocal() as session:
+                timebar_data = await _build_entities_from_timebar(room_id, session, redis_client)
+            if timebar_data:
+                pre_extracted = slot_context.get("pre_extracted_signals")
+                if not isinstance(pre_extracted, dict):
+                    pre_extracted = {}
+                    slot_context["pre_extracted_signals"] = pre_extracted
+                pre_extracted.update(timebar_data)
+                slot_context["date_hint"] = timebar_data.get("date_hint")
+                slot_context["date_hints"] = timebar_data.get("date_hints", [])
+                slot_context["parsed_time_hint"] = timebar_data.get("parsed_time_hint")
+                slot_context["time_options"] = timebar_data.get("time_options", [])
 
         async with AsyncSessionLocal() as session:
             context = await MessageReader.load_agent_context(
@@ -220,6 +309,10 @@ async def _run_auto_trigger_pipeline(
             if result.get(key) is not None:
                 slot_context[key] = result[key]
         slot_context["message_count_since_last_trigger"] = 0
+
+        if result.get("status") == "conclusion_false_positive":
+            logger.info("[TRIGGER] conclusion_detected false positive, silent abort")
+            return
 
         for new_msg in result.get("new_assistant_messages", []):
             await _publish_agent_message(
@@ -750,6 +843,10 @@ async def agent_ws(
                     len(result.get("new_assistant_messages", [])),
                     result.get("intent"),
                 )
+
+                if result.get("status") == "conclusion_false_positive":
+                    logger.info("[TRIGGER] conclusion_detected false positive, silent abort")
+                    continue
 
                 # 파이프라인이 발행한 어시스턴트 메시지 — shared는 전체, private는 user 전용
                 for new_msg in result.get("new_assistant_messages", []):

@@ -96,6 +96,8 @@ class GraphState(TypedDict, total=False):
     # 자동 트리거 분기용 (해결점 C). LangGraph entry conditional edge가 이걸 보고 시작 노드 결정.
     # 값: "stalemate_judged" | "conclusion_detected" | "all_members_selected" | "direct_request" | None
     trigger_reason: str | None
+    # 부분 카드 발행 모드. 값: "time_only" | None
+    partial_mode: str | None
     # direct_request fast path 분류 결과 (해결점 E).
     # 값: "schedule" | "place" | "schedule+place" | "general" | None
     direct_request_kind: str | None
@@ -180,6 +182,7 @@ def _default_state(
         "conversation_summary": conversation_summary,
         "trigger_message_text": ctx.get("trigger_message_text"),
         "trigger_reason": ctx.get("trigger_reason"),
+        "partial_mode": ctx.get("partial_mode"),
         "direct_request_kind": ctx.get("direct_request_kind"),
         "social_recent": [],
         "social_summary": "",
@@ -2602,231 +2605,279 @@ async def slot_filling(state: GraphState) -> GraphState:
             return state
 
         _update_slot_state(state, state.get("extracted_entities", {}))
-
-        # 선호 정보 로드 및 반영 (대화 추출보다 우선)
         pref_data = await _load_meeting_preferences(state)
-        if pref_data.get("has_preferences") and state.get("intent") != "place_suggestion":
-            # 장소: 대화에서 추출 안 됐으면 선호 데이터 사용
-            if not state.get("place_hint") and pref_data.get("best_location"):
-                state["place_hint"] = pref_data["best_location"]
-                logger.info("[PREF] place_hint set from preferences: %s", pref_data["best_location"])
+        _enrich_with_preferences(state, pref_data)
 
-            # 인원수: 멤버 수 기반
-            if not state.get("headcount") and pref_data.get("total_members"):
-                state["headcount"] = pref_data["total_members"]
+        trigger = state.get("trigger_reason")
+        if trigger == "stalemate_judged":
+            return await _slot_filling_stalemate(state, pref_data)
+        if trigger == "conclusion_detected":
+            return await _slot_filling_conclusion(state, pref_data)
+        if trigger == "all_members_selected":
+            return await _slot_filling_all_members(state, pref_data)
+        return await _slot_filling_default(state, pref_data)
+    except Exception as exc:
+        return await _handle_node_exception("slot_filling", state, exc)
 
-            # meeting_type 기본값
-            if not state.get("meeting_type"):
-                state["meeting_type"] = "모임"
 
-            # 전원 입력 완료 + 대화에서 일정 관련 의도 감지 시 자동 제안 모드
-            if pref_data.get("all_submitted") and state.get("intent") in (
-                "meeting_schedule", "place_suggestion", None,
-            ):
-                # 공통 시간대가 있으면 date_hint로 활용 가능
-                common_times = pref_data.get("common_times", [])
-                if common_times:
-                    state["preference_common_times"] = common_times
+def _enrich_with_preferences(state: GraphState, pref_data: dict[str, Any]) -> None:
+    if pref_data.get("has_preferences") and state.get("intent") != "place_suggestion":
+        if not state.get("place_hint") and pref_data.get("best_location"):
+            state["place_hint"] = pref_data["best_location"]
+            logger.info("[PREF] place_hint set from preferences: %s", pref_data["best_location"])
+        if not state.get("headcount") and pref_data.get("total_members"):
+            state["headcount"] = pref_data["total_members"]
+        if not state.get("meeting_type"):
+            state["meeting_type"] = "모임"
+        if pref_data.get("all_submitted") and state.get("intent") in (
+            "meeting_schedule", "place_suggestion", None,
+        ):
+            common_times = pref_data.get("common_times", [])
+            if common_times:
+                state["preference_common_times"] = common_times
+            if not state.get("all_slots_filled"):
+                state["all_slots_filled"] = True
+                state["missing_slots"] = []
+                if state.get("place_hint"):
+                    logger.info("[PREF] All preferences submitted. Auto-suggesting with place=%s", state["place_hint"])
+                else:
+                    logger.info("[PREF] All preferences submitted. Auto-suggesting (no place hint, time-only)")
+        elif not pref_data.get("all_submitted"):
+            common_times = pref_data.get("common_times", [])
+            if common_times:
+                state["preference_common_times"] = common_times
 
-                # 모든 슬롯이 채워진 것으로 간주하고 자동 제안
-                if not state.get("all_slots_filled"):
-                    state["all_slots_filled"] = True
-                    state["missing_slots"] = []
-                    if state.get("place_hint"):
-                        logger.info("[PREF] All preferences submitted. Auto-suggesting with place=%s", state["place_hint"])
-                    else:
-                        logger.info("[PREF] All preferences submitted. Auto-suggesting (no place hint, time-only)")
-            elif not pref_data.get("all_submitted"):
-                common_times = pref_data.get("common_times", [])
-                if common_times:
-                    state["preference_common_times"] = common_times
+    state["is_location_first"] = (
+        bool(state.get("place_hint"))
+        and not bool(state.get("date_hint"))
+        and state.get("intent") != "meeting_schedule"
+    )
+    state["time_options"] = _build_flexible_time_options(state)
 
-        state["is_location_first"] = (
-            bool(state.get("place_hint"))
-            and not bool(state.get("date_hint"))
-            and state.get("intent") != "meeting_schedule"
-        )
-        state["time_options"] = _build_flexible_time_options(state)
 
-        # 교착 감지 → 선호 정보 기반 중재 메시지 + 투표 카드 생성
-        if state.get("conflict_detected") and state.get("conflict_options"):
-            conflict_type = state.get("conflict_type", "date")
-            options = state.get("conflict_options", [])
-            users = state.get("conflict_users", [])
+async def _slot_filling_stalemate(state: GraphState, pref_data: dict[str, Any]) -> GraphState:
+    if not (state.get("conflict_detected") and state.get("conflict_options")):
+        return await _slot_filling_default(state, pref_data)
 
-            # 선호 정보 기반 분석 메시지 구성
-            pref_data_for_conflict = await _load_meeting_preferences(state)
-            type_label = {"date": "날짜", "place": "장소", "time": "시간"}.get(conflict_type, "일정")
-            options_text = "과 ".join(f"**{o}**" for o in options)
+    conflict_type = state.get("conflict_type", "date")
+    options = state.get("conflict_options", [])
+    options_text = "과 ".join(f"**{o}**" for o in options)
+    mediation_msg = f"{options_text} 의견이 나뉘네요! 😊\n"
+    if pref_data.get("has_preferences"):
+        total = pref_data.get("total_members", 0)
+        common = pref_data.get("common_times", [])
+        if common and conflict_type in ("date", "time"):
+            mediation_msg += f"선호 정보를 보면 공통 가능 시간대는 {', '.join(common)}이에요.\n"
+        mediation_msg += f"총 {total}명의 선호를 고려해서 "
+    mediation_msg += "투표로 결정할까요?"
+    await _emit_assistant_message(state["room_id"], state["db"], mediation_msg, state)
 
-            mediation_msg = f"{options_text} 의견이 나뉘네요! 😊\n"
+    if conflict_type == "date" and len(options) >= 2:
+        state["date_hints"] = options
+    elif conflict_type == "place" and len(options) >= 2:
+        state["place_hint"] = options[0]
+    if not state.get("headcount"):
+        state["headcount"] = pref_data.get("total_members", 4)
+    if not state.get("meeting_type"):
+        state["meeting_type"] = "모임"
+    state["all_slots_filled"] = True
+    state["missing_slots"] = []
+    state["awaiting_user_reply"] = False
+    state["wait_timed_out"] = False
+    state["message_count_since_last_trigger"] = 0
+    state["status"] = "multi_date_vote"
+    logger.info("[CONFLICT] Mediation triggered: type=%s options=%s", conflict_type, options)
+    return state
 
-            if pref_data_for_conflict.get("has_preferences"):
-                total = pref_data_for_conflict.get("total_members", 0)
-                common = pref_data_for_conflict.get("common_times", [])
-                if common and conflict_type in ("date", "time"):
-                    mediation_msg += f"선호 정보를 보면 공통 가능 시간대는 {', '.join(common)}이에요.\n"
-                mediation_msg += f"총 {total}명의 선호를 고려해서 "
 
-            mediation_msg += "투표로 결정할까요?"
+async def _slot_filling_conclusion(state: GraphState, pref_data: dict[str, Any]) -> GraphState:
+    has_date = bool(state.get("date_hint"))
+    has_place = bool(state.get("place_hint"))
+    if not has_date and not has_place:
+        state["new_assistant_messages"] = []
+        state["awaiting_user_reply"] = False
+        state["wait_timed_out"] = False
+        state["message_count_since_last_trigger"] = 0
+        state["status"] = "conclusion_false_positive"
+        logger.info("[TRIGGER] conclusion_detected false positive, silent abort")
+        return state
 
-            await _emit_assistant_message(state["room_id"], state["db"], mediation_msg, state)
+    if not state.get("headcount"):
+        state["headcount"] = pref_data.get("total_members", 4)
+    if not state.get("meeting_type"):
+        state["meeting_type"] = "모임"
+    state["all_slots_filled"] = True
+    state["missing_slots"] = []
+    state["awaiting_user_reply"] = False
+    state["wait_timed_out"] = False
+    state["message_count_since_last_trigger"] = 0
+    state["status"] = "slots_filled" if has_date and has_place else "slots_filled_with_defaults"
+    return state
 
-            # 교착 옵션을 date_hints로 변환해서 투표 카드 생성으로 보냄
-            if conflict_type == "date" and len(options) >= 2:
-                state["date_hints"] = options
-            elif conflict_type == "place" and len(options) >= 2:
-                # 장소 교착은 장소 추천으로 양쪽 모두 검색
-                state["place_hint"] = options[0]  # 첫 번째 옵션으로 검색
 
-            if not state.get("headcount"):
-                state["headcount"] = pref_data_for_conflict.get("total_members", 4)
-            if not state.get("meeting_type"):
-                state["meeting_type"] = "모임"
-            state["all_slots_filled"] = True
-            state["missing_slots"] = []
-            state["awaiting_user_reply"] = False
-            state["wait_timed_out"] = False
-            state["message_count_since_last_trigger"] = 0
-            state["status"] = "multi_date_vote" if conflict_type == "date" else "slots_filled"
-            logger.info("[CONFLICT] Mediation triggered: type=%s options=%s", conflict_type, options)
-            return state
+async def _slot_filling_all_members(state: GraphState, pref_data: dict[str, Any]) -> GraphState:
+    best_location = pref_data.get("best_location")
+    if state.get("place_hint"):
+        state["status"] = "location_first_ready"
+        logger.info("[TRIGGER] all_members_selected with place_hint=%s", state.get("place_hint"))
+    elif best_location:
+        state["place_hint"] = best_location
+        state["status"] = "location_first_ready"
+        logger.info("[TRIGGER] all_members_selected using preference location=%s", best_location)
+    else:
+        state["partial_mode"] = "time_only"
+        state["status"] = "time_only_ready"
+        logger.info("[TRIGGER] all_members_selected time-only partial card")
 
-        # 여러 날짜 선택지 → 투표 카드 생성으로 바로 진행
-        multi_date_hints = state.get("date_hints") or []
-        if len(multi_date_hints) >= 2:
-            if not state.get("headcount"):
-                state["headcount"] = 4  # 기본값
-            if not state.get("meeting_type"):
-                state["meeting_type"] = "모임"
-            state["all_slots_filled"] = True
-            state["missing_slots"] = []
-            state["awaiting_user_reply"] = False
-            state["wait_timed_out"] = False
-            state["message_count_since_last_trigger"] = 0
-            state["status"] = "multi_date_vote"
-            logger.info("[TIMING] slot_filling (multi-date vote): %.2fs", time.monotonic() - _t0)
-            return state
+    if not state.get("headcount"):
+        state["headcount"] = pref_data.get("total_members", 4)
+    if not state.get("meeting_type"):
+        state["meeting_type"] = "모임"
+    state["all_slots_filled"] = True
+    state["missing_slots"] = []
+    state["awaiting_user_reply"] = False
+    state["wait_timed_out"] = False
+    state["message_count_since_last_trigger"] = 0
+    return state
 
-        has_date = bool(state.get("date_hint"))
-        has_place = bool(state.get("place_hint"))
-        has_headcount = state.get("headcount") is not None
 
-        # 장소만 있고 날짜 없음 → 장소 추천 먼저
-        if state.get("is_location_first"):
-            state["awaiting_user_reply"] = False
-            state["wait_timed_out"] = False
-            state["message_count_since_last_trigger"] = 0
-            state["status"] = "location_first_ready"
-            return state
+async def _slot_filling_default(state: GraphState, pref_data: dict[str, Any]) -> GraphState:
+    if state.get("conflict_detected") and state.get("conflict_options"):
+        return await _slot_filling_stalemate(state, pref_data)
 
-        # 모든 슬롯이 채워짐 → 투표 카드 생성으로 진행
-        if state["all_slots_filled"]:
-            state["awaiting_user_reply"] = False
-            state["wait_timed_out"] = False
-            state["message_count_since_last_trigger"] = 0
-            state["status"] = "slots_filled"
-            return state
+    multi_date_hints = state.get("date_hints") or []
+    if len(multi_date_hints) >= 2:
+        return _slot_filling_default_multi_date(state)
 
-        # date + place + headcount → 기본 meeting_type 채우고 진행
-        if has_date and has_place and has_headcount:
-            if not state.get("meeting_type"):
-                state["meeting_type"] = "모임"
+    has_date = bool(state.get("date_hint"))
+    has_place = bool(state.get("place_hint"))
+    has_headcount = state.get("headcount") is not None
+    if state.get("is_location_first"):
+        state["awaiting_user_reply"] = False
+        state["wait_timed_out"] = False
+        state["message_count_since_last_trigger"] = 0
+        state["status"] = "location_first_ready"
+        return state
+
+    if state["all_slots_filled"]:
+        state["awaiting_user_reply"] = False
+        state["wait_timed_out"] = False
+        state["message_count_since_last_trigger"] = 0
+        state["status"] = "slots_filled"
+        return state
+
+    if has_date and has_place and has_headcount:
+        return await _slot_filling_default_confirmed(state)
+    if has_date and has_place:
+        return await _slot_filling_default_with_defaults(state, has_headcount)
+    return await _slot_filling_default_partial(state, has_date, has_place)
+
+
+def _slot_filling_default_multi_date(state: GraphState) -> GraphState:
+    if not state.get("headcount"):
+        state["headcount"] = 4  # 기본값
+    if not state.get("meeting_type"):
+        state["meeting_type"] = "모임"
+    state["all_slots_filled"] = True
+    state["missing_slots"] = []
+    state["awaiting_user_reply"] = False
+    state["wait_timed_out"] = False
+    state["message_count_since_last_trigger"] = 0
+    state["status"] = "multi_date_vote"
+    return state
+
+
+async def _slot_filling_default_confirmed(state: GraphState) -> GraphState:
+    if not state.get("meeting_type"):
+        state["meeting_type"] = "모임"
+    date_display = state.get("date_hint", "")
+    place_display = state.get("place_hint", "")
+    confirm_msg = (
+        f"{date_display}에 {place_display}에서 {state.get('headcount', '')}명이요! 👍 "
+        "일정과 장소를 정리해드릴게요~"
+    )
+    await _emit_assistant_message(state["room_id"], state["db"], confirm_msg, state)
+    state["all_slots_filled"] = True
+    state["missing_slots"] = []
+    state["awaiting_user_reply"] = False
+    state["wait_timed_out"] = False
+    state["message_count_since_last_trigger"] = 0
+    state["status"] = "slots_filled"
+    return state
+
+
+async def _slot_filling_default_with_defaults(state: GraphState, has_headcount: bool) -> GraphState:
+    if not has_headcount:
+        state["headcount"] = 4  # 기본값
+    if not state.get("meeting_type"):
+        state["meeting_type"] = "모임"
+    date_display = state.get("date_hint", "")
+    place_display = state.get("place_hint", "")
+    confirm_msg = (
+        f"{date_display}에 {place_display}에서요! 👍 "
+        "일정과 장소를 정리해드릴게요~"
+    )
+    await _emit_assistant_message(state["room_id"], state["db"], confirm_msg, state)
+    state["all_slots_filled"] = True
+    state["missing_slots"] = []
+    state["awaiting_user_reply"] = False
+    state["wait_timed_out"] = False
+    state["message_count_since_last_trigger"] = 0
+    state["status"] = "slots_filled_with_defaults"
+    return state
+
+
+async def _slot_filling_default_partial(state: GraphState, has_date: bool, has_place: bool) -> GraphState:
+    if has_date and not has_place:
+        state["slot_filling_turns"] += 1
+        if state["slot_filling_turns"] <= 1:
             date_display = state.get("date_hint", "")
-            place_display = state.get("place_hint", "")
             confirm_msg = (
-                f"{date_display}에 {place_display}에서 {state.get('headcount', '')}명이요! 👍 "
-                "일정과 장소를 정리해드릴게요~"
-            )
-            await _emit_assistant_message(state["room_id"], state["db"], confirm_msg, state)
-            state["all_slots_filled"] = True
-            state["missing_slots"] = []
-            state["awaiting_user_reply"] = False
-            state["wait_timed_out"] = False
-            state["message_count_since_last_trigger"] = 0
-            state["status"] = "slots_filled"
-            return state
-
-        # date + place (headcount 없음) → 기본 headcount 채우고 진행
-        if has_date and has_place:
-            if not has_headcount:
-                state["headcount"] = 4  # 기본값
-            if not state.get("meeting_type"):
-                state["meeting_type"] = "모임"
-            date_display = state.get("date_hint", "")
-            place_display = state.get("place_hint", "")
-            confirm_msg = (
-                f"{date_display}에 {place_display}에서요! 👍 "
-                "일정과 장소를 정리해드릴게요~"
-            )
-            await _emit_assistant_message(state["room_id"], state["db"], confirm_msg, state)
-            state["all_slots_filled"] = True
-            state["missing_slots"] = []
-            state["awaiting_user_reply"] = False
-            state["wait_timed_out"] = False
-            state["message_count_since_last_trigger"] = 0
-            state["status"] = "slots_filled_with_defaults"
-            return state
-
-        # date만 있음 → 날짜 확인 메시지만 보내고, 나머지는 대화에서 자연스럽게 기다림
-        if has_date and not has_place:
-            state["slot_filling_turns"] += 1
-            # 첫 트리거에서만 확인 메시지 발행, 이후에는 조용히 대기
-            if state["slot_filling_turns"] <= 1:
-                date_display = state.get("date_hint", "")
-                confirm_msg = (
-                    f"{date_display} 좋아요! 👍 "
-                    "장소나 인원이 대화에서 나오면 제가 바로 정리해드릴게요~"
-                )
-                await _emit_assistant_message(state["room_id"], state["db"], confirm_msg, state)
-
-            state["awaiting_user_reply"] = False
-            state["wait_timed_out"] = False
-            state["message_count_since_last_trigger"] = 0
-            state["status"] = "partial_info_acknowledged"
-            return state
-
-        # place만 있음 → 장소 확인 + 추천 시작
-        # 단, intent가 meeting_schedule이면 일정 추천이 우선 — location-first 전환 금지.
-        if has_place and not has_date and state.get("intent") != "meeting_schedule":
-            state["slot_filling_turns"] += 1
-            if state["slot_filling_turns"] <= 1:
-                place_display = state.get("place_hint", "")
-                confirm_msg = (
-                    f"{place_display} 근처로요! 🔍 "
-                    "맛집 몇 개 찾아볼게요~ 날짜는 대화에서 나오면 정리할게요!"
-                )
-                await _emit_assistant_message(state["room_id"], state["db"], confirm_msg, state)
-            # location_first 모드로 전환 → place_recommendation 실행
-            state["is_location_first"] = True
-            state["awaiting_user_reply"] = False
-            state["wait_timed_out"] = False
-            state["message_count_since_last_trigger"] = 0
-            state["status"] = "partial_info_acknowledged"
-            state["all_slots_filled"] = True  # function_calling으로 진행
-            return state
-
-        # 아무 정보도 없음 → 최소한 확인 메시지는 보냄
-        if state.get("intent") in ("meeting_schedule", "place_suggestion"):
-            latest_content = ""
-            for msg in reversed(state["message_records"]):
-                if msg.get("role") == "user" and msg.get("content"):
-                    latest_content = msg["content"].strip()
-                    break
-            confirm_msg = (
-                f"네! \"{latest_content}\" 알겠어요 👍 "
-                "좀 더 구체적인 날짜나 장소가 나오면 바로 정리해드릴게요~"
+                f"{date_display} 좋아요! 👍 "
+                "장소나 인원이 대화에서 나오면 제가 바로 정리해드릴게요~"
             )
             await _emit_assistant_message(state["room_id"], state["db"], confirm_msg, state)
 
         state["awaiting_user_reply"] = False
         state["wait_timed_out"] = False
         state["message_count_since_last_trigger"] = 0
-        state["status"] = "no_slots_yet"
-        logger.info("[TIMING] slot_filling: %.2fs", time.monotonic() - _t0)
+        state["status"] = "partial_info_acknowledged"
         return state
-    except Exception as exc:
-        return await _handle_node_exception("slot_filling", state, exc)
+
+    if has_place and not has_date and state.get("intent") != "meeting_schedule":
+        state["slot_filling_turns"] += 1
+        if state["slot_filling_turns"] <= 1:
+            place_display = state.get("place_hint", "")
+            confirm_msg = (
+                f"{place_display} 근처로요! 🔍 "
+                "맛집 몇 개 찾아볼게요~ 날짜는 대화에서 나오면 정리할게요!"
+            )
+            await _emit_assistant_message(state["room_id"], state["db"], confirm_msg, state)
+        state["is_location_first"] = True
+        state["awaiting_user_reply"] = False
+        state["wait_timed_out"] = False
+        state["message_count_since_last_trigger"] = 0
+        state["status"] = "partial_info_acknowledged"
+        state["all_slots_filled"] = True  # function_calling으로 진행
+        return state
+
+    if state.get("intent") in ("meeting_schedule", "place_suggestion"):
+        latest_content = ""
+        for msg in reversed(state["message_records"]):
+            if msg.get("role") == "user" and msg.get("content"):
+                latest_content = msg["content"].strip()
+                break
+        confirm_msg = (
+            f"네! \"{latest_content}\" 알겠어요 👍 "
+            "좀 더 구체적인 날짜나 장소가 나오면 바로 정리해드릴게요~"
+        )
+        await _emit_assistant_message(state["room_id"], state["db"], confirm_msg, state)
+
+    state["awaiting_user_reply"] = False
+    state["wait_timed_out"] = False
+    state["message_count_since_last_trigger"] = 0
+    state["status"] = "no_slots_yet"
+    return state
 
 
 def _build_multi_date_slots(state: GraphState) -> list[dict[str, Any]]:
@@ -3004,9 +3055,14 @@ def _build_preference_time_slots(
 
 
 async def function_calling(state: GraphState) -> GraphState:
-    _t0 = time.monotonic()
     try:
         if _has_node_error(state):
+            return state
+        if state["status"] == "conclusion_false_positive":
+            return state
+        if state["status"] == "time_only_ready":
+            state["calendar_free_slots"] = []
+            state["place_search_results"] = []
             return state
         state["blocker_notification_payload"] = None
 
@@ -3123,6 +3179,8 @@ async def supervisor_validation(state: GraphState) -> GraphState:
     _t0 = time.monotonic()
     try:
         if _has_node_error(state):
+            return state
+        if state.get("status") in ("conclusion_false_positive", "time_only_ready"):
             return state
         errors: list[str] = []
         now = datetime.now(timezone.utc)
@@ -3555,6 +3613,44 @@ async def maedeup_card_creation(state: GraphState) -> GraphState:
     try:
         if _has_node_error(state):
             return state
+        if state.get("partial_mode") == "time_only":
+            parsed_time = state.get("parsed_time_hint")
+            date_value = state.get("date_hint")
+            selected_time = {}
+            if date_value and parsed_time:
+                import datetime as _dt
+                try:
+                    start_dt = _dt.datetime.fromisoformat(f"{date_value}T{parsed_time}:00")
+                    end_dt = start_dt + _dt.timedelta(hours=1)
+                    selected_time = {
+                        "label": f"{date_value} {parsed_time}",
+                        "start_at": start_dt.isoformat(),
+                        "end_at": end_dt.isoformat(),
+                    }
+                except Exception:
+                    selected_time = {"label": f"{date_value} {parsed_time}"}
+            elif date_value:
+                selected_time = {"label": date_value}
+            elif parsed_time:
+                selected_time = {"label": parsed_time}
+            payload = {
+                "type": "maedeup_card",
+                "date": date_value,
+                "time": parsed_time,
+                "place": None,
+                "place_pending": True,
+                "place_pending_message": "멤버들이 장소를 정하면 자동으로 정리해드릴게요!",
+                "headcount": state.get("headcount"),
+                "calendar_registered": False,
+                "title": f"{state.get('meeting_type') or '모임'} 매듭 카드",
+                "meeting_type": state.get("meeting_type") or "모임",
+                "date_hint": date_value or state.get("date") or "",
+                "selected_time": selected_time,
+                "selected_place": {},
+            }
+            state["maedeup_card_payload"] = payload
+            state["status"] = "completed"
+            return state
         selected_slot = state["calendar_free_slots"][0] if state.get("calendar_free_slots") else {}
         if state.get("confirmed_place"):
             selected_place = {
@@ -3807,12 +3903,14 @@ def _route_after_intent(state: GraphState) -> Literal["entity_extraction", "gene
 def _route_after_slot_filling(state: GraphState) -> Literal["slot_filling", "function_calling", "__end__"]:
     if _has_node_error(state):
         return END
+    status = state.get("status", "")
+    if status in ("conclusion_false_positive", "time_only_ready"):
+        return "function_calling"
     if state.get("is_location_first"):
         return "function_calling"
     if state.get("all_slots_filled"):
         return "function_calling"
     # 부분 정보만 있거나 정보가 없는 경우 → 질문 없이 종료
-    status = state.get("status", "")
     if status in ("no_slots_yet", "partial_info_acknowledged"):
         return END
     if state.get("wait_timed_out") or state.get("awaiting_user_reply"):
@@ -3825,6 +3923,12 @@ def _route_after_validation(
 ) -> Literal["vote_card_creation", "place_recommendation", "maedeup_card_creation", "__end__"]:
     if _has_node_error(state):
         return END
+    status = state.get("status")
+    if status == "conclusion_false_positive":
+        return END
+    if status == "time_only_ready":
+        state["partial_mode"] = "time_only"
+        return "maedeup_card_creation"
     if not state.get("validation_passed"):
         return END
 

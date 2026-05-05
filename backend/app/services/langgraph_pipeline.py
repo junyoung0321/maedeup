@@ -101,6 +101,9 @@ class GraphState(TypedDict, total=False):
     # direct_request fast path 분류 결과 (해결점 E).
     # 값: "schedule" | "place" | "schedule+place" | "general" | None
     direct_request_kind: str | None
+    # 해결점 N: 모든 후보 날짜가 거부되어 다음 주로 확장됐는지 표시.
+    # _slot_filling_stalemate가 이 플래그 보고 alternative vote 카드 발행.
+    expanded_to_next_week: bool
     # 방의 소셜(전체 공개) 채팅 최근 N개 + 그 이전 대화 요약.
     # entity_extraction / general_response 가 AI 패널 컨텍스트에 덧붙여 사용.
     social_recent: list[str]
@@ -2418,6 +2421,15 @@ async def entity_extraction(state: GraphState) -> GraphState:
                     state["extracted_entities"]["date_hint"] = filtered[0] if filtered else None
                     state["date_hints"] = filtered
                     state["date_hint"] = filtered[0] if filtered else None
+
+                # 해결점 N: 모든 후보가 거부됐으면 flag만 세움.
+                # 실제 alternatives는 _slot_filling_stalemate에서 사용자 선호를 보고 생성
+                # (다음주 평일/주말 카테고리 매칭 + 거부 set 제외).
+                if not filtered:
+                    state["expanded_to_next_week"] = True
+                    logger.info(
+                        "[DATE_HINTS] All candidates rejected, flagging for next-week expansion in slot_filling"
+                    )
             # 방어 검증: rejected에 있는 날짜는 conflict_options에서 자동 제거.
             # Gemini가 룰을 어겨 같은 날짜를 양쪽에 넣어도 시스템이 일관성 유지.
             if cleaned_rejected and state.get("conflict_options"):
@@ -2656,6 +2668,69 @@ def _enrich_with_preferences(state: GraphState, pref_data: dict[str, Any]) -> No
 
 
 async def _slot_filling_stalemate(state: GraphState, pref_data: dict[str, Any]) -> GraphState:
+    # 해결점 N: 거부 후 다음 주로 확장된 케이스 — 사용자 선호에 맞는 다음주 전체 후보 생성
+    if state.get("expanded_to_next_week"):
+        common_times = pref_data.get("common_times") or []
+        prefers_weekday = any(str(t).startswith("평일") for t in common_times)
+        prefers_weekend = any(str(t).startswith("주말") for t in common_times)
+        # 선호 미입력 시 기본값: 둘 다 가능 (보수적)
+        if not prefers_weekday and not prefers_weekend:
+            prefers_weekday = True
+            prefers_weekend = True
+
+        rejected_set = {
+            r.get("date") for r in (state.get("rejected_dates") or [])
+            if isinstance(r, dict) and isinstance(r.get("date"), str)
+        }
+
+        # 오늘부터 시작 — 가까운 평일/주말부터 후보 제시. 거부 set 제외.
+        today = datetime.now(KST).date()
+
+        # 오늘부터 21일 스캔 — 거부 후 가까운 후보 우선, 다 차면 종료
+        candidates: list[str] = []
+        for offset in range(21):
+            d = today + timedelta(days=offset)
+            is_weekend = d.weekday() >= 5
+            if is_weekend and not prefers_weekend:
+                continue
+            if not is_weekend and not prefers_weekday:
+                continue
+            iso = d.strftime("%Y-%m-%d")
+            if iso in rejected_set:
+                continue
+            candidates.append(iso)
+            if len(candidates) >= 5:  # vote UX: 최대 5개
+                break
+
+        if not candidates:
+            logger.info("[STALEMATE] No alternatives match user preference, fallback to default")
+            state.pop("expanded_to_next_week", None)
+            return await _slot_filling_default(state, pref_data)
+
+        state["date_hints"] = candidates
+        state["date_hint"] = candidates[0]
+
+        rejected_summary = ", ".join(sorted(rejected_set))
+        narrator = (
+            "안 되는 날짜들 빼고 가까운 일정으로 추천드릴게요! 📅"
+        )
+        await _emit_assistant_message(state["room_id"], state["db"], narrator, state)
+        if not state.get("headcount"):
+            state["headcount"] = pref_data.get("total_members", 4)
+        if not state.get("meeting_type"):
+            state["meeting_type"] = "모임"
+        state["all_slots_filled"] = True
+        state["missing_slots"] = []
+        state["awaiting_user_reply"] = False
+        state["wait_timed_out"] = False
+        state["message_count_since_last_trigger"] = 0
+        state["status"] = "multi_date_vote"
+        logger.info(
+            "[STALEMATE] Generated alternatives from today (rejected=%s, candidates=%s, weekday_pref=%s, weekend_pref=%s)",
+            rejected_summary, candidates, prefers_weekday, prefers_weekend,
+        )
+        return state
+
     if not (state.get("conflict_detected") and state.get("conflict_options")):
         return await _slot_filling_default(state, pref_data)
 
@@ -3055,6 +3130,7 @@ def _build_preference_time_slots(
 
 
 async def function_calling(state: GraphState) -> GraphState:
+    _t0 = time.monotonic()
     try:
         if _has_node_error(state):
             return state
@@ -4028,6 +4104,15 @@ def _route_after_validation(
         # TimeBar로 시간 확정됨, 장소 추천만
         return "place_recommendation"
 
+    # 해결점 E A1: direct_request로 place 분류된 경우 vote 건너뛰고 place_recommendation
+    direct_kind = state.get("direct_request_kind")
+    if direct_kind == "place":
+        return "place_recommendation"
+
+    # 해결점 E A2: 이미 일정 확정된 상태면 vote_card 다시 만들 필요 없음 → place_recommendation
+    if state.get("confirmed_date") and state.get("place_search_results"):
+        return "place_recommendation"
+
     if state.get("intent") == "place_suggestion" and state.get("place_search_results"):
         return "place_recommendation"
     # 선호 데이터 기반 자동 제안: 투표 카드를 먼저 생성 (시간대 투표)
@@ -4041,12 +4126,12 @@ def _route_after_validation(
 def _route_after_vote_card_creation(state: GraphState) -> Literal["place_recommendation", "maedeup_card_creation", "__end__"]:
     if _has_node_error(state):
         return END
+    # 사용자가 이미 시간/장소를 확정한 상태에서 진입한 경우 (vote 후 별도 트리거)
     if state.get("confirmed_place"):
         return "maedeup_card_creation"
-    if state.get("place_search_results"):
-        return "place_recommendation"
-    # 일정 추천 카드를 보여준 뒤 사용자가 확정할 때까지 대기.
-    # 장소 추천은 사용자가 시간을 확정한 뒤 별도 메시지로 트리거됨.
+    # 일반 흐름: vote_card만 발행하고 사용자 vote 대기.
+    # 사용자가 vote → confirm endpoint가 새 run_pipeline 실행 시
+    # confirmed_date/place 박아 보내면 그때 maedeup으로 진입.
     return END
 
 
@@ -4054,6 +4139,14 @@ def _route_after_place_recommendation(state: GraphState) -> Literal["maedeup_car
     if _has_node_error(state):
         return END
     if state.get("is_location_first") and not state.get("date_hint"):
+        return END
+    # 사용자가 이미 장소를 확정한 상태에서 진입한 경우만 매듭 카드로 직진
+    if state.get("confirmed_place"):
+        return "maedeup_card_creation"
+    # direct_request로 진입한 경우 — vote_card 패턴과 일관되게 사용자 confirm 대기.
+    # 사용자가 place 카드에서 "이 장소로 확정" 클릭 → confirm endpoint가 별도 trigger로
+    # maedeup_card_creation 발화시킴. 자동 진행하면 confirmed_date와 데이터 불일치 가능.
+    if state.get("trigger_reason") == "direct_request":
         return END
     return "maedeup_card_creation"
 

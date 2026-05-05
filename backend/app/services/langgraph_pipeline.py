@@ -96,6 +96,9 @@ class GraphState(TypedDict, total=False):
     # 자동 트리거 분기용 (해결점 C). LangGraph entry conditional edge가 이걸 보고 시작 노드 결정.
     # 값: "stalemate_judged" | "conclusion_detected" | "all_members_selected" | "direct_request" | None
     trigger_reason: str | None
+    # direct_request fast path 분류 결과 (해결점 E).
+    # 값: "schedule" | "place" | "schedule+place" | "general" | None
+    direct_request_kind: str | None
     # 방의 소셜(전체 공개) 채팅 최근 N개 + 그 이전 대화 요약.
     # entity_extraction / general_response 가 AI 패널 컨텍스트에 덧붙여 사용.
     social_recent: list[str]
@@ -177,6 +180,7 @@ def _default_state(
         "conversation_summary": conversation_summary,
         "trigger_message_text": ctx.get("trigger_message_text"),
         "trigger_reason": ctx.get("trigger_reason"),
+        "direct_request_kind": ctx.get("direct_request_kind"),
         "social_recent": [],
         "social_summary": "",
         "seen_message_ids": seen_ids,
@@ -3778,10 +3782,11 @@ def _route_from_start(state: GraphState) -> Literal["entity_extraction", "slot_f
 
     - stalemate_judged / conclusion_detected: 의도 자명 → 노드3 entity_extraction부터 (~1s 절약)
     - all_members_selected: TimeBar 데이터 주입됨 → 노드4 slot_filling부터 (~3s 절약)
-    - direct_request 또는 미지정: 기존 노드1 intent_detection 경로 (해결점 E 적용 전 fallback)
+    - direct_request: quick_classify가 이미 general을 걸렀으므로 노드3 entity_extraction부터
+    - 미지정: 기존 노드1 intent_detection 경로
     """
     trigger = state.get("trigger_reason")
-    if trigger in {"stalemate_judged", "conclusion_detected"}:
+    if trigger in {"stalemate_judged", "conclusion_detected", "direct_request"}:
         return "entity_extraction"
     if trigger == "all_members_selected":
         return "slot_filling"

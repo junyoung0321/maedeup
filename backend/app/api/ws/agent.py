@@ -20,6 +20,7 @@ from app.models.user import User
 from app.repositories.messages import MessageReader
 from app.services.gemini import call_gemini
 from app.services.langgraph_pipeline import KST, _analyze_conversation, run_pipeline
+from app.services.quick_classify import quick_classify
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -687,6 +688,27 @@ async def agent_ws(
                         "default_place_hint": slot_context.get("default_place_hint") or "서울 강남",
                     })
 
+                qc = await quick_classify(content)
+                if qc["kind"] == "general":
+                    prompt = (
+                        "사용자의 메시지에 짧고 자연스럽게 답하세요. "
+                        "모임 일정이나 장소 조율이 필요한 요청이면 사용자가 다시 구체적으로 말할 수 있게 안내하세요.\n\n"
+                        f"사용자: {content}"
+                    )
+                    reply = (await call_gemini(prompt)).strip()
+                    if not reply:
+                        reply = "일정이나 장소를 정리하고 싶으면 편하게 말해주세요."
+                    await _emit_auto_trigger_greeting(
+                        r,
+                        room_id,
+                        shared_channel,
+                        reply,
+                    )
+                    continue
+
+                slot_context["trigger_reason"] = "direct_request"
+                slot_context["direct_request_kind"] = qc["kind"]
+
                 async with AsyncSessionLocal() as session:
                     context = await MessageReader.load_agent_context(
                         session=session,
@@ -694,9 +716,13 @@ async def agent_ws(
                         viewer_user_id=user_id_check,
                     )
 
-                    result = await run_pipeline(
-                        room_id, context, session, slot_context=slot_context
-                    )
+                    try:
+                        result = await run_pipeline(
+                            room_id, context, session, slot_context=slot_context
+                        )
+                    finally:
+                        slot_context.pop("trigger_reason", None)
+                        slot_context.pop("direct_request_kind", None)
 
                 # 슬롯 컨텍스트 업데이트 (다음 메시지에서 이어받기)
                 for key in (

@@ -123,6 +123,22 @@ async def _run_auto_trigger_pipeline(
         redis_client = None
 
     try:
+        # 해결점 B: trigger_reason별 분석중 메시지 즉시 발행 (LLM 분석 전)
+        # — 5~15초 LLM 대기 동안 사용자에게 "AI가 일하는 중"임을 알림.
+        _GREETING_BY_REASON = {
+            "conclusion_detected": "결론이 나오는 것 같네요, 정리해드릴게요 ✨",
+            "stalemate_judged": "대화가 길어지네요, AI가 정리해볼게요 🗓️",
+            "all_members_selected": "모두 시간 선택 완료! 일정 확정해드릴게요 📅",
+        }
+        greeting = _GREETING_BY_REASON.get(trigger_reason)
+        if greeting:
+            await _emit_auto_trigger_greeting(
+                redis_client,
+                room_id,
+                shared_channel,
+                greeting,
+            )
+
         try:
             async with AsyncSessionLocal() as session:
                 analysis = await _analyze_conversation(
@@ -159,21 +175,6 @@ async def _run_auto_trigger_pipeline(
         except Exception:
             logger.warning("Meeting summary extraction failed for room %s", room_id, exc_info=True)
 
-        if trigger_reason == "all_members_selected":
-            await _emit_auto_trigger_greeting(
-                redis_client,
-                room_id,
-                shared_channel,
-                "모두 시간대를 선택했어요! 일정을 조율해볼게요 📅",
-            )
-        elif trigger_reason in {"stalemate_judged", "conclusion_detected"}:
-            await _emit_auto_trigger_greeting(
-                redis_client,
-                room_id,
-                shared_channel,
-                "대화에서 일정 조율이 필요해 보여요! 제가 도와드릴게요 🗓️",
-            )
-
         if trigger_intent not in {"meeting_schedule", "place_suggestion"}:
             return
 
@@ -184,6 +185,9 @@ async def _run_auto_trigger_pipeline(
 
         # 해결점 G: 트리거 시점 메시지 원문을 state에 박아 intent_detection race 방지.
         slot_context["trigger_message_text"] = trigger_content
+        # 해결점 C: trigger_reason을 state에 주입 → LangGraph entry conditional edge가
+        # 이걸 보고 시작 노드 결정 (stalemate/conclusion → entity_extraction, all_members → slot_filling).
+        slot_context["trigger_reason"] = trigger_reason
 
         async with AsyncSessionLocal() as session:
             context = await MessageReader.load_agent_context(

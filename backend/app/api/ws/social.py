@@ -541,24 +541,10 @@ async def _detect_and_notify_intent(
         cooldown_key = f"social_judge_cooldown:{room_id}"
         agent_channel = f"agent:{room_id}"
 
-        # ── 배너 알림: 모임 관련 의도면 프론트로 발행 ───────────────────
-        if (
-            result["intent"] in _NOTIFIABLE_INTENTS
-            and result["confidence"] >= 0.6
-        ):
-            await _publish_social_message(
-                r,
-                channel,
-                json.dumps(
-                    {
-                        "type": "intent_detected",
-                        "intent": result["intent"],
-                        "confidence": result["confidence"],
-                        "method": result["method"],
-                        "trigger_message_id": trigger_message_id,
-                    }
-                ),
-            )
+        # 해결점 B: intent_detected 배너 발행 제거.
+        # 프론트가 렌더하지 않는 dead code였고, 게이트2/4의 5~15초 LLM 대기 동안엔
+        # 어차피 무음이라 UX 효과 0. agent.py가 trigger_reason별 "분석 중" 메시지를
+        # AI 패널에 즉시 발행하는 방식으로 통합됨.
 
         # ── 결론 감지: 명시적 합의 패턴 → 즉시 정리 카드 ────────────────
         if _is_conclusion(content) and result["intent"] in _NOTIFIABLE_INTENTS:

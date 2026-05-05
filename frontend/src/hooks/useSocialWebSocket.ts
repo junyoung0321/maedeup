@@ -5,14 +5,6 @@ import type { AiTriggerIntent, ChatMessagePayload } from "@/types";
 
 export type { ChatMessagePayload };
 
-export interface IntentDetectedPayload {
-  type: "intent_detected";
-  intent: AiTriggerIntent;
-  confidence: number;
-  method: "rag" | "gemini" | "default";
-  trigger_message_id: number;
-}
-
 export interface ReminderPayload {
   type: "reminder";
   message: string;
@@ -221,21 +213,6 @@ function isMeetingConfirmedPayload(data: unknown): data is MeetingConfirmedPaylo
   );
 }
 
-function isIntentDetectedPayload(data: unknown): data is IntentDetectedPayload {
-  if (!data || typeof data !== "object") {
-    return false;
-  }
-
-  const candidate = data as Partial<IntentDetectedPayload>;
-  return (
-    candidate.type === "intent_detected" &&
-    typeof candidate.intent === "string" &&
-    typeof candidate.confidence === "number" &&
-    typeof candidate.method === "string" &&
-    typeof candidate.trigger_message_id === "number"
-  );
-}
-
 function isReminderPayload(data: unknown): data is ReminderPayload {
   if (!data || typeof data !== "object") {
     return false;
@@ -315,7 +292,6 @@ function getReconnectDelay(attempt: number): number {
 
 export function useSocialWebSocket(roomId: string, sender: string) {
   const [messages, setMessages] = useState<ChatMessagePayload[]>([]);
-  const [detectedIntent, setDetectedIntent] = useState<IntentDetectedPayload | null>(null);
   const [peerSelections, setPeerSelections] = useState<Record<string, PeerSelection>>({});
   const [peerTimeSelections, setPeerTimeSelections] = useState<Record<string, PeerTimeSelection>>({});
   // user_id → 해당 유저가 표시한 불가능 날짜 배열. 내 것과 남 것을 한 dict에 담음.
@@ -362,7 +338,6 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     let isActive = true;
 
     setMessages([]);
-    setDetectedIntent(null);
 
     const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     const wsBase = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
@@ -505,11 +480,6 @@ export function useSocialWebSocket(roomId: string, sender: string) {
         try {
           data = JSON.parse(event.data as string);
         } catch {
-          return;
-        }
-
-        if (isIntentDetectedPayload(data)) {
-          setDetectedIntent(data);
           return;
         }
 
@@ -813,10 +783,6 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     [],
   );
 
-  const dismissIntent = useCallback(() => {
-    setDetectedIntent(null);
-  }, []);
-
   const clearFinalizationProposal = useCallback(() => {
     setFinalizationProposal(null);
     setFinalizationPending(false);
@@ -832,8 +798,6 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     myTimeSelection,
     myDateSelection,
     status,
-    detectedIntent,
-    dismissIntent,
     peerSelections,
     peerTimeSelections,
     finalizationProposal,

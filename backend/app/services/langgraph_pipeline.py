@@ -93,6 +93,9 @@ class GraphState(TypedDict, total=False):
     # 트리거 발화 시점의 user 메시지 원문 (해결점 G).
     # intent_detection이 latest_user_message 대신 이 값을 우선 사용 → race condition 방지.
     trigger_message_text: str | None
+    # 자동 트리거 분기용 (해결점 C). LangGraph entry conditional edge가 이걸 보고 시작 노드 결정.
+    # 값: "stalemate_judged" | "conclusion_detected" | "all_members_selected" | "direct_request" | None
+    trigger_reason: str | None
     # 방의 소셜(전체 공개) 채팅 최근 N개 + 그 이전 대화 요약.
     # entity_extraction / general_response 가 AI 패널 컨텍스트에 덧붙여 사용.
     social_recent: list[str]
@@ -173,6 +176,7 @@ def _default_state(
         "recent_messages": recent_messages,
         "conversation_summary": conversation_summary,
         "trigger_message_text": ctx.get("trigger_message_text"),
+        "trigger_reason": ctx.get("trigger_reason"),
         "social_recent": [],
         "social_summary": "",
         "seen_message_ids": seen_ids,
@@ -3769,6 +3773,21 @@ async def memory_extraction(state: GraphState) -> GraphState:
         return state
 
 
+def _route_from_start(state: GraphState) -> Literal["entity_extraction", "slot_filling", "intent_detection"]:
+    """해결점 C: trigger_reason 기반 LangGraph 진입 분기.
+
+    - stalemate_judged / conclusion_detected: 의도 자명 → 노드3 entity_extraction부터 (~1s 절약)
+    - all_members_selected: TimeBar 데이터 주입됨 → 노드4 slot_filling부터 (~3s 절약)
+    - direct_request 또는 미지정: 기존 노드1 intent_detection 경로 (해결점 E 적용 전 fallback)
+    """
+    trigger = state.get("trigger_reason")
+    if trigger in {"stalemate_judged", "conclusion_detected"}:
+        return "entity_extraction"
+    if trigger == "all_members_selected":
+        return "slot_filling"
+    return "intent_detection"
+
+
 def _route_after_intent(state: GraphState) -> Literal["entity_extraction", "general_response"]:
     """general 의도이고 슬롯 필링 진행 중이 아니면 일반 응답으로 분기."""
     if _has_node_error(state):
@@ -3796,11 +3815,23 @@ def _route_after_slot_filling(state: GraphState) -> Literal["slot_filling", "fun
     return "slot_filling"
 
 
-def _route_after_validation(state: GraphState) -> Literal["vote_card_creation", "place_recommendation", "__end__"]:
+def _route_after_validation(
+    state: GraphState,
+) -> Literal["vote_card_creation", "place_recommendation", "maedeup_card_creation", "__end__"]:
     if _has_node_error(state):
         return END
     if not state.get("validation_passed"):
         return END
+
+    # 해결점 C: trigger_reason 기반 라우팅 차별화
+    trigger = state.get("trigger_reason")
+    if trigger == "conclusion_detected":
+        # 결론 합의됐으니 vote/place 스킵, 매듭 카드 직행
+        return "maedeup_card_creation"
+    if trigger == "all_members_selected":
+        # TimeBar로 시간 확정됨, 장소 추천만
+        return "place_recommendation"
+
     if state.get("intent") == "place_suggestion" and state.get("place_search_results"):
         return "place_recommendation"
     # 선호 데이터 기반 자동 제안: 투표 카드를 먼저 생성 (시간대 투표)
@@ -3844,7 +3875,16 @@ def _build_graph() -> Any:
     graph.add_node("maedeup_card_creation", maedeup_card_creation)
     graph.add_node("memory_extraction", memory_extraction)
 
-    graph.add_edge(START, "intent_detection")
+    # 해결점 C: trigger_reason 기반 진입 분기 (노드1 스킵 가능)
+    graph.add_conditional_edges(
+        START,
+        _route_from_start,
+        {
+            "entity_extraction": "entity_extraction",
+            "slot_filling": "slot_filling",
+            "intent_detection": "intent_detection",
+        },
+    )
     graph.add_conditional_edges(
         "intent_detection",
         _route_after_intent,
@@ -3871,6 +3911,7 @@ def _build_graph() -> Any:
         {
             "vote_card_creation": "vote_card_creation",
             "place_recommendation": "place_recommendation",
+            "maedeup_card_creation": "maedeup_card_creation",  # 해결점 C: conclusion 직행
             END: END,
         },
     )

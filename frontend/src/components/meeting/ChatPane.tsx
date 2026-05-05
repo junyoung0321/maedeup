@@ -89,8 +89,6 @@ export default function ChatPane() {
     sendDateSelection,
     sendTimeSelection,
     status,
-    detectedIntent,
-    dismissIntent,
     peerSelections,
     peerTimeSelections,
     unavailabilityByUser,

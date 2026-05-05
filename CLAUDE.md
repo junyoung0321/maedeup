@@ -1,5 +1,17 @@
 # 매듭 (Maedeup)
 
+## 진행 중인 작업
+세션 시작 시 `docs/handoff/` 폴더의 가장 최근 문서를 먼저 확인하세요.
+**현재 task**: 시연 루프 검증 — 감사 해결점 A~M 코드 적용 완료, 브라우저 시연 ACT 1~5 검증 진행 중.
+다음 세션 시작 지점:
+1. ACT 3 재확인 (vote_card → confirm_time → Option A 흐름)
+2. 채팅방 "안되는 날짜" 미적용 버그 디버깅
+참고:
+- `docs/handoff/2026-05-06-demo-loop-progress.md` (최신 — 미커밋 변경 + 다음 스텝)
+- `docs/handoff/2026-05-05-architecture-audit-progress.md`
+- `docs/handoff/audit-findings.md`
+- `docs/handoff/diagrams/`
+
 ## Project
 AI 모임 조율 플랫폼 (졸업 프로젝트). 채팅방에서 일정/장소 교착 감지 → AI 자동 개입 → 투표/장소추천 카드 생성.
 현재 상태: MVP 개발 중 (LangGraph 8노드 파이프라인 완성)
@@ -37,6 +49,17 @@ frontend/
 - 백엔드 반영: `docker restart maedeup-api` (볼륨 마운트, 자동 반영)
 - Intent seed: `curl -X POST http://localhost:8000/api/v1/intents/seed`
 - 배포: `/ship` → `/land-and-deploy`
+
+## 다이어그램 작업 규칙
+- **Source of truth**: `docs/handoff/diagrams/*.mmd` (Mermaid 파일)
+- **수정 흐름**: .mmd 직접 편집 → diff 보여주기 → 사용자 승인 → `generate_diagram` MCP로 FigJam 렌더
+- **FigJam은 build artifact**: 보드에서 직접 수정 금지, 항상 .mmd 파일에서만 수정
+- **파일 분리 원칙**: 큰 다이어그램 1장 누적 금지. 주제별 파일 분리:
+  - `00-overview.mmd` — 전체 시퀀스 (큰 그림)
+  - `01-trigger-rules.mmd` — 트리거 규칙 + 4게이트
+  - `02-langgraph-flow.mmd` — 9노드 체인
+  - `03-intent-classifier.mmd` — classify_intent 내부
+- 새 다이어그램 추가 시 번호 이어서 (`04-...`, `05-...`)
 
 ## gstack
 웹 브라우징은 /browse 사용. mcp__claude-in-chrome__* 도구 사용 금지.

@@ -1,0 +1,119 @@
+%% ─────────────────────────────────────────────────────────────────────
+%% 매듭 — 트리거별 라우팅 통합 (해결점 C 강화 + E + I + J 반영)
+%% ─────────────────────────────────────────────────────────────────────
+%% 갱신일: 2026-05-06
+%% 표시 범위: trigger_reason → 진입 분기 → 슬롯 분기 → 카드 분기
+%%
+%% 핵심 변경 (이전 04 → 본 버전):
+%%   1) 노드1·2 완전 제거 (해결점 C 강화) — 모든 자동 트리거가 노드1 스킵
+%%   2) direct_request는 quick_classify로 별도 단축 경로 (해결점 E)
+%%   3) 노드4 slot_filling 트리거별 4분기 (해결점 I)
+%%   4) 노드9 partial_mode 분기 (해결점 I·J)
+%%   5) 모든 카드 페이로드에 meeting_id 포함 (해결점 J)
+%%   6) 카드 수동 입력 patch 엔드포인트 (해결점 K)
+%%
+%% 시간 절약 (각 트리거 vs 기존):
+%%   stalemate_judged: ~1초 (노드1 스킵)
+%%   conclusion_detected: ~1초 (노드1 스킵)
+%%   all_members_selected: ~3초 (노드1+3 스킵 + TimeBar 데이터 주입)
+%%   direct_request: 5~15초 → 3~5초 (단축 경로)
+%%
+%% 풀 노드 흐름 → 02-langgraph-flow.mmd 참고
+%% audit-findings.md "해결점 C/E/I/J/K" 참조
+%% ─────────────────────────────────────────────────────────────────────
+
+flowchart TB
+  TRIG_IN["agent.py 진입 · trigger_reason 식별"]
+  TRIG_IN --> ROUTE{"진입 라우터"}
+
+  %% ── 자동 트리거: run_pipeline 풀체인 ──────────────────────────
+  ROUTE -->|"stalemate_judged / conclusion_detected / all_members_selected"| AUTO_PRE["사전 처리 · _analyze_conversation 1회 (해결점 D) · GraphState 초기화 · trigger_reason + trigger_message_text 주입 (해결점 C·G)"]
+  AUTO_PRE --> ENTRY_LG{"LangGraph entry conditional edge (해결점 C 강화)"}
+
+  ENTRY_LG -->|"stalemate (judge 이미 분류, ~1s 절약)"| N3["노드3 entity_extraction"]
+  ENTRY_LG -->|"conclusion (~1s 절약)"| N3
+  ENTRY_LG -->|"all_members (노드3 스킵, ~3s 절약, TimeBar 데이터)"| N4["노드4 slot_filling"]
+  ENTRY_LG -->|"unknown trigger_reason"| ERR(["ValueError 명시적 에러"])
+
+  %% ── direct_request 단축 경로 (해결점 E) ───────────────────────
+  ROUTE -->|"direct_request"| QC["quick_classify · 정규식 → Gemini fallback ~1s"]
+  QC --> QC_KIND{"분류 결과"}
+  QC_KIND -->|"general"| GR(["general_response 직행 ~2s"])
+  QC_KIND -->|"schedule"| SC_S["단축 schedule · 노드3 → 노드7"]
+  QC_KIND -->|"place"| SC_P["단축 place · 노드3 → 노드8"]
+  QC_KIND -->|"schedule+place"| SC_SP["단축 둘 다 · 노드3 → 노드7 → 노드8 → 노드9"]
+
+  N3 --> N4
+  %% 단축 경로는 N3에서 노드4 거치지 않고 N7/N8/N9로 직행
+  SC_S --> N3_SHORT_S["노드3 (단축 schedule)"]
+  SC_P --> N3_SHORT_P["노드3 (단축 place)"]
+  SC_SP --> N3_SHORT_SP["노드3 (단축 schedule+place)"]
+  N3_SHORT_S --> N7
+  N3_SHORT_P --> N8
+  N3_SHORT_SP --> N7
+
+  %% ── 노드4 slot_filling 트리거별 분기 (해결점 I) ───────────────
+  N4 --> N4_TRIGGER{"trigger_reason 분기 (해결점 I)"}
+
+  N4_TRIGGER -->|"stalemate_judged"| N4_STALE["conflict 중재 + conflict_options→date_hints"]
+  N4_STALE --> N4_OUT_STALE["status=multi_date_vote"]
+
+  N4_TRIGGER -->|"conclusion_detected"| N4_CONC{"슬롯 상태 (Q1)"}
+  N4_CONC -->|"date+place"| N4_CONC_FULL["status=slots_filled"]
+  N4_CONC -->|"한쪽만"| N4_CONC_PART["디폴트 채움 status=slots_filled_with_defaults"]
+  N4_CONC -->|"슬롯 0 (false positive)"| N4_FP(["status=conclusion_false_positive · silent abort · 카드 0건"])
+
+  N4_TRIGGER -->|"all_members_selected"| N4_ALL{"장소 슬롯 (Q2)"}
+  N4_ALL -->|"place 있음"| N4_ALL_PLACE["status=location_first_ready"]
+  N4_ALL -->|"선호 best_location"| N4_ALL_PREF["place_hint 보강 status=location_first_ready"]
+  N4_ALL -->|"장소 없음"| N4_ALL_TIME["status=time_only_ready partial_mode=time_only"]
+
+  N4_OUT_STALE --> N6_BR
+  N4_CONC_FULL --> N6_BR
+  N4_CONC_PART --> N6_BR
+  N4_ALL_PLACE --> N6_BR
+  N4_ALL_PREF --> N6_BR
+  N4_ALL_TIME --> N6_BR
+
+  %% ── 노드5 + 노드6 라우팅 (해결점 C+I) ─────────────────────────
+  N6_BR{"노드5·6 결과 → 라우팅 분기"}
+
+  N6_BR -->|"conclusion_detected (정상)"| N9_NORMAL["노드9 maedeup_card · GCal insert · meeting_id 포함 (해결점 J)"]
+  N6_BR -->|"all_members + place"| N8_AM["노드8 place_recommendation · meeting_id 포함 (해결점 J)"]
+  N6_BR -->|"time_only_ready (해결점 I)"| N9_PARTIAL["노드9 partial_mode · place=null · place_pending=true · GCal 등록 보류 · meeting_id (해결점 J)"]
+  N6_BR -->|"vote 가능 (stalemate / 단축 schedule)"| N7["노드7 vote_card · meeting_id 포함 (해결점 J)"]
+  N6_BR -->|"intent=place / 단축 place"| N8["노드8 place_recommendation · meeting_id 포함 (해결점 J)"]
+
+  N7 --> N9_NORMAL
+  N8 --> N9_NORMAL
+  N8_AM --> N9_NORMAL
+  SC_SP -.->|"schedule+place 합류"| N9_NORMAL
+
+  %% ── emit + 프론트 ─────────────────────────────────────────────
+  N9_NORMAL --> N10["노드10 memory_extraction"]
+  N9_PARTIAL --> N10
+  N10 --> EMIT["agent.py emit · 카드 페이로드 발행"]
+  N4_FP -.->|"silent"| EMIT_NULL(["발행 0건"])
+  GR --> EMIT
+
+  EMIT --> FE_MAP["Frontend cardsByMeetingId Map upsert (해결점 J)"]
+  FE_MAP --> CARD["MaedeupCard / VoteCard / PlaceCard 렌더 · place_pending 지원"]
+
+  %% ── 해결점 K UI 인터랙션 ─────────────────────────────────────
+  CARD -.->|"place_pending=true 카드 클릭"| K_MODAL["[해결점 K] 장소 입력 모달"]
+  K_MODAL --> K_PATCH["PATCH /meetings/id/place"]
+  K_PATCH --> K_BACKEND["백엔드: DB UPDATE + Kakao 좌표 + GCal event"]
+  K_BACKEND --> EMIT
+
+  %% ── 색상 ────────────────────────────────────────────────────
+  classDef resolved fill:#d4f5d4,stroke:#2d8c2d,stroke-width:3px,color:#000
+  classDef shortcut fill:#e0f0ff,stroke:#0066cc,stroke-width:2px,color:#000
+  classDef partial fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#000
+  classDef skip fill:#eeeeee,stroke:#999,stroke-width:1px,color:#666
+  classDef errcls fill:#ffd6d6,stroke:#cc0000,stroke-width:2px,color:#000
+
+  class AUTO_PRE,ENTRY_LG,QC,N4_TRIGGER,N4_CONC,N4_ALL,N6_BR,N9_NORMAL resolved
+  class SC_S,SC_P,SC_SP,GR shortcut
+  class N4_ALL_TIME,N9_PARTIAL,K_MODAL,K_PATCH,K_BACKEND partial
+  class N4_FP,EMIT_NULL skip
+  class ERR errcls

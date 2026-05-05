@@ -1,0 +1,139 @@
+%% ─────────────────────────────────────────────────────────────────────
+%% 매듭 — 전체 시스템 한 장 다이어그램 (해결점 A~M 통합 적용 후)
+%% ─────────────────────────────────────────────────────────────────────
+%% 갱신일: 2026-05-06
+%% 표시 범위: 채팅/AI패널 입력 → 트리거 → agent.py → LangGraph → 카드 → 프론트 (해결점 K 갱신 사이클 포함)
+%% 추상화: 박스 단위. 헬퍼·내부 분기는 02·04 참조
+%%
+%% 색상:
+%%   녹색: 해결점 적용 노드/분기
+%%   파랑: 단축 경로 (해결점 E)
+%%   분홍: 진입점
+%%   노랑: 의심점 보류 (B 의심점)
+%%   회색 점선: skip / silent / 외부
+%%   빨강: ValueError 명시 에러
+%% 상세는: 01·02·03·04·06 참조
+%% ─────────────────────────────────────────────────────────────────────
+
+flowchart TB
+  %% ── 채팅 레이어 ─────────────────────────────────────────────
+  subgraph SOCIAL ["소셜 채팅 레이어 · social.py"]
+    USER(["사용자 채팅"])
+    USER --> DB1[("DB ChatMessage INSERT")]
+    DB1 --> BCAST["Redis pub social:room"]
+    BCAST --> CI["classify_intent (RAG, 03 참고)"]
+  end
+
+  %% ── 게이트 (해결점 A·B 적용 후) ──────────────────────────────
+  subgraph GATES ["게이트 (해결점 A·B 적용)"]
+    G2{"게이트2 conclusion · 정규식"}
+    G3["게이트3 카운터 +1"]
+    G4{"[A] 게이트4 stalemate · ≥4 + 60s"}
+  end
+  CI --> G2
+  CI --> G3
+  CI --> G4
+
+  G2 -->|"YES"| TRIG_C["트리거1 conclusion_detected"]
+  G3 --> CNT["counter INCR"]
+  G4 -->|"YES"| JUDGE["judge_stalemate · LLM"]
+  JUDGE -->|"true"| TRIG_S["트리거2 stalemate_judged"]
+  JUDGE -->|"false"| NOOP(["발행 0건"])
+
+  %% ── 별도 진입 ───────────────────────────────────────────────
+  TIMEBAR(["TimeBar 전원 선택"])
+  TIMEBAR --> TRIG_AM["트리거3 all_members_selected"]
+
+  AIPANEL(["AI 패널 입력"])
+  AIPANEL --> QC["[E] quick_classify · 정규식 → Gemini fallback"]
+  QC --> TRIG_DR["트리거4 direct_request"]
+
+  %% ── Redis pub or 단축 ───────────────────────────────────────
+  TRIG_C --> PUB["Redis pub ai_auto_trigger · trigger_message_text 포함 [G]"]
+  TRIG_S --> PUB
+  TRIG_AM --> PUB
+  TRIG_DR --> SHORTCUT["[E] run_shortcut_pipeline · pub 우회"]
+
+  %% ── agent.py 진입 ───────────────────────────────────────────
+  subgraph AGENT ["AI 에이전트 레이어 · agent.py"]
+    NX["NX lock + 디바운스 + intent filter"]
+    AI_MSG["[B] 분석중 메시지 즉시 발행"]
+    ANALYZE["[D·H] _analyze_conversation 1회 · 윈도우 50개"]
+    PRE["GraphState 초기화 · trigger_reason + trigger_message_text 주입 [C·G]"]
+  end
+  PUB --> NX
+  NX --> AI_MSG
+  AI_MSG --> ANALYZE
+  ANALYZE --> PRE
+
+  %% ── LangGraph 라우터 (노드1·2 제거 [C 강화]) ─────────────────
+  PRE --> ROUTER{"[C 강화] LangGraph entry · 노드1·2 제거"}
+  ROUTER -->|"unknown"| ERR(["ValueError"])
+
+  %% ── 9노드 파이프라인 (노드1·2 없음) ─────────────────────────
+  subgraph PIPELINE ["LangGraph 노드 체인 (02 참고)"]
+    N3["노드3 entity_extraction · [F] 자연어→ISO"]
+    N4{"노드4 slot_filling · [I] 트리거별 4분기"}
+    N4_FP(["[I] conclusion_false_positive · silent abort"])
+    N5{"노드5 function_calling · [I] time_only면 GCal/Kakao 스킵"}
+    N6{"노드6 supervisor · [C+I] 라우팅"}
+    N7["노드7 vote_card · meeting_id [J]"]
+    N8["노드8 place_recommendation · meeting_id [J]"]
+    N9{"노드9 maedeup_card · [I·J] partial_mode 분기"}
+    N9_PARTIAL["place=null · place_pending=true · GCal 보류"]
+    N9_NORMAL["GCal insert · meeting_id [J]"]
+    N10["노드10 memory_extraction"]
+
+    N3 --> N4
+    N4 -->|"slot 0 + conclusion"| N4_FP
+    N4 -->|"외 정상"| N5
+    N5 --> N6
+    N6 -->|"vote"| N7
+    N6 -->|"place"| N8
+    N6 -->|"conclusion / time_only"| N9
+    N7 --> N9
+    N8 --> N9
+    N9 --> N9_PARTIAL
+    N9 --> N9_NORMAL
+    N9_PARTIAL --> N10
+    N9_NORMAL --> N10
+  end
+
+  ROUTER -->|"stalemate / conclusion (~1s 절약)"| N3
+  ROUTER -->|"all_members (~3s 절약, TimeBar 데이터)"| N4
+
+  %% ── 단축 경로 (E) ────────────────────────────────────────────
+  SHORTCUT --> SHORT_KIND{"분류 결과"}
+  SHORT_KIND -->|"general"| GR(["general_response 직행"])
+  SHORT_KIND -->|"schedule"| N3
+  SHORT_KIND -->|"place"| N3
+  SHORT_KIND -->|"schedule+place"| N3
+
+  %% ── emit + 프론트 ───────────────────────────────────────────
+  N4_FP -.->|"silent"| EMIT_SILENT(["발행 0건"])
+  N10 --> EMIT["agent.py emit · 카드 페이로드"]
+  GR --> EMIT
+  EMIT --> FE["[J] cardsByMeetingId Map upsert"]
+  FE --> CARDS["VoteCard / PlaceCard / MaedeupCard · place_pending UI"]
+  FE --> ASSIST["[B] 분석중 메시지 (AI 패널)"]
+
+  %% ── 카드 후속 갱신 (해결점 K, 06 참조) ───────────────────────
+  CARDS -.->|"place_pending 카드 클릭"| K["[K] 모달 → PATCH /meetings/id/place → 06 다이어그램"]
+  K -.-> EMIT
+
+  %% ── 색상 ─────────────────────────────────────────────────────
+  classDef gate fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
+  classDef trigger fill:#e0f0ff,stroke:#0066cc,stroke-width:2px,color:#000
+  classDef resolved fill:#d4f5d4,stroke:#2d8c2d,stroke-width:3px,color:#000
+  classDef shortcut fill:#e0f0ff,stroke:#0066cc,stroke-width:2px,color:#000
+  classDef partial fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#000
+  classDef skip fill:#eeeeee,stroke:#999,stroke-width:1px,color:#666
+  classDef errcls fill:#ffd6d6,stroke:#cc0000,stroke-width:2px,color:#000
+
+  class G2,G3,JUDGE,CNT,N4,N5,N6,N9,ROUTER gate
+  class TRIG_C,TRIG_S,TRIG_AM,TRIG_DR,PUB,SHORTCUT trigger
+  class G4,QC,AI_MSG,ANALYZE,PRE,N3,N7,N9_NORMAL,FE,ASSIST resolved
+  class GR,SHORT_KIND shortcut
+  class N9_PARTIAL,K partial
+  class N4_FP,EMIT_SILENT,NOOP skip
+  class ERR errcls

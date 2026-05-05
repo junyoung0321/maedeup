@@ -1,0 +1,226 @@
+%% ─────────────────────────────────────────────────────────────────────
+%% 매듭 — LangGraph 노드 체인 (해결점 C/D/E/F/G 반영 + 의심점 B 보류)
+%% ─────────────────────────────────────────────────────────────────────
+%% 갱신일: 2026-05-06
+%% 표시 범위: 두 진입점(WS 핸들러 / 자동 트리거 큐) → run_pipeline
+%%           → emit → 프론트 카드 렌더
+%%
+%% 해결점 (확정):
+%%   A. judge_stalemate 임계값 4 (01-trigger-rules.mmd 영역)
+%%   B. 배너 → AI 패널 통합 (01-trigger-rules.mmd + agent.py 분석중 메시지)
+%%   C. trigger_reason 기반 LangGraph 진입 분기 (자동 트리거용)
+%%   D. extract_meeting_summary 제거 (legacy wrapper)
+%%   E. direct_request 전용 단축 경로 (quick_classify + 단축 LangGraph)
+%%   F. 자연어 거부 날짜 → ISO 변환 헬퍼 (_resolve_rejected_date)
+%%   G. trigger_message_text 앵커 (intent_detection race 방지)
+%%
+%% 의심점:
+%%   B. date_hints 3중 쓰기 — 검증 결과 묵시적 컨벤션, 보류 (시연 영향 미미)
+%%
+%% 트리거 발화 이전(social.py 게이트)은 01-trigger-rules.mmd 참고
+%% direct_request 경로 (해결점 E) 별도 시각화는 04-option-c-routing.mmd 참고
+%% ─────────────────────────────────────────────────────────────────────
+
+flowchart TB
+  %% ── 진입점 1: WS 메시지 핸들러 (direct_request 경로) ─────────
+  ENTRY_WS(["WebSocket 메시지 핸들러 · agent.py main loop · 사용자가 AI 패널에 입력"])
+
+  %% ── 진입점 2: 자동 트리거 7단계 (pubsub → 큐 → 락 → 태스크) ──
+  AUTO_S1(["1. _redis_subscriber · Redis pubsub 'agent:room' 구독 · social.py 발행 페이로드 모두 수신"])
+  AUTO_S2["2. WS forward · websocket.send_text(data) · 모든 구독자에게 그대로 전달 (배너 등 시각 알림용)"]
+  AUTO_S3{"3. type == ai_auto_trigger?"}
+  AUTO_S4["4. auto_trigger_queue.put(parsed) · 큐 푸시 (다른 type은 푸시 안 함)"]
+  AUTO_S5["5. _process_auto_triggers 백그라운드 태스크 · queue.get(timeout=0.5) 폴링"]
+  AUTO_S6{"6. NX lock 시도 · SET nx_autotrigger:room NX EX 60"}
+  AUTO_S6_FAIL["lock 못 잡음 → skip · 같은 방 다른 WS가 처리자임"]
+  AUTO_S7{"7. 로컬 디바운스 · 60초 내 같은 연결 중복 차단 (belt-and-suspenders)"}
+  AUTO_S7_SKIP["디바운스됨 → skip"]
+  AUTO_S8{"8. intent ∈ meeting_schedule, place_suggestion?"}
+  AUTO_S8_SKIP["intent 불일치 → skip (general 등)"]
+  AUTO_S9(["9. asyncio.create_task(_run_auto_trigger_pipeline) · 백그라운드 실행 · trigger_content / trigger_reason 인자 전달"])
+
+  AUTO_S1 --> AUTO_S2
+  AUTO_S2 --> AUTO_S3
+  AUTO_S3 -->|"예"| AUTO_S4
+  AUTO_S3 -->|"아니오 (intent_detected, vote_card 등)"| AUTO_END_FORWARD(["WS forward로 끝 · 큐 진입 안 함"])
+  AUTO_S4 --> AUTO_S5
+  AUTO_S5 --> AUTO_S6
+  AUTO_S6 -->|"성공 (방 단위 첫 1명)"| AUTO_S7
+  AUTO_S6 -->|"실패"| AUTO_S6_FAIL
+  AUTO_S7 -->|"통과 (60초 경과)"| AUTO_S8
+  AUTO_S7 -->|"디바운스"| AUTO_S7_SKIP
+  AUTO_S8 -->|"통과"| AUTO_S9
+  AUTO_S8 -->|"불일치"| AUTO_S8_SKIP
+
+  %% ── 진입점별 후속 처리 ─────────────────────────────────────
+  ENTRY_WS --> DR_PATH["agent.py · slot_context['trigger_reason'] = 'direct_request' 주입 · 사용자 입력 echo는 채팅에 자동 표시"]
+  AUTO_S9 --> AUTO_PATH["agent.py · trigger_reason별 분석중 메시지 즉시 발행 (해결점 B) · trigger_content/trigger_reason 추출"]
+
+  %% ── 공통: 두 경로 모두 _analyze_conversation 거치지만 데이터 활용 다름 ──
+  AUTO_PATH --> A1["_analyze_conversation 1회 · 채팅 50개를 한 번에 LLM에 보내 카드+신호 추출 (해결점 D·H 적용 후 1회 + 윈도우 50)"]
+  A1 --> A4["pre_extracted_signals · 파이프라인이 Gemini 추가 호출 없이 쓰도록 미리 뽑은 신호 묶음"]
+  A4 --> AUTO_RUN(["run_pipeline 진입 · GraphState 초기화 · trigger_reason + trigger_message_text 주입 (해결점 C·G)"])
+
+  DR_PATH --> QC["quick_classify (해결점 E) · WS 핸들러에서 직접 호출 · 1차 정규식 schedule/place/general · 모호 시 Gemini 1-shot fallback ~1s"]
+  QC --> QC_BRANCH{"분류 결과"}
+  QC_BRANCH -->|"general"| GR_DIRECT["general_response 직행 · Gemini chat ~2s"]
+  QC_BRANCH -->|"schedule"| DR_RUN_S(["run_shortcut_pipeline · kind=schedule"])
+  QC_BRANCH -->|"place"| DR_RUN_P(["run_shortcut_pipeline · kind=place"])
+  QC_BRANCH -->|"schedule+place"| DR_RUN_SP(["run_shortcut_pipeline · kind=schedule+place"])
+  GR_DIRECT --> EMIT_DIRECT["agent.py emit · 일반 응답 메시지 발행"]
+  EMIT_DIRECT --> FE
+
+  %% ── 자동 트리거: LangGraph entry conditional (해결점 C) ─────
+  AUTO_RUN --> AUTO_ENTRY{"trigger_reason 분기 (해결점 C 강화)"}
+  AUTO_ENTRY -->|"stalemate_judged<br/>(judge가 이미 intent 분류 · ~1s 절약)"| N3_ENTRY["노드3 entity_extraction · 채팅에서 날짜·장소·인원 슬롯값 뽑기"]
+  AUTO_ENTRY -->|"conclusion_detected<br/>(~1s 절약)"| N3_ENTRY
+  AUTO_ENTRY -->|"all_members_selected<br/>(노드3 스킵 ~3s 절약 · TimeBar 데이터 주입됨)"| N4
+  AUTO_ENTRY -->|"unknown (정의 안 된 trigger)"| ERR(["예외 발생 · 명시적 에러 로깅 후 종료"])
+
+  %% 노드1·2 완전 제거됨 (해결점 C 강화):
+  %%  - 모든 자동 트리거가 노드1 스킵 (judge/regex/TimeBar가 이미 의도/슬롯 결정)
+  %%  - direct_request는 quick_classify (해결점 E)에서 별도 처리
+  %%  - dead path 제거로 코드 명확성 ↑
+
+  %% ── 단축 경로 (해결점 E): direct_request 전용 ──────────────
+  DR_RUN_S --> N3_SHORT["노드3 entity_extraction (단축) · intent 자명 · slot_filling 스킵"]
+  DR_RUN_P --> N3_SHORT
+  DR_RUN_SP --> N3_SHORT
+  N3_SHORT --> N3_ENTRY
+
+  %% ── 노드3: entity_extraction (해결점 E: fast-skip 제거 / 해결점 F: ISO 변환) ──
+  N3_ENTRY --> N3_PRE{"pre_extracted_signals?"}
+  N3_PRE -->|"있음 (자동 트리거)"| N3_FROM_PRE["pre_extracted에서 raw_date_hints 가져옴 · ISO 확장 · extracted_entities 구성"]
+  N3_PRE -->|"없음 (단축 경로 또는 fallback)"| N3_PATTERN["1차 _pattern_extract_entities · 정규식만 ~ms · 무료"]
+
+  N3_PATTERN --> N3_PATTERN_BRANCH{"패턴으로 충분?"}
+  N3_PATTERN_BRANCH -->|"date_hints ≥2"| N3_PATTERN_DONE["패턴 결과 반환 · Gemini 스킵 (vote 시나리오 최적화)"]
+  N3_PATTERN_BRANCH -->|"date+place 둘 다"| N3_PATTERN_DONE
+  N3_PATTERN_BRANCH -->|"부족"| N3_GEMINI["2차 Gemini NER · rejected_dates / conflict_options / date_hints 추출 ~3-4s"]
+
+  N3_FROM_PRE --> N3_FILTERS
+  N3_PATTERN_DONE --> N3_FILTERS
+  N3_GEMINI --> N3_FILTERS
+
+  N3_FILTERS["헬퍼 정제 · _expand_date_hint 범위→ISO · _filter_out_rejected 거부 슬롯 제거"]
+  N3_FILTERS --> N3_RESOLVE["[해결점 F] _resolve_rejected_date · 자연어 거부('금요일','5/9')→ISO 변환 · 변환 실패 시 드랍"]
+  N3_RESOLVE --> N3_WRITE["state write · extracted_entities (raw) + state['date_hints'] (vote 후보) + rejected_dates · place_coord (Kakao)"]
+
+  N3_WRITE --> N3_KIND{"진입 경로?"}
+  N3_KIND -->|"단축 schedule"| N7_SHORT["노드7 vote_card_creation 직행 (slot/function/supervisor 스킵)"]
+  N3_KIND -->|"단축 place"| N8_SHORT["노드8 place_recommendation 직행"]
+  N3_KIND -->|"단축 schedule+place"| N7_SHORT
+  N3_KIND -->|"자동 트리거"| N4
+
+  %% ── 노드4: slot_filling (해결점 I: 트리거별 4분기) ────────────
+  N4["노드4 slot_filling 진입 · _update_slot_state · _load_meeting_preferences"]
+  N4 --> N4_TRIGGER{"trigger_reason 분기 (해결점 I)"}
+
+  %% stalemate 분기 — conflict 중재
+  N4_TRIGGER -->|"stalemate_judged"| N4_STALE["_slot_filling_stalemate · conflict_options→date_hints 변환 · 중재 메시지 EARLY-EMIT (※ 의심점 B 보류)"]
+  N4_STALE --> N4_STALE_OUT["status=multi_date_vote"]
+
+  %% conclusion 분기 — silent abort 또는 직행
+  N4_TRIGGER -->|"conclusion_detected"| N4_CONC{"슬롯 상태 (해결점 I Q1)"}
+  N4_CONC -->|"date+place"| N4_CONC_FULL["status=slots_filled"]
+  N4_CONC -->|"한쪽만"| N4_CONC_PART["디폴트 채움 (headcount=4) · status=slots_filled_with_defaults"]
+  N4_CONC -->|"슬롯 0 (정규식 false positive)"| N4_CONC_FP(["status=conclusion_false_positive · silent abort · 카드 0건"])
+
+  %% all_members 분기 — TimeBar 신뢰
+  N4_TRIGGER -->|"all_members_selected"| N4_ALL{"장소 슬롯 (해결점 I Q2)"}
+  N4_ALL -->|"place_hint 있음"| N4_ALL_PLACE["status=location_first_ready"]
+  N4_ALL -->|"선호 best_location 보강 가능"| N4_ALL_PREF["place_hint=best_location · status=location_first_ready"]
+  N4_ALL -->|"장소 없음"| N4_ALL_TIMEONLY["status=time_only_ready · partial_mode=time_only · maedeup_card 부분 발행 예정 (해결점 J)"]
+
+  %% default fallback (예외/unknown trigger)
+  N4_TRIGGER -.->|"unknown / fallback"| N4_DEF["일반 슬롯 충족도 체크 (현재 로직)"]
+  N4_DEF --> N4_DEF_BRANCH{"슬롯 상태"}
+  N4_DEF_BRANCH -->|"all_slots_filled"| N4_DEF_FULL["status=slots_filled"]
+  N4_DEF_BRANCH -->|"부족"| N4_DEF_END(["status=partial_info_acknowledged · END"])
+
+  %% 분기 출력 → N5 진입 (단, false positive는 N5 스킵)
+  N4_STALE_OUT --> N5
+  N4_CONC_FULL --> N5
+  N4_CONC_PART --> N5
+  N4_ALL_PLACE --> N5
+  N4_ALL_PREF --> N5
+  N4_ALL_TIMEONLY --> N5
+  N4_DEF_FULL --> N5
+  N4_CONC_FP --> EMIT
+
+  %% ── 노드5: function_calling (해결점 I: 신규 status 처리) ──────
+  N5["노드5 function_calling 진입"]
+  N5 --> N5_STATUS{"status 분기 (해결점 I)"}
+  N5_STATUS -->|"time_only_ready"| N5_SKIP["GCal/Kakao 모두 스킵 · ~2s 절약"]
+  N5_STATUS -->|"기타 정상"| N5_BLOCK["_load_blocked_dates · TimeBar 불가능 날짜 Redis 로드 · _filter_out_blocked"]
+  N5_BLOCK --> N5_API["External · GCal freeBusy 빈 시간대 + Kakao 장소 검색"]
+  N5_API --> N5_WRITE["state write · calendar_free_slots / calendar_strategy / place_search_results"]
+  N5_SKIP --> N6
+  N5_WRITE --> N6
+
+  %% ── 노드6: supervisor_validation (해결점 C 4-way + 해결점 I 추가 2갈래) ──
+  N6["노드6 supervisor_validation · 다음 단계 판단"]
+  N6 --> N6_BRANCH{"trigger_reason × 슬롯 상태 (해결점 C+I)"}
+  N6_BRANCH -->|"conclusion_detected (정상)"| N9["노드9 maedeup_card 직행"]
+  N6_BRANCH -->|"all_members_selected + place 있음"| N8["노드8 place_recommendation"]
+  N6_BRANCH -->|"time_only_ready (해결점 I)"| N9_PARTIAL["partial_mode=time_only · maedeup_card 부분 발행 분기"]
+  N6_BRANCH -->|"intent=place_suggestion"| N8
+  N6_BRANCH -->|"vote 가능"| N7["노드7 vote_card_creation"]
+  N6_BRANCH -->|"장소만 추천"| N8
+  N9_PARTIAL --> N9
+
+  %% ── 노드7: vote_card_creation ────────────────────────────────
+  N7 --> N7_DB["DB · MeetingSchedule pending INSERT (확정 전 임시)"]
+  N7_DB --> N7_SAFETY["_filter_out_rejected 안전망 (해결점 F 적용 후 자연어 거부도 차단)"]
+  N7_SAFETY --> N7_OUT["vote_card_payload 생성 · meeting_id 포함 (해결점 J)"]
+  N7_SHORT --> N7_DB
+
+  %% ── 노드8: place_recommendation ──────────────────────────────
+  N8 --> N8_GEMINI["후보 4개 이상 시 Gemini scoring · 추천 사유 생성 ~2s"]
+  N8_GEMINI --> N8_OUT["place_recommendation_payload 생성 · meeting_id 포함 (해결점 J)"]
+  N8_SHORT --> N8_GEMINI
+
+  %% ── 노드9: maedeup_card_creation ─────────────────────────────
+  N7_OUT --> N9
+  N8_OUT --> N9_BRANCH{"schedule+place 둘 다?"}
+  N9_BRANCH -->|"예"| N9
+  N9_BRANCH -->|"아니오 (place만)"| EMIT
+  N9 --> N9_MODE{"partial_mode (해결점 I·J)"}
+  N9_MODE -->|"time_only"| N9_PARTIAL_OUT["maedeup_card · place=null · place_pending=true · GCal 등록 보류 · meeting_id 포함 (해결점 J)"]
+  N9_MODE -->|"normal"| N9_GCAL["GCal event insert · maedeup_card_payload 생성 · meeting_id 포함 (해결점 J)"]
+  N9_PARTIAL_OUT --> N10
+  N9_GCAL --> N10
+
+  %% ── 노드10: memory_extraction (자동 트리거만, 단축 경로는 비동기 분리 권장) ──
+  N10["노드10 memory_extraction · 대화에서 개인정보(생일·알레르기 등) 추출 → AIMemory 저장"]
+
+  %% ── emit → 프론트 카드 렌더 ─────────────────────────────────
+  N10 --> EMIT["agent.py emit · Redis pub agent:room으로 카드 페이로드 발행"]
+  EMIT --> FE["Frontend · useAgentWebSocket이 페이로드 type별로 set 함수 호출"]
+  FE --> CARDS["Cards · ScheduleRecommendationCard / PlaceRecommendationCard / MaedeupCard 렌더"]
+
+  %% ── 색상 클래스 정의 ─────────────────────────────────────────
+  classDef resolved fill:#d4f5d4,stroke:#2d8c2d,stroke-width:3px,color:#000
+  classDef shelved fill:#fff3cd,stroke:#cc9900,stroke-width:2px,color:#000
+  classDef shortcut fill:#e0f0ff,stroke:#0066cc,stroke-width:2px,color:#000
+  classDef external fill:#f0f0f0,stroke:#666,stroke-width:1px,color:#000
+
+  %% 진입점 (분홍)
+  classDef entry fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#000
+  class ENTRY_WS,AUTO_S1,AUTO_S9 entry
+  %% Skip/종료 (회색 점선)
+  classDef skip fill:#eeeeee,stroke:#999,stroke-width:1px,color:#666
+  class AUTO_S6_FAIL,AUTO_S7_SKIP,AUTO_S8_SKIP,AUTO_END_FORWARD,ERR skip
+  %% 해결점 적용 노드 (녹색)
+  class A1,QC,QC_BRANCH,N3_RESOLVE,N7_SAFETY,AUTO_PATH,DR_PATH,AUTO_ENTRY,N6_BRANCH,AUTO_RUN resolved
+  %% 단축 경로 노드 (파랑)
+  class N3_SHORT,N7_SHORT,N8_SHORT,GR_DIRECT,DR_RUN_S,DR_RUN_P,DR_RUN_SP shortcut
+  %% 보류 (노랑)
+  class N4_STALE shelved
+  %% 외부 호출 (회색)
+  class N5_API,N9_GCAL,N9_PARTIAL_OUT external
+
+  %% 해결점 I/J 적용 노드 추가 녹색
+  class N4_TRIGGER,N4_CONC,N4_ALL,N5_STATUS,N6_BRANCH,N9_MODE resolved
+  %% Skip/종료
+  class N4_CONC_FP,N4_DEF_END,N5_SKIP skip

@@ -1,0 +1,122 @@
+%% ─────────────────────────────────────────────────────────────────────
+%% 매듭 — 채팅에서 카드까지 전체 시퀀스 (해결점 A~M 적용 후 목표 상태)
+%% ─────────────────────────────────────────────────────────────────────
+%% 갱신일: 2026-05-06
+%% 추상화 수준: 모듈 단위 시퀀스 (User / SocialWS / Redis / AgentWS / Gemini / LangGraph / DB / External / Frontend)
+%%
+%% 적용된 해결점 표기:
+%%   [A] 임계값 4
+%%   [B] 분석중 메시지 (배너 폐기)
+%%   [C] trigger_reason 진입 분기 + 노드1·2 제거
+%%   [D] _analyze_conversation 1회 (legacy wrapper 제거)
+%%   [E] direct_request 단축 경로
+%%   [F] 자연어 거부 ISO 변환
+%%   [G] trigger_message_text 앵커
+%%   [H] 윈도우 50개
+%%   [I] slot_filling 트리거별 분기
+%%   [J] meeting_id 카드 갱신
+%%   [K] partial 카드 수동 입력 → 06-card-update-flow.mmd
+%%
+%% 같이 보기: 01-trigger-rules.mmd, 02-langgraph-flow.mmd, 04-option-c-routing.mmd
+%% ─────────────────────────────────────────────────────────────────────
+
+sequenceDiagram
+participant User as "사용자 - 브라우저"
+participant SocialWS as "social.py - 채팅 + 게이트 + 트리거"
+participant Redis as "Redis Pub/Sub"
+participant AgentWS as "agent.py - 큐 소비자 + LangGraph 진입"
+participant Gemini as "Gemini API"
+participant LangGraph as "LangGraph Pipeline (노드3~10)"
+participant DB as "Postgres"
+participant External as "GCal + Kakao"
+participant Frontend as "Next.js"
+
+User->>SocialWS: 채팅 메시지
+SocialWS->>DB: ChatMessage INSERT
+SocialWS->>Redis: pub social:room
+Redis->>Frontend: peer broadcast
+
+SocialWS->>Gemini: classify_intent(매번)
+Gemini-->>SocialWS: intent + confidence
+
+SocialWS->>SocialWS: 게이트 통과 검사 [A]
+note right of SocialWS: 게이트1 (배너) 제거 [B]<br/>게이트2 conclusion · 정규식<br/>게이트3 카운터<br/>게이트4 stalemate (≥4 + 60s)
+
+alt counter >= 4 AND 쿨다운 만료
+SocialWS->>Gemini: judge_stalemate(최근 10개)
+Gemini-->>SocialWS: stalemate 판정
+
+alt stalemate=true
+SocialWS->>Redis: pub ai_auto_trigger (stalemate_judged)
+note right of SocialWS: trigger_message_text 포함 [G]
+end
+end
+
+alt _is_conclusion 정규식 매칭
+SocialWS->>Redis: pub ai_auto_trigger (conclusion_detected)
+end
+
+note over User,SocialWS: TimeBar 전원 선택 시
+SocialWS->>Redis: pub ai_auto_trigger (all_members_selected)
+
+note over User,AgentWS: AI 패널 직접 입력 시
+User->>AgentWS: WS 메시지 (direct_request)
+AgentWS->>AgentWS: quick_classify [E] · 정규식 → Gemini fallback
+AgentWS->>LangGraph: run_shortcut_pipeline (kind=schedule/place/general)
+
+Redis->>AgentWS: ai_auto_trigger 수신
+AgentWS->>AgentWS: NX lock + 디바운스 + intent filter
+AgentWS->>Frontend: 분석중 메시지 즉시 발행 [B]
+
+AgentWS->>Gemini: _analyze_conversation 1회 [D] · 윈도우 50 [H]
+Gemini-->>AgentWS: card + signals (rejected_dates 포함, 자연어→ISO [F])
+
+AgentWS->>Redis: pub meeting_summary
+Redis->>Frontend: AI 패널 요약 갱신
+
+AgentWS->>LangGraph: run_pipeline (trigger_reason + trigger_message_text [G])
+
+note over LangGraph: 노드1·2 제거됨 [C 강화]<br/>trigger_reason별 진입 분기
+
+alt trigger=stalemate / conclusion
+LangGraph->>LangGraph: 노드3 entity_extraction
+LangGraph->>LangGraph: 노드4 slot_filling [I]
+else trigger=all_members
+LangGraph->>LangGraph: 노드4 직진 (TimeBar 데이터 주입)
+end
+
+note right of LangGraph: 노드4 [I] 트리거별 분기:<br/>stalemate → conflict 중재<br/>conclusion → silent abort/슬롯 채움<br/>all_members → time_only 또는 location_first
+
+alt status=conclusion_false_positive [I]
+LangGraph-->>AgentWS: silent abort
+note right of AgentWS: 카드 0건 발행
+else status=time_only_ready [I]
+LangGraph->>LangGraph: 노드5/6 GCal·Kakao 스킵
+LangGraph->>LangGraph: 노드9 partial_mode (place_pending=true)
+LangGraph->>DB: MeetingSchedule INSERT
+LangGraph-->>AgentWS: maedeup_card_payload (meeting_id 포함 [J])
+else 정상 흐름
+LangGraph->>External: GCal freeBusy + Kakao
+External-->>LangGraph: 시간/장소 후보
+LangGraph->>LangGraph: 노드5 function_calling
+LangGraph->>LangGraph: 노드6 supervisor (trigger_reason × 슬롯 분기)
+
+alt vote 가능
+LangGraph->>LangGraph: 노드7 vote_card_creation
+LangGraph->>DB: MeetingSchedule pending INSERT
+LangGraph-->>AgentWS: vote_card_payload (meeting_id [J])
+else conclusion 정상 또는 all_members + place
+LangGraph->>LangGraph: 노드8 place_recommendation
+LangGraph->>LangGraph: 노드9 maedeup_card + GCal insert
+LangGraph-->>AgentWS: maedeup_card_payload (meeting_id [J])
+end
+end
+
+LangGraph->>LangGraph: 노드10 memory_extraction → AIMemory
+
+AgentWS->>Redis: pub 카드 페이로드
+Redis->>Frontend: 페이로드 수신
+Frontend->>Frontend: cardsByMeetingId Map upsert [J]
+Frontend->>User: 카드 렌더 (place_pending UI 지원)
+
+note over User,Frontend: 카드 후속 갱신 → 06-card-update-flow.mmd [K]

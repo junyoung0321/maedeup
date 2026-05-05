@@ -1,0 +1,49 @@
+%% ─────────────────────────────────────────────────────────────────────
+%% 매듭 — classify_intent 내부 (2단계 RAG 의도 분류)
+%% ─────────────────────────────────────────────────────────────────────
+%% 갱신일: 2026-05-05
+%% 표시 범위: 메시지 입력 → 임베딩 + 코사인유사도 → top-3 → 3분기 (rag/gemini/pattern) → 결과
+%% 위치: backend/app/services/intent_classifier.py · classify_intent()
+%% 출력: {intent, confidence, method}
+%%   - intent: meeting_schedule | place_suggestion | general
+%%   - method: rag | gemini | pattern | default
+%% 결과가 어떻게 쓰이는지는 01-trigger-rules.mmd 참고
+%% ─────────────────────────────────────────────────────────────────────
+
+flowchart TB
+  IN(["입력 메시지 텍스트"])
+  IN --> EMBED["1단계 · get_embedding(text) · models/gemini-embedding-001 · 768차원 벡터"]
+  EMBED --> LOAD["DB · IntentExample 전체 로드 (시드 데이터, embedding 컬럼 not null)"]
+  LOAD --> SIM["코사인 유사도 계산 · 모든 예시와 비교 · 상위 3개 추출"]
+  SIM --> BRANCH{"top 유사도 점수?"}
+
+  %% ── 3분기 ───────────────────────────────────────────────────
+  BRANCH -->|"0.85 이상 HIGH"| RAG["method=rag · 매칭 예시의 intent 즉시 채택 · Gemini 호출 X · ~100ms"]
+  BRANCH -->|"0.60 ~ 0.85 중간"| GEM["method=gemini · top-3을 in-context로 전달하여 Gemini가 최종 판단 · ~1~2s"]
+  BRANCH -->|"0.60 미만 LOW"| PAT_BRANCH{"한국 지명·시간 패턴 매칭?"}
+
+  %% ── Gemini 폴백 → 패턴 폴백 ─────────────────────────────────
+  GEM -->|"Gemini 응답 비어있음 또는 general"| PAT_BRANCH
+  GEM -->|"meeting_schedule / place_suggestion 응답"| RESULT
+
+  %% ── 패턴 폴백 ───────────────────────────────────────────────
+  PAT_BRANCH -->|"한국 지명(역/동/구) + 만나/가자/맛집 키워드"| PAT_PLACE["method=pattern · place_suggestion · confidence = max(top, 0.7)"]
+  PAT_BRANCH -->|"시간/요일 키워드 (토요일·다음주·언제)"| PAT_SCH["method=pattern · meeting_schedule · confidence = max(top, 0.7)"]
+  PAT_BRANCH -->|"둘 다 없음"| DEFAULT["method=default · general · confidence = top similarity"]
+
+  %% ── 결과 합류 ───────────────────────────────────────────────
+  RAG --> RESULT["분류 결과 RESULT · intent · confidence · method"]
+  PAT_PLACE --> RESULT
+  PAT_SCH --> RESULT
+  DEFAULT --> RESULT
+
+  RESULT --> OUT(["호출자에게 dict 반환 · 이후 01-trigger-rules.mmd의 4게이트로 흐름"])
+
+  %% ── 비용/속도 메모 ─────────────────────────────────────────
+  NOTE_COST["비용/속도 요약 · rag (~100ms, 임베딩 1회) · gemini (~1~2s, 임베딩 1 + LLM 1) · pattern (즉시, 정규식만) · default (즉시)"]
+
+  %% ── 색상 클래스 정의 ─────────────────────────────────────────
+  classDef classify fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000
+  classDef note fill:#f5f5f5,stroke:#999,stroke-width:1px,color:#333
+  class EMBED,LOAD,SIM,RAG,GEM,PAT_PLACE,PAT_SCH,DEFAULT,RESULT classify
+  class NOTE_COST note

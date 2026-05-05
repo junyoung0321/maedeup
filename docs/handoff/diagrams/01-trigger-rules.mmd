@@ -1,0 +1,73 @@
+%% ─────────────────────────────────────────────────────────────────────
+%% 매듭 — 트리거 규칙 (해결점 A·B·C·E·G·H 적용 후 목표 상태)
+%% ─────────────────────────────────────────────────────────────────────
+%% 갱신일: 2026-05-06
+%% 표시 범위: 채팅 1발 → classify_intent → 게이트 → 4트리거 → 진입점 분기
+%%
+%% 적용된 해결점:
+%%   A. 임계값 3 → 4 (over-correction 정정)
+%%   B. 게이트1 intent_detected 발행 제거 + AI 패널 분석중 메시지로 통합
+%%   C. trigger_reason 기반 LangGraph 진입 분기 (강화: 노드1·2 제거)
+%%   E. direct_request 단축 경로 (quick_classify로 별도 라우팅)
+%%   G. trigger_message_text 페이로드 포함 (intent_detection race 방지)
+%%   H. _analyze_conversation 윈도우 20 → 50
+%%
+%% classify_intent 내부 → 03-intent-classifier.mmd
+%% Redis pub 이후 → 02-langgraph-flow.mmd
+%% 라우팅 결정 상세 → 04-option-c-routing.mmd
+%% ─────────────────────────────────────────────────────────────────────
+
+flowchart TB
+  CHAT(["사용자 채팅 메시지 입력"])
+  CHAT --> SAVE["DB · ChatMessage INSERT"]
+  SAVE --> BCAST["Redis pub social:room · 다른 멤버 화면에 broadcast"]
+  BCAST --> CI["classify_intent 호출 · 03-intent-classifier.mmd 참고 · 결과 intent / confidence / method"]
+
+  %% ── 게이트 (해결점 B로 게이트1 제거됨) ────────────────────────
+  CI --> G2{"게이트 2 결론 트리거 · _is_conclusion 정규식 AND intent NOTIFIABLE?"}
+  CI --> G3["게이트 3 카운터 누적 · 무조건 +1 · intent 무관"]
+  CI --> G4{"[해결점 A] 게이트 4 stalemate · counter ≥ 4 AND 60초 쿨다운 만료"}
+
+  G2 -->|"YES 확정/콜/결정 키워드"| TRIG1["트리거 1 · conclusion_detected · 카운터 리셋 · trigger_message_text 포함 (해결점 G)"]
+  G2 -->|"NO"| TRIG1_X(["조용히 패스"])
+
+  G3 --> G3_OUT["counter_key INCR · TTL 600초"]
+
+  G4 -->|"YES"| JUDGE["judge_stalemate · 최근 10개 메시지 LLM 교착 판정 · 60초 쿨다운 설정"]
+  G4 -->|"NO"| WAIT(["대기 · 다음 메시지로"])
+  JUDGE -->|"stalemate=true"| TRIG2["트리거 2 · stalemate_judged · 카운터 리셋 · trigger_message_text 포함 (해결점 G)"]
+  JUDGE -->|"stalemate=false"| NOTRIG(["배너/카드 발행 0건 (해결점 B 적용 후 잔류 없음)"])
+
+  %% ── 별도 진입 경로 ────────────────────────────────────────────
+  TIMEBAR(["TimeBar에서 멤버 전원이 시간 선택 완료"])
+  TIMEBAR --> TRIG3["트리거 3 · all_members_selected · TimeBar 공통 시간 추출 후 페이로드"]
+
+  AIPANEL(["사용자가 AI 어시스턴트 패널에 직접 입력"])
+  AIPANEL --> QC["[해결점 E] quick_classify · 정규식 → Gemini fallback ~1s · schedule/place/general 분류"]
+  QC --> TRIG4["트리거 4 · direct_request · trigger_reason 주입 · 단축 경로"]
+
+  %% ── 진입점 분기 ───────────────────────────────────────────────
+  TRIG1 --> PUB["Redis pub ai_auto_trigger · agent:room 채널"]
+  TRIG2 --> PUB
+  TRIG3 --> PUB
+  TRIG4 --> WS_DIRECT["agent.py WS 핸들러 직접 처리 · run_shortcut_pipeline · Redis pub 우회"]
+
+  %% ── agent.py 진입 ─────────────────────────────────────────────
+  PUB --> SUB_NX["agent.py _process_auto_triggers · NX lock + 디바운스 + intent filter (자세히는 02 참고)"]
+  SUB_NX --> ANALYZE["[해결점 H] _analyze_conversation · 채팅 50개 한 번 LLM · pre_extracted_signals 추출"]
+  ANALYZE --> AI_MSG["[해결점 B] agent.py · trigger_reason별 분석중 메시지 즉시 발행 (AI 패널)"]
+  AI_MSG --> RUN_AUTO(["run_pipeline 진입 · trigger_reason + trigger_message_text 주입 (해결점 C·G)"])
+
+  WS_DIRECT --> RUN_DIRECT(["run_shortcut_pipeline · kind에 따라 단축 경로 (해결점 E) · 02 참조"])
+
+  RUN_AUTO --> AFTER_AUTO(["02-langgraph-flow.mmd 자동 트리거 경로"])
+  RUN_DIRECT --> AFTER_DIRECT(["02-langgraph-flow.mmd 단축 경로"])
+
+  %% ── 색상 클래스 정의 ─────────────────────────────────────────
+  classDef gate fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
+  classDef trigger fill:#e0f0ff,stroke:#0066cc,stroke-width:2px,color:#000
+  classDef resolved fill:#d4f5d4,stroke:#2d8c2d,stroke-width:3px,color:#000
+  classDef shortcut fill:#e0f0ff,stroke:#0066cc,stroke-width:2px,color:#000
+  class G2,G3,JUDGE,G3_OUT gate
+  class TRIG1,TRIG2,TRIG3,TRIG4,PUB,WS_DIRECT trigger
+  class G4,QC,AI_MSG,ANALYZE,RUN_AUTO,RUN_DIRECT resolved

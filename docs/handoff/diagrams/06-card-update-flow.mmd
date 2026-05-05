@@ -1,0 +1,65 @@
+%% ─────────────────────────────────────────────────────────────────────
+%% 매듭 — 카드 갱신 플로우 (해결점 J + K)
+%% ─────────────────────────────────────────────────────────────────────
+%% 작성일: 2026-05-06 (신규)
+%% 표시 범위: partial maedeup_card 발행 → 사용자 수동 입력 → 카드 갱신 사이클
+%%
+%% 적용된 해결점:
+%%   J. meeting_id 기반 페이로드 + 프론트 cardsByMeetingId Map upsert
+%%   K. 사용자 클릭 → 모달 → PATCH /meetings/{id}/place
+%%
+%% 시나리오: TimeBar 시간 확정 (all_members_selected) + 장소 미정
+%%   → 노드9에서 partial_mode 카드 발행 (place=null, place_pending=true)
+%%   → 사용자가 카드 클릭 → 장소 입력 → 백엔드 patch → 같은 meeting_id 재발행 → 카드 갱신
+%%
+%% 확장 A (보류): 자동 추출 (place_added_to_pending 트리거)는 운영 누적 후 검토
+%% ─────────────────────────────────────────────────────────────────────
+
+sequenceDiagram
+participant User as "사용자"
+participant Frontend as "Next.js Frontend"
+participant API as "FastAPI /meetings/{id}/place"
+participant DB as "Postgres"
+participant External as "Kakao + GCal"
+participant Redis as "Redis Pub/Sub"
+participant AgentWS as "agent.py WebSocket"
+
+note over Frontend,Redis: ① partial 카드 발행 (해결점 I time_only_ready 후)
+
+AgentWS->>Redis: pub maedeup_card (meeting_id=142, place=null, place_pending=true)
+Redis->>Frontend: 페이로드 수신
+Frontend->>Frontend: cardsByMeetingId.set(142, partial_card) [J]
+Frontend->>User: 카드 렌더 · "장소 정해주세요 🔍"
+
+note over User,Frontend: ② 사용자 인터랙션 (해결점 K)
+
+User->>Frontend: 카드 placeholder 클릭
+Frontend->>User: 장소 입력 모달
+User->>Frontend: "강남" 입력 + 확인
+
+Frontend->>API: PATCH /api/v1/meetings/142/place {place: "강남"}
+
+note over API,DB: ③ 백엔드 처리
+
+API->>API: 권한 체크 (방 멤버만)
+API->>DB: MeetingSchedule UPDATE place=강남
+API->>External: Kakao 좌표 조회
+External-->>API: {x, y, address}
+API->>External: GCal event INSERT (시간 + 장소 확정)
+External-->>API: event_id
+
+API->>API: 갱신된 maedeup_card 페이로드 구성
+API->>Redis: pub maedeup_card (meeting_id=142, place="강남", place_pending=false, calendar_registered=true)
+API-->>Frontend: 200 OK
+
+note over Redis,Frontend: ④ 카드 갱신 (해결점 J)
+
+Redis->>Frontend: 갱신 페이로드 수신
+Frontend->>Frontend: cardsByMeetingId.set(142, complete_card) [J · upsert]
+note right of Frontend: 같은 meeting_id면 카드 갱신 · 새 카드 누적 X
+
+Frontend->>User: 카드 갱신 (장소 채워짐 + GCal 등록 표시)
+
+note over User,Frontend: 카드 라이프사이클
+
+note right of Frontend: T+0 vote_card 발행 (meeting_id=142)<br/>T+30 vote 결과 → maedeup_card (place_pending=true)<br/>T+60 사용자 입력 → maedeup_card (place 채워짐)<br/>T+90 GCal 등록 완료 → maedeup_card 최종<br/>모두 같은 meeting_id로 갱신

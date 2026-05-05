@@ -3,12 +3,14 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Sparkles, Send, Square, MessageCircle, CalendarDays, MapPin, Users, CheckCircle2, ClipboardList, Share2, Check, AlertCircle } from "lucide-react";
 import ScheduleRecommendationCard from "./ScheduleRecommendationCard";
+import PlaceRecommendationCard from "./PlaceRecommendationCard";
 import { useAgentWebSocket } from "@/hooks/useAgentWebSocket";
 import { useAuth } from "@/hooks/useAuth";
 import { MeetingContext } from "@/contexts/MeetingContext";
 import { fs } from "@/lib/responsive";
 import { apiFetch } from "@/lib/api";
 import type { ContextMode } from "@/types";
+import type { CardPayload } from "@/hooks/useAgentWebSocket";
 
 interface ShareMessageResponse {
   id: number;
@@ -62,14 +64,31 @@ export default function AiAssistantPane() {
     messages,
     sendMessage,
     status,
-    voteCard,
+    cardsByMeetingId,
     voteUpdate,
-    placeRecommendation,
-    maedeupCard,
+    removeCardByMeetingId,
     autoTrigger,
     dismissAutoTrigger,
     meetingSummary,
   } = useAgentWebSocket(roomId, user?.name ?? "나", websocketOptions);
+
+  const activeCards = useMemo(
+    () =>
+      Object.values(cardsByMeetingId).sort((a, b) => a.meeting_id - b.meeting_id),
+    [cardsByMeetingId],
+  );
+
+  const activeVoteCard = useMemo(
+    () => [...activeCards].reverse().find((card) => card.type === "vote_card")?.payload ?? null,
+    [activeCards],
+  );
+
+  const activePlaceRecommendation = useMemo(
+    () =>
+      [...activeCards].reverse().find((card) => card.type === "place_recommendation")
+        ?.payload ?? null,
+    [activeCards],
+  );
 
   const [autoTriggerBanner, setAutoTriggerBanner] = useState<string | null>(null);
 
@@ -106,16 +125,16 @@ export default function AiAssistantPane() {
 
   // Sync WS data to MeetingContext for VoteCardSection in InfoPane
   useEffect(() => {
-    setVoteCardCtx?.(voteCard ?? null);
-  }, [voteCard, setVoteCardCtx]);
+    setVoteCardCtx?.(activeVoteCard);
+  }, [activeVoteCard, setVoteCardCtx]);
 
   useEffect(() => {
     setVoteUpdateCtx?.(voteUpdate ?? null);
   }, [voteUpdate, setVoteUpdateCtx]);
 
   useEffect(() => {
-    setPlaceRecommendationCtx?.(placeRecommendation ?? null);
-  }, [placeRecommendation, setPlaceRecommendationCtx]);
+    setPlaceRecommendationCtx?.(activePlaceRecommendation);
+  }, [activePlaceRecommendation, setPlaceRecommendationCtx]);
 
   // Register sendMessage callback so CalendarPane can send messages to AI
   useEffect(() => {
@@ -144,7 +163,7 @@ export default function AiAssistantPane() {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, voteCard, placeRecommendation, maedeupCard, meetingSummary, isAiLoading, aiTimeoutMessage]);
+  }, [messages, activeCards, meetingSummary, isAiLoading, aiTimeoutMessage]);
 
   // Clear loading state helper
   const clearAiLoading = useCallback(() => {
@@ -169,10 +188,10 @@ export default function AiAssistantPane() {
 
   // Also clear loading when any card payload arrives
   useEffect(() => {
-    if (voteCard || placeRecommendation || maedeupCard) {
+    if (activeCards.length > 0) {
       clearAiLoading();
     }
-  }, [voteCard, placeRecommendation, maedeupCard, clearAiLoading]);
+  }, [activeCards.length, clearAiLoading]);
 
   // Reset loading when WS reconnects (don't treat connecting as loading)
   useEffect(() => {
@@ -452,12 +471,29 @@ export default function AiAssistantPane() {
           </div>
         )}
 
-        {/* AI schedule recommendation */}
-        {voteCard && (
-          <ScheduleRecommendationCard />
-        )}
+        {activeCards.map((card: CardPayload) => {
+          if (card.type === "vote_card") {
+            return (
+              <ScheduleRecommendationCard
+                key={`${card.type}-${card.meeting_id}`}
+                voteCard={card.payload}
+                onMeetingResolved={removeCardByMeetingId}
+              />
+            );
+          }
 
-        {maedeupCard && (() => {
+          if (card.type === "place_recommendation") {
+            return (
+              <PlaceRecommendationCard
+                key={`${card.type}-${card.meeting_id}`}
+                placeRecommendation={card.payload}
+                meetingId={card.meeting_id}
+                roomId={roomId}
+              />
+            );
+          }
+
+          const maedeupCard = card.payload;
           const partialCard = maedeupCard as NonNullable<typeof maedeupCard> & {
             place_pending?: boolean;
             place_pending_message?: string;
@@ -467,6 +503,14 @@ export default function AiAssistantPane() {
           const isPlacePending = partialCard.place_pending === true;
           const displayTime = maedeupCard.selected_time;
           const displayPlace = maedeupCard.selected_place;
+          const displayPlaceName =
+            "name" in displayPlace && typeof displayPlace.name === "string"
+              ? displayPlace.name
+              : null;
+          const displayPlaceAddress =
+            "address" in displayPlace && typeof displayPlace.address === "string"
+              ? displayPlace.address
+              : "";
           const title = maedeupCard.title ?? `${maedeupCard.meeting_type ?? "모임"} 매듭 카드`;
           const timeLabel =
             displayTime?.label ??
@@ -474,6 +518,7 @@ export default function AiAssistantPane() {
 
           return (
             <div
+              key={`${card.type}-${card.meeting_id}`}
               style={{
                 display: "flex",
                 flexDirection: "column",
@@ -507,16 +552,12 @@ export default function AiAssistantPane() {
                   border: "1px solid rgba(255,255,255,0.18)",
                 }}
               >
-                {maedeupCard && (
-                  <>
-                    <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
-                      {maedeupCard.meeting_type} · {maedeupCard.date_hint}
-                    </span>
-                    <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
-                      참석 인원 {maedeupCard.headcount}명
-                    </span>
-                  </>
-                )}
+                <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
+                  {maedeupCard.meeting_type} · {maedeupCard.date_hint}
+                </span>
+                <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
+                  참석 인원 {maedeupCard.headcount ?? "-"}명
+                </span>
                 {timeLabel && (
                   <span style={{ fontSize: 15, lineHeight: 1.5 }}>
                     시간 {timeLabel}
@@ -531,20 +572,20 @@ export default function AiAssistantPane() {
                       캘린더 추후 등록
                     </span>
                   </>
-                ) : displayPlace && (
+                ) : displayPlaceName && (
                   <>
                     <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
-                      장소 {displayPlace.name}
+                      장소 {displayPlaceName}
                     </span>
                     <span style={{ fontSize: fs(14, 12), lineHeight: 1.5, color: "rgba(255,255,255,0.84)" }}>
-                      {displayPlace.address}
+                      {displayPlaceAddress}
                     </span>
                   </>
                 )}
               </div>
             </div>
           );
-        })()}
+        })}
 
         {messages.map((msg, index) => {
           const isMe = msg.role === "user";

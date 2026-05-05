@@ -3268,6 +3268,61 @@ async def supervisor_validation(state: GraphState) -> GraphState:
         return await _handle_node_exception("supervisor_validation", state, exc)
 
 
+def _card_payload_meeting_id(payload: dict[str, Any] | None) -> int | None:
+    if not isinstance(payload, dict):
+        return None
+    raw = payload.get("meeting_id")
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str) and raw.isdigit():
+        return int(raw)
+    return None
+
+
+async def _ensure_pending_meeting_id(state: GraphState, title: str) -> int:
+    db = state["db"]
+    room_pk = _room_id_as_int(state["room_id"])
+    if room_pk is None:
+        raise ValueError(f"room_id is invalid for pending meeting creation: {state['room_id']!r}")
+
+    member_result = await db.execute(
+        select(RoomMember).where(RoomMember.room_id == room_pk).limit(1)
+    )
+    first_member = member_result.scalar_one_or_none()
+    if first_member is None:
+        raise ValueError(f"No members found in room {room_pk}; cannot determine created_by")
+
+    selected_slot = state["calendar_free_slots"][0] if state.get("calendar_free_slots") else {}
+    slot_start = _parse_iso_datetime(selected_slot.get("start_at")) if selected_slot.get("start_at") else None
+    slot_end = _parse_iso_datetime(selected_slot.get("end_at")) if selected_slot.get("end_at") else None
+    if slot_start is None:
+        slot_start = datetime.now(timezone.utc).replace(tzinfo=None)
+    if slot_end is None:
+        slot_end = slot_start + timedelta(hours=2)
+    if slot_start.tzinfo is not None:
+        slot_start = slot_start.replace(tzinfo=None)
+    if slot_end.tzinfo is not None:
+        slot_end = slot_end.replace(tzinfo=None)
+
+    new_meeting = MeetingSchedule(
+        room_id=room_pk,
+        title=title,
+        scheduled_at=slot_start,
+        end_at=slot_end,
+        vote_options=None,
+        votes={},
+        status="pending",
+        created_by=first_member.user_id,
+    )
+    db.add(new_meeting)
+    await db.commit()
+    await db.refresh(new_meeting)
+    if new_meeting.id is None:
+        raise ValueError("Pending meeting creation did not return an id")
+    logger.info("Created pending meeting id=%s for card payload", new_meeting.id)
+    return new_meeting.id
+
+
 async def vote_card_creation(state: GraphState) -> GraphState:
     _t0 = time.monotonic()
     try:
@@ -3400,10 +3455,20 @@ async def place_recommendation(state: GraphState) -> GraphState:
     try:
         if _has_node_error(state):
             return state
+        # Fix J: place cards join the same lifecycle as vote/maedeup cards.
+        # If no upstream vote exists, create a pending meeting row so the card
+        # still has a non-null meeting_id for frontend upsert.
+        meeting_id = _card_payload_meeting_id(state.get("vote_card_payload"))
         if state.get("confirmed_place"):
+            if meeting_id is None:
+                meeting_id = await _ensure_pending_meeting_id(
+                    state,
+                    f"{state.get('meeting_type') or '모임'} 장소 추천",
+                )
             state["place_recommendation_payload"] = {
                 "type": "place_recommendation",
                 "room_id": state["room_id"],
+                "meeting_id": meeting_id,
                 "place_hint": state.get("place_hint"),
                 "recommendations": [
                     {
@@ -3563,9 +3628,15 @@ async def place_recommendation(state: GraphState) -> GraphState:
             logger.info("[OPT] Skipping place self-correction: no disliked foods")
 
         state["place_search_results"] = ranked_places
+        if meeting_id is None:
+            meeting_id = await _ensure_pending_meeting_id(
+                state,
+                f"{state.get('meeting_type') or '모임'} 장소 추천",
+            )
         state["place_recommendation_payload"] = {
             "type": "place_recommendation",
             "room_id": state["room_id"],
+            "meeting_id": meeting_id,
             "place_hint": state.get("place_hint"),
             "recommendations": ranked_places[:5],
             # 익명 group constraint 요약 (디자인 P2). 누가 어떤 값을 가졌는지는
@@ -3613,6 +3684,21 @@ async def maedeup_card_creation(state: GraphState) -> GraphState:
     try:
         if _has_node_error(state):
             return state
+        selected_slot = state["calendar_free_slots"][0] if state.get("calendar_free_slots") else {}
+        selected_slot_meeting_id = selected_slot.get("meeting_id") or selected_slot.get("id")
+        # Fix J: conclusion/all_members fast paths can enter without a vote card.
+        # Reuse any upstream card meeting_id; otherwise create a pending meeting row.
+        meeting_id = (
+            _card_payload_meeting_id(state.get("vote_card_payload"))
+            or _card_payload_meeting_id(state.get("place_recommendation_payload"))
+            or _card_payload_meeting_id(selected_slot)
+            or (selected_slot_meeting_id if isinstance(selected_slot_meeting_id, int) else None)
+        )
+        if meeting_id is None:
+            meeting_id = await _ensure_pending_meeting_id(
+                state,
+                f"{state.get('meeting_type') or '모임'} 매듭 카드",
+            )
         if state.get("partial_mode") == "time_only":
             parsed_time = state.get("parsed_time_hint")
             date_value = state.get("date_hint")
@@ -3635,6 +3721,7 @@ async def maedeup_card_creation(state: GraphState) -> GraphState:
                 selected_time = {"label": parsed_time}
             payload = {
                 "type": "maedeup_card",
+                "meeting_id": meeting_id,
                 "date": date_value,
                 "time": parsed_time,
                 "place": None,
@@ -3651,7 +3738,6 @@ async def maedeup_card_creation(state: GraphState) -> GraphState:
             state["maedeup_card_payload"] = payload
             state["status"] = "completed"
             return state
-        selected_slot = state["calendar_free_slots"][0] if state.get("calendar_free_slots") else {}
         if state.get("confirmed_place"):
             selected_place = {
                 "name": state.get("confirmed_place"),
@@ -3666,6 +3752,7 @@ async def maedeup_card_creation(state: GraphState) -> GraphState:
         state["maedeup_card_payload"] = {
             "type": "maedeup_card",
             "room_id": state["room_id"],
+            "meeting_id": meeting_id,
             "title": f"{state.get('meeting_type') or '모임'} 매듭 카드",
             "intent": state.get("intent"),
             "date_hint": state.get("date_hint"),

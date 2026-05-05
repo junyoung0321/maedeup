@@ -34,8 +34,23 @@ function groupByDate(options: VoteCardPayload["time_options"]) {
   return groups;
 }
 
-export default function ScheduleRecommendationCard() {
-  const { voteCard, roomId, refreshCalendar, setContextMode, sendMessageToAi, setCalendarSyncStatus } = useMeeting();
+interface ScheduleRecommendationCardProps {
+  voteCard?: VoteCardPayload | null;
+  onMeetingResolved?: (meetingId: number) => void;
+}
+
+export default function ScheduleRecommendationCard({
+  voteCard: voteCardProp,
+  onMeetingResolved,
+}: ScheduleRecommendationCardProps = {}) {
+  const {
+    voteCard: contextVoteCard,
+    roomId,
+    refreshCalendar,
+    sendMessageToAi,
+    setCalendarSyncStatus,
+  } = useMeeting();
+  const voteCard = voteCardProp ?? contextVoteCard;
 
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   const [showAlternatives, setShowAlternatives] = useState(false);
@@ -103,6 +118,9 @@ export default function ScheduleRecommendationCard() {
         result.calendar_event_for_self ?? false,
         result.calendar_member_count ?? 0,
       );
+      if (voteCard.meeting_id !== undefined) {
+        onMeetingResolved?.(voteCard.meeting_id);
+      }
       refreshCalendar();
       if (sendMessageToAi) {
         sendMessageToAi("일정이 확정되었습니다. 장소를 추천해주세요.");
@@ -112,14 +130,16 @@ export default function ScheduleRecommendationCard() {
     } finally {
       setIsConfirming(false);
     }
-  }, [voteCard, selectedSlotId, roomId, refreshCalendar]);
+  }, [voteCard, selectedSlotId, roomId, refreshCalendar, setCalendarSyncStatus, sendMessageToAi, onMeetingResolved]);
 
   if (!voteCard) return null;
 
   const best = voteCard.time_options[0];
   const alternatives = voteCard.time_options.slice(1);
   const dateGroups = groupByDate(voteCard.time_options);
-  const isMultiDate = Object.keys(dateGroups).length > 1;
+  const isMultiDate =
+    voteCard.calendar_strategy === "multi_date_vote" &&
+    Object.keys(dateGroups).length > 1;
   const headcount = voteCard.headcount;
   const selectedSlot = voteCard.time_options.find((o) => o.slot_id === selectedSlotId);
 

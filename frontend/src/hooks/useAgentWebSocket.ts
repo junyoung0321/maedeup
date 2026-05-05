@@ -22,6 +22,7 @@ export interface VoteCardPayload {
   meeting_id?: number;
   time_options: VoteCardTimeOption[];
   headcount: number | null;
+  calendar_strategy?: string | null;
 }
 
 export interface VoteUpdatePayload {
@@ -72,6 +73,25 @@ export interface MaedeupCardPayload {
   selected_time: MaedeupCardSelectionTime;
   selected_place: MaedeupCardSelectionPlace;
 }
+
+export type VotePayload = VoteCardPayload & { meeting_id?: number };
+export type PlacePayload = PlaceRecommendationPayload & { meeting_id?: number };
+export type MaedeupPayload = Omit<MaedeupCardPayload, "headcount" | "selected_place"> & {
+  meeting_id?: number;
+  headcount: number | null;
+  selected_place: MaedeupCardSelectionPlace | Record<string, never>;
+  date?: string | null;
+  time?: string | { label?: string } | null;
+  place?: string | null;
+  place_pending?: boolean;
+  place_pending_message?: string;
+  calendar_registered?: boolean;
+};
+
+export type CardPayload =
+  | { type: "vote_card"; meeting_id: number; payload: VotePayload }
+  | { type: "place_recommendation"; meeting_id: number; payload: PlacePayload }
+  | { type: "maedeup_card"; meeting_id: number; payload: MaedeupPayload };
 
 export interface MeetingSummaryPayload {
   type: "meeting_summary";
@@ -160,7 +180,7 @@ function isPlaceRecommendationPayload(data: unknown): data is PlaceRecommendatio
   );
 }
 
-function isMaedeupCardPayload(data: unknown): data is MaedeupCardPayload {
+function isMaedeupCardPayload(data: unknown): data is MaedeupPayload {
   if (!data || typeof data !== "object") {
     return false;
   }
@@ -171,7 +191,7 @@ function isMaedeupCardPayload(data: unknown): data is MaedeupCardPayload {
     typeof candidate.title === "string" &&
     typeof candidate.meeting_type === "string" &&
     typeof candidate.date_hint === "string" &&
-    typeof candidate.headcount === "number" &&
+    (typeof candidate.headcount === "number" || candidate.headcount === null) &&
     typeof candidate.selected_time === "object" &&
     candidate.selected_time !== null &&
     typeof candidate.selected_place === "object" &&
@@ -203,17 +223,58 @@ function isAiAutoTriggerPayload(data: unknown): data is AiAutoTriggerPayload {
   );
 }
 
+function getMeetingId(data: unknown): number | null {
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+
+  const candidate = data as { meeting_id?: unknown };
+  if (typeof candidate.meeting_id === "number" && Number.isFinite(candidate.meeting_id)) {
+    return candidate.meeting_id;
+  }
+  if (typeof candidate.meeting_id === "string" && /^\d+$/.test(candidate.meeting_id)) {
+    return Number(candidate.meeting_id);
+  }
+  return null;
+}
+
+function toCardPayload(data: unknown): CardPayload | null {
+  const meetingId = getMeetingId(data);
+  if (meetingId === null) {
+    return null;
+  }
+  if (isVoteCardPayload(data)) {
+    return { type: "vote_card", meeting_id: meetingId, payload: data };
+  }
+  if (isPlaceRecommendationPayload(data)) {
+    return { type: "place_recommendation", meeting_id: meetingId, payload: data };
+  }
+  if (isMaedeupCardPayload(data)) {
+    return { type: "maedeup_card", meeting_id: meetingId, payload: data };
+  }
+  return null;
+}
+
+function isMeetingResolvedPayload(data: unknown): data is { type: "meeting_confirmed" | "meeting_cancelled"; meeting_id: number } {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+
+  const candidate = data as { type?: unknown; meeting_id?: unknown };
+  return (
+    (candidate.type === "meeting_confirmed" || candidate.type === "meeting_cancelled") &&
+    typeof candidate.meeting_id === "number"
+  );
+}
+
 function getReconnectDelay(attempt: number): number {
   return Math.min(1000 * 2 ** attempt, MAX_RECONNECT_DELAY_MS);
 }
 
 export function useAgentWebSocket(roomId: string, sender: string, options?: AgentOptions) {
   const [messages, setMessages] = useState<ChatMessagePayload[]>([]);
-  const [voteCard, setVoteCard] = useState<VoteCardPayload | null>(null);
+  const [cardsByMeetingId, setCardsByMeetingId] = useState<Record<number, CardPayload>>({});
   const [voteUpdate, setVoteUpdate] = useState<VoteUpdatePayload | null>(null);
-  const [placeRecommendation, setPlaceRecommendation] =
-    useState<PlaceRecommendationPayload | null>(null);
-  const [maedeupCard, setMaedeupCard] = useState<MaedeupCardPayload | null>(null);
   const [autoTrigger, setAutoTrigger] = useState<AiAutoTriggerPayload | null>(null);
   const [meetingSummary, setMeetingSummary] = useState<MeetingSummaryPayload | null>(null);
   const [status, setStatus] = useState<WsStatus>("connecting");
@@ -237,10 +298,8 @@ export function useAgentWebSocket(roomId: string, sender: string, options?: Agen
     let isActive = true;
 
     setMessages([]);
-    setVoteCard(null);
+    setCardsByMeetingId({});
     setVoteUpdate(null);
-    setPlaceRecommendation(null);
-    setMaedeupCard(null);
     setAutoTrigger(null);
     setMeetingSummary(null);
 
@@ -281,8 +340,9 @@ export function useAgentWebSocket(roomId: string, sender: string, options?: Agen
           if (!isActive || !data) {
             return;
           }
-          if (isVoteCardPayload(data)) {
-            setVoteCard(data);
+          const card = toCardPayload(data);
+          if (card) {
+            setCardsByMeetingId((prev) => ({ ...prev, [card.meeting_id]: card }));
           }
         })
         .catch(() => {
@@ -298,8 +358,9 @@ export function useAgentWebSocket(roomId: string, sender: string, options?: Agen
           if (!isActive || !data) {
             return;
           }
-          if (isPlaceRecommendationPayload(data)) {
-            setPlaceRecommendation(data);
+          const card = toCardPayload(data);
+          if (card) {
+            setCardsByMeetingId((prev) => ({ ...prev, [card.meeting_id]: card }));
           }
         })
         .catch(() => {
@@ -387,24 +448,30 @@ export function useAgentWebSocket(roomId: string, sender: string, options?: Agen
           return;
         }
 
-        if (isVoteCardPayload(parsed)) {
-          setVoteCard(parsed);
+        const card = toCardPayload(parsed);
+        if (card) {
+          setCardsByMeetingId((prev) => ({ ...prev, [card.meeting_id]: card }));
+          if (card.type === "vote_card") {
+            setVoteUpdate(null);
+          }
+          return;
+        }
+
+        if (isMeetingResolvedPayload(parsed)) {
+          setCardsByMeetingId((prev) => {
+            if (!prev[parsed.meeting_id]) {
+              return prev;
+            }
+            const next = { ...prev };
+            delete next[parsed.meeting_id];
+            return next;
+          });
           setVoteUpdate(null);
           return;
         }
 
         if (isVoteUpdatePayload(parsed)) {
           setVoteUpdate(parsed);
-          return;
-        }
-
-        if (isPlaceRecommendationPayload(parsed)) {
-          setPlaceRecommendation(parsed);
-          return;
-        }
-
-        if (isMaedeupCardPayload(parsed)) {
-          setMaedeupCard(parsed);
           return;
         }
 
@@ -490,14 +557,24 @@ export function useAgentWebSocket(roomId: string, sender: string, options?: Agen
     setAutoTrigger(null);
   }, []);
 
+  const removeCardByMeetingId = useCallback((meetingId: number) => {
+    setCardsByMeetingId((prev) => {
+      if (!prev[meetingId]) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[meetingId];
+      return next;
+    });
+  }, []);
+
   return {
     messages,
     sendMessage,
     status,
-    voteCard,
+    cardsByMeetingId,
     voteUpdate,
-    placeRecommendation,
-    maedeupCard,
+    removeCardByMeetingId,
     autoTrigger,
     dismissAutoTrigger,
     meetingSummary,

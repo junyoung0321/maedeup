@@ -614,7 +614,10 @@ async def agent_ws(
                         r, user_channel, json.dumps(ack_payload, ensure_ascii=False),
                     )
                 elif action == "confirm_time":
-                    # 시간 확정 → 슬롯 컨텍스트 저장 후 장소 추천 파이프라인 실행
+                    # 시간 확정 → 슬롯 컨텍스트 저장 후 장소 추천 파이프라인 실행.
+                    # (이전엔 가짜 user 메시지를 DB에 INSERT해서 시뮬했으나,
+                    #  WS 일반 핸들러가 그걸 user 입력으로 잘못 인식 + quick_classify 호출 →
+                    #  엉뚱한 vote_card 생성 부작용. 직접 run_pipeline 호출로 변경.)
                     slot_context["confirmed_time"] = payload.get("time")
                     slot_context["confirmed_date"] = payload.get("date") or slot_context.get("confirmed_date")
 
@@ -622,21 +625,6 @@ async def agent_ws(
                         room_pk_val = int(room_id)
                     except (TypeError, ValueError):
                         room_pk_val = None
-
-                    synthetic_content = "일정이 확정되었습니다. 장소를 추천해주세요"
-                    async with AsyncSessionLocal() as session:
-                        synth_msg = ChatMessage(
-                            pane_type=PaneType.agent,
-                            role="user",
-                            content=synthetic_content,
-                            sender="system",
-                            room_id=room_pk_val,
-                            user_id=user_id_check,
-                            visibility=Visibility.private.value,
-                        )
-                        session.add(synth_msg)
-                        await session.commit()
-                        await session.refresh(synth_msg)
 
                     async with AsyncSessionLocal() as session:
                         context = await MessageReader.load_agent_context(

@@ -122,9 +122,8 @@ export default function ScheduleRecommendationCard({
         onMeetingResolved?.(voteCard.meeting_id);
       }
       refreshCalendar();
-      if (sendMessageToAi) {
-        sendMessageToAi("일정이 확정되었습니다. 장소를 추천해주세요.");
-      }
+      // 자동 안내 메시지 발송 제거: backend confirm endpoint가 assistant 메시지로 안내,
+      // 또는 카드 자체에 "확정됨" 라벨로 충분. AI 패널 입력창은 사용자 ACT 5 입력 전용.
     } catch (err) {
       setError(err instanceof Error ? err.message : "일정 확정에 실패했습니다.");
     } finally {

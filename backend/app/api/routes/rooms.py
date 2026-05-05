@@ -302,12 +302,10 @@ async def upsert_preference(
         select(sa_func.count()).select_from(MeetingPreference).where(MeetingPreference.room_id == room_id)
     )
     pref_count = pref_count_result.scalar_one()
+    _ = (total_members, pref_count)  # 향후 분석용 보존, 현재는 사용 안 함
 
-    if pref_count >= total_members:
-        # 전원 완료 → 백그라운드에서 파이프라인 트리거
-        asyncio.create_task(
-            _trigger_auto_recommendation(room_id, session, user_name)
-        )
+    # 자동 추천 로직 제거 (시연/UX 흐름 부자연스러움 — 사용자가 채팅 시작도 전에 카드 발행).
+    # AI 개입은 (1) 채팅방 stalemate/conclusion 자동 트리거, (2) AI 패널 직접 입력으로만 발화.
 
     return PreferenceResponse(
         user_id=user_id,

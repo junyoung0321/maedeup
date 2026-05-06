@@ -181,6 +181,110 @@ async def _emit_auto_trigger_greeting(
         logger.debug("Failed to emit auto-trigger greeting", exc_info=True)
 
 
+async def _sync_chat_rejected_to_unavailability(
+    redis_client: aioredis.Redis | None,
+    room_pk: int,
+    signals: dict | None,
+) -> None:
+    """해결점 P (임시 구현, B 옵션):
+    `_analyze_conversation`이 추출한 `rejected_dates`를 멤버별 unavailability로 동기화 →
+    캘린더 X/Y 카운트가 채팅 자연어 거부 발언을 반영하도록 함.
+
+    안전한 부분만 — authed 멤버 + user 명시 + 이름 유일 매핑만. 게스트/null user/이름충돌은 skip.
+    번복 처리는 미구현 (시연 후 보완).
+    """
+    if not isinstance(signals, dict):
+        return
+    rejected = signals.get("rejected_dates") or []
+    if not isinstance(rejected, list) or not rejected:
+        return
+    if redis_client is None:
+        return
+
+    names: set[str] = set()
+    for entry in rejected:
+        if isinstance(entry, dict) and isinstance(entry.get("user"), str):
+            name = entry["user"].strip()
+            if name:
+                names.add(name)
+    if not names:
+        return
+
+    try:
+        async with AsyncSessionLocal() as db:
+            # 게스트도 포함 — 시뮬/시연 멤버 다양성 대응 (임시).
+            stmt = (
+                select(User.id, User.name)
+                .join(RoomMember, RoomMember.user_id == User.id)
+                .where(RoomMember.room_id == room_pk)
+                .where(User.name.in_(names))
+            )
+            rows = (await db.execute(stmt)).all()
+    except Exception:
+        logger.warning("Member name lookup failed for room %s", room_pk, exc_info=True)
+        return
+
+    name_to_id: dict[str, int] = {}
+    collisions: set[str] = set()
+    for uid, nm in rows:
+        if nm in name_to_id and name_to_id[nm] != uid:
+            collisions.add(nm)
+        else:
+            name_to_id[nm] = uid
+    for nm in collisions:
+        name_to_id.pop(nm, None)
+        logger.info("[CHAT_UNAVAIL_SYNC] Skip name collision: %s (room=%s)", nm, room_pk)
+    if not name_to_id:
+        return
+
+    social_channel = f"social:{room_pk}"
+    applied_count = 0
+    for entry in rejected:
+        if not isinstance(entry, dict):
+            continue
+        user_name = entry.get("user")
+        date = entry.get("date")
+        if not isinstance(user_name, str) or not isinstance(date, str):
+            continue
+        uid = name_to_id.get(user_name.strip())
+        if uid is None:
+            continue
+        try:
+            dates_after = await sr.record_unavailable_toggle(
+                redis_client,
+                room_id=room_pk,
+                user_id=uid,
+                date=date,
+                unavailable=True,
+            )
+        except Exception:
+            logger.warning(
+                "record_unavailable_toggle failed room=%s uid=%s date=%s",
+                room_pk, uid, date, exc_info=True,
+            )
+            continue
+        applied_count += 1
+        out = json.dumps(
+            {
+                "type": "peer_unavailable_update",
+                "user_id": uid,
+                "sender": user_name,
+                "dates": dates_after,
+            },
+            ensure_ascii=False,
+        )
+        try:
+            await redis_client.publish(social_channel, out)
+        except Exception:
+            logger.warning("Publish peer_unavailable_update failed room=%s", room_pk, exc_info=True)
+
+    if applied_count:
+        logger.info(
+            "[CHAT_UNAVAIL_SYNC] Applied %d rejected_dates to unavailability (room=%s)",
+            applied_count, room_pk,
+        )
+
+
 async def _run_auto_trigger_pipeline(
     room_id: str,
     trigger_content: str,
@@ -228,6 +332,15 @@ async def _run_auto_trigger_pipeline(
                     summary = card if isinstance(card, dict) else {}
                     signals = analysis.get("signals")
                     slot_context["pre_extracted_signals"] = signals if isinstance(signals, dict) else None
+                    # 해결점 P (임시): 채팅 자연어 거부를 멤버 unavailability로 sync.
+                    try:
+                        room_pk_for_sync = int(room_id)
+                    except (TypeError, ValueError):
+                        room_pk_for_sync = None
+                    if room_pk_for_sync is not None:
+                        await _sync_chat_rejected_to_unavailability(
+                            redis_client, room_pk_for_sync, signals if isinstance(signals, dict) else None
+                        )
                 else:
                     # 해결점 D: legacy fallback (extract_meeting_summary) 제거.
                     # _analyze_conversation 실패 시 빈 summary로 진행.

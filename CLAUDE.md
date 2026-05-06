@@ -2,14 +2,16 @@
 
 ## 진행 중인 작업
 세션 시작 시 `docs/handoff/` 폴더의 가장 최근 문서를 먼저 확인하세요.
-**현재 task**: 시연 루프 검증 — 감사 해결점 A~M 코드 적용 완료, 브라우저 시연 ACT 1~5 검증 진행 중.
-다음 세션 시작 지점:
-1. ACT 3 재확인 (vote_card → confirm_time → Option A 흐름)
-2. 채팅방 "안되는 날짜" 미적용 버그 디버깅
+**현재 task**: 시연 직전 — 해결점 A~P 적용 완료, 풀 시나리오 자동화 검증 통과.
+시연 자동화: `python .gstack-browser-launch.py` (터미널 1) + `python .gstack-demo.py` (터미널 2). 사전에 `.gstack-demo-token` 파일에 JWT 저장.
+시연 후 보완 항목:
+1. 해결점 P 정교화 (번복 처리, 게스트 정책)
+2. 해결점 O (정규식 단축 사각지대)
+3. ACT 4 confirm 후속 메시지 / ACT 5 quick_classify 보강
 참고:
-- `docs/handoff/2026-05-06-demo-loop-progress.md` (최신 — 미커밋 변경 + 다음 스텝)
-- `docs/handoff/2026-05-05-architecture-audit-progress.md`
-- `docs/handoff/audit-findings.md`
+- `docs/handoff/2026-05-06-demo-loop-progress.md` (최신 — 시연 검증 + 자동화 + 보완 항목)
+- `docs/handoff/demo-scenario.md` (시연 시나리오 SoT)
+- `docs/handoff/audit-findings.md` (해결점 A~P)
 - `docs/handoff/diagrams/`
 
 ## Project

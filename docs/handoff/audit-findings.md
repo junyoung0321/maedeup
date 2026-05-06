@@ -936,3 +936,65 @@
   - 코드: -80줄, 책임 단일화
 - **시급도**: 낮음 (실패 케이스 드뭄, 시연 영향 미미)
 - **다이어그램**: `02-langgraph-flow.mmd`의 A1/A2/A3 박스 → A1만 남기고 A2/A3 제거 표시
+
+---
+
+### 해결점 O. 정규식 단축 경로의 rejected_dates 누락 (확장)
+
+- **상태**: 🔴 확정 (코드 검증 완료, 2026-05-06 세션)
+- **위치**:
+  - `backend/app/services/langgraph_pipeline.py:979-1047` (`_pattern_extract_entities`)
+  - `backend/app/services/langgraph_pipeline.py:1054-1062` (`_extract_entities_from_context` shortcut)
+  - `backend/app/services/langgraph_pipeline.py:283-295` (`_serialize_context` social_recent 포함)
+- **증상**:
+  - AI 패널 직접 요청 ("일정 잡아줘") 경로에서 채팅방 누적 거부 발언이 vote_card 후보 필터에 반영 안 됨
+  - 자동 트리거 경로(`_analyze_conversation`)는 정상. AI 패널 직접 경로만 누락
+- **원인 (코드 추적)**:
+  - `_pattern_extract_entities`는 `rejected_dates` 키를 결과 dict에 만들지 않음 (line 981 result 초기화에 누락)
+  - `_extract_entities_from_context`가 정규식 1차 단축 (date_hints≥2 OR date+place 존재) 시 Gemini 호출을 스킵 (line 1056, 1060)
+  - `_serialize_context`는 social_recent 채팅방 전체 메시지를 LLM 입력 맥락에 포함 (line 291-292)
+  - 채팅방에 "5월 8일 안돼", "5월 10일 어때?" 같은 다중 날짜 발언이 누적 → 정규식이 양쪽 다 포착 → date_hints 길이 ≥2 → 단축 경로 → Gemini 스킵 → rejected_dates 빈 채로 진행
+- **2026-05-05 메모리 노트와의 관계**:
+  - `project_pattern_skip_rejected_blindspot.md`에서 "단일 메시지 동시 발언" 케이스로 보류 등급 결정
+  - 본 분석에서 social_recent까지 LLM 입력에 포함된다는 사실이 추가 → 채팅방 누적 거부 전체가 사각지대
+  - 보류 → 시연 차단 등급 승격
+- **트리거 조건 (재현)**:
+  1. 채팅방에 `M월 D일` 또는 요일 표현 ≥2개 (한 개는 거부, 다른 한 개는 추천 후보)
+  2. 또는 거부된 날짜 1개 + 명확한 지명 1개 (강남/홍대 등)
+  3. 사용자가 AI 패널에서 "일정 추천해줘" 직접 요청
+- **수정 후보**:
+  - 옵션 A: `_pattern_extract_entities`에 거부 정규식 추가 (안 돼/못 가/힘들어/패스 등) — Completeness 7/10, ~15min
+  - 옵션 B: shortcut 조건에 "context에 거부 키워드 없을 때만" AND 추가 — Completeness 9/10, ~10min, **추천**
+  - 옵션 C: `social_recent`만 따로 LLM 콜로 rejected/conflict 별도 추출 — Completeness 8/10, ~30min, +1 LLM 호출
+  - 옵션 D: `run_pipeline` 항상 `_analyze_conversation` 선행 — Completeness 10/10, ~20min, 매 요청 +1 LLM 호출 (비용 큼)
+- **시급도**: 시연 직전. 단 사용자 시나리오 흐름이 auto-trigger 경유 위주라 시연에서 우연히 안 터질 가능성도 있음
+- **사각지대 추가**: `_pattern_extract_entities`는 `conflict_detected/conflict_options/conflict_users`도 만들지 않음. 정규식 통과 시 충돌 감지도 같이 누락. 같은 fix로 해결 가능
+
+---
+
+### 해결점 P. 채팅 자연어 거부 → 캘린더 unavailability 동기화 갭
+
+- **상태**: 🟡 기능 갭 (버그 아님, 미구현 feature)
+- **위치**:
+  - 채팅 자연어 추출: `backend/app/services/langgraph_pipeline.py:4309` (`_analyze_conversation` — 이미 존재)
+  - 캘린더 데이터 소스: `backend/app/services/scheduling_round.py:704` (`record_unavailable_toggle` — 이미 존재)
+  - 갭: 둘을 잇는 호출 없음
+- **증상**:
+  - 사용자가 채팅방에서 "5월 8일 안돼"라고 발언해도 캘린더 8일 셀의 "X/Y 가능" 카운트가 변경 안 됨
+  - vote_card 추천에서는 8일이 후보에서 빠지지만 (auto-trigger 경로 한정), 캘린더 UI는 그대로 "전원 가능" 표시
+- **원인**:
+  - 캘린더 카운트는 멤버×날짜 명시 데이터(`record_availability` TimeBar 드래그 + `record_unavailable_toggle` 불가능 버튼)만 집계
+  - 채팅 자연어 → unavailability 동기화 경로가 미구현
+  - vote_card는 한 번 휙 보고 후보 필터하는 일회성 경로라 자연어 OK, 캘린더는 멤버별 영구 데이터라 정확한 매핑 필요
+- **수정 방향 (사용자 제안)**:
+  - 교착 감지 시 `_analyze_conversation`이 이미 `signals.rejected_dates = [{date, user, reason}]` 추출 중
+  - 이걸 그대로 `record_unavailable_toggle(room_id, user_id, date, unavailable=True)`에 매핑하면 캘린더 카운트 갱신
+  - 함정 1: `signals.rejected_dates[].user`는 발신자 NAME (string, LLM 추출), `record_unavailable_toggle`은 user_id (int) 요구 → 이름→ID 매핑 필요 (방 멤버 테이블 조회 + LLM 환각 방어)
+  - 함정 2: 매핑 실패 또는 user 필드 null 시 정책 — skip / 전체 멤버 적용 / 호스트만 적용 — 결정 필요
+  - 함정 3: 토글 인버스 ("아 8일 되네" 번복) — `signals.rejected_dates`에서 빠지면 자동 clear할지, 명시 unavailable=False 추출 받을지
+  - WebSocket 브로드캐스트: 캘린더 즉시 리프레시 트리거 필요 (`scheduling_update` 등 기존 채널 활용)
+- **시급도**: 시연 핵심 magical moment 후보. "AI가 채팅 읽고 캘린더까지 자동 갱신" 데모 가치 높음
+- **코스트**:
+  - 최소 구현 (auto-trigger 경로에 코드 30~50줄 추가): ~30~45min
+  - 인버스/번복 케이스 + 매핑 강건화: 추가 ~30min
+- **관련 메모리**: `project_pattern_skip_rejected_blindspot.md` (사각지대 노트 — 본 해결점 P가 그 파급의 한 갈래)

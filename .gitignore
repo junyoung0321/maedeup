@@ -21,6 +21,11 @@
 .env.*.local
 .env.local
 .gstack/
+.gstack-demo-token
+.gstack-shots/
+.gstack-bak-*/
+.gstack-old/
+.gstack.bak.*/
 .next/
 .venv/
 Thumbs.db

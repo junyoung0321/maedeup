@@ -956,6 +956,68 @@ _KOREAN_PLACE_PATTERN = re.compile(
     r'([가-힣]{1,10}(?:동|구|역|로|길|리|면|읍|시|군|산|공원|숲))'
 )
 
+# 해결점 A5-1: cuisine 의도 → fast-path에서 meeting_type set + Kakao 검색 query 강제 + 응답 카테고리 후처리.
+# 첫 매칭이 우선이라 longer-key first 정렬로 컴파일 시 보강.
+_CUISINE_TRIGGERS: dict[str, str] = {
+    "한정식": "한식", "고깃집": "한식", "삼겹살": "한식", "비빔밥": "한식",
+    "떡볶이": "분식", "김밥": "분식",
+    "한식": "한식", "국밥": "한식", "찌개": "한식", "불고기": "한식", "냉면": "한식", "백반": "한식",
+    "중식": "중식", "중국집": "중식", "짜장": "중식", "짬뽕": "중식", "마라": "중식",
+    "일식": "일식", "초밥": "일식", "스시": "일식", "라멘": "일식", "돈카츠": "일식", "우동": "일식",
+    "이탈리안": "양식", "이태리": "양식", "파스타": "양식", "스테이크": "양식", "피자": "양식",
+    "양식": "양식",
+    "분식": "분식",
+    "베이커리": "카페", "브런치": "카페", "디저트": "카페",
+    "카페": "카페", "커피": "카페",
+    "이자카야": "주점", "포차": "주점", "술집": "주점",
+    "주점": "주점", "호프": "주점",
+}
+
+# Kakao category_name (예: "음식점 > 한식 > 국밥") 후처리 필터 키워드.
+_CUISINE_CATEGORY_KEYWORDS: dict[str, list[str]] = {
+    "한식": ["한식", "한정식", "국밥", "찌개", "고깃집", "쌈밥", "비빔밥", "국수",
+             "냉면", "백반", "삼겹살", "불고기", "곱창", "전골", "구이", "탕"],
+    "중식": ["중식", "중국집", "딤섬", "마라"],
+    "일식": ["일식", "초밥", "라멘", "돈카츠", "우동", "사시미", "스시"],
+    "양식": ["양식", "이탈리안", "스테이크", "파스타", "피자", "프렌치"],
+    "분식": ["분식", "떡볶이", "김밥"],
+    "카페": ["카페", "커피", "디저트", "베이커리", "브런치"],
+    "주점": ["주점", "술집", "이자카야", "포차", "호프", "바", "와인"],
+}
+
+# Place 의도 키워드 (cuisine 없어도 fast-path 진입 허용).
+_PLACE_INTENT_PATTERN = re.compile(r"맛집|추천|식당|음식점|예약|있는데|어디|놀러|가볼")
+
+# Place fast-path gate: 날짜/인원/시간 등 다른 entity 신호가 있으면 Gemini 추출에 위임.
+# 시연 단순 케이스("강남 한식 맛집 추천")만 fast-path, 복합 케이스는 정상 흐름.
+_OTHER_ENTITY_SIGNAL_PATTERN = re.compile(
+    r"\d+\s*명|\d+\s*시|\d+\s*분|\d+\s*월|\d+\s*일|"
+    r"월요일|화요일|수요일|목요일|금요일|토요일|일요일|"
+    r"주말|평일|내일|모레|오늘|이번\s*주|다음\s*주|이번\s*주말|다음\s*주말|"
+    r"아침|점심|저녁|밤|새벽|오전|오후"
+)
+
+
+def _detect_cuisine_type(text: str) -> str | None:
+    """사용자 메시지에서 cuisine 의도 추출. 매칭되면 cuisine ID, 없으면 None."""
+    if not text:
+        return None
+    for trigger, cuisine in _CUISINE_TRIGGERS.items():
+        if trigger in text:
+            return cuisine
+    return None
+
+
+def _filter_places_by_cuisine(
+    places: list[dict[str, Any]],
+    cuisine: str,
+) -> list[dict[str, Any]]:
+    """Kakao 응답 category로 cuisine 필터. 호출자는 결과 0개 시 원본 fallback 결정."""
+    keywords = _CUISINE_CATEGORY_KEYWORDS.get(cuisine)
+    if not keywords:
+        return list(places)
+    return [p for p in places if any(kw in str(p.get("category", "")) for kw in keywords)]
+
 
 def _extract_korean_place_keyword(text: str) -> str | None:
     """사용자 메시지에서 한국 지명 키워드를 추출합니다."""
@@ -1938,6 +2000,145 @@ def _build_group_constraints_summary(constraints: dict[str, list[str]]) -> str:
     return "모임 멤버 중 " + " / ".join(parts) + " 고려"
 
 
+async def _get_room_member_constraints_named(state: GraphState) -> list[dict[str, Any]]:
+    """해결점 A5-2: per-user constraints with name. 강도순 차등 처리용.
+
+    공유 토글(share_food/location/schedule_data) 존중. 토글 OFF면 해당 카테고리 빈 값.
+    이름이 없는 user는 제외. 빈 entry(어떤 값도 없는)도 제외.
+    """
+    db = state["db"]
+    room_pk = _room_id_as_int(state["room_id"])
+    if room_pk is None:
+        return []
+
+    member_result = await db.execute(
+        select(RoomMember).where(RoomMember.room_id == room_pk)
+    )
+    members = member_result.scalars().all()
+    user_ids = [member.user_id for member in members]
+    if not user_ids:
+        return []
+
+    user_result = await db.execute(select(User).where(User.id.in_(user_ids)))
+    users = user_result.scalars().all()
+
+    per_user: list[dict[str, Any]] = []
+    for user in users:
+        name = (getattr(user, "name", None) or "").strip()
+        if not name:
+            continue
+
+        share_food = bool(
+            getattr(user, "share_food_data", True)
+            if getattr(user, "share_food_data", True) is not None
+            else True
+        )
+        share_location = bool(
+            getattr(user, "share_location_data", True)
+            if getattr(user, "share_location_data", True) is not None
+            else True
+        )
+        share_schedule = bool(
+            getattr(user, "share_schedule_data", True)
+            if getattr(user, "share_schedule_data", True) is not None
+            else True
+        )
+
+        food_restrictions = list(user.food_restrictions or []) if share_food else []
+        food_preferences = list(user.food_preferences or []) if share_food else []
+        liked_areas = list(user.liked_areas or []) if share_location else []
+        disliked_areas = list(user.disliked_areas or []) if share_location else []
+        time_preference = user.time_preference if share_schedule else None
+        transport_mode = user.transport_mode if share_schedule else None
+
+        if not any([
+            food_restrictions, food_preferences, liked_areas, disliked_areas,
+            time_preference, transport_mode,
+        ]):
+            continue
+
+        per_user.append({
+            "name": name,
+            "food_restrictions": food_restrictions,
+            "food_preferences": food_preferences,
+            "liked_areas": liked_areas,
+            "disliked_areas": disliked_areas,
+            "time_preference": time_preference,
+            "transport_mode": transport_mode,
+        })
+    return per_user
+
+
+def _build_named_constraints_summary(per_user: list[dict[str, Any]]) -> str:
+    """해결점 A5-2: 이름 인용 + 강도순 차등 reasoning summary.
+
+    - 강 (food_restrictions, disliked_areas) → 이름 명시 + ✨
+    - 중 (food_preferences) → 이름 명시 (강한 제약 없는 멤버 한정)
+    - 약 (liked_areas, time_preference, transport_mode) → 익명 합산
+    - 같은 강도에 3명 이상이면 "외 N명" 표기
+
+    예: "수현님 채식·홍대 비선호 ✨ + 다른 멤버 매운맛 선호 반영"
+    """
+    if not per_user:
+        return ""
+
+    # 강한 제약: food_restrictions / disliked_areas.
+    # food_restrictions와 disliked_areas는 의미가 다르므로(식단 제약 vs 지역 회피)
+    # 분리해서 표기 — "수현님 채식 비선호"처럼 의미 반전 방지.
+    strong_phrases: list[str] = []
+    strong_names: set[str] = set()
+    for u in per_user:
+        bits: list[str] = []
+        if u.get("food_restrictions"):
+            bits.append(f"{', '.join(u['food_restrictions'])} 식단")
+        if u.get("disliked_areas"):
+            bits.append(f"{', '.join(u['disliked_areas'])} 비선호")
+        if bits:
+            strong_phrases.append(f"{u['name']}님 " + " · ".join(bits))
+            strong_names.add(u["name"])
+
+    # 중간: food_preferences (강한 제약 가진 멤버는 제외)
+    mid_phrases: list[str] = []
+    for u in per_user:
+        if u["name"] in strong_names:
+            continue
+        if u.get("food_preferences"):
+            mid_phrases.append(f"{u['name']}님 {'·'.join(u['food_preferences'])} 선호")
+
+    # 약한 선호: liked_areas, time_preference, transport_mode (익명 합산)
+    liked = sorted({a for u in per_user for a in (u.get("liked_areas") or [])})
+    times = sorted({
+        u["time_preference"] for u in per_user if u.get("time_preference")
+    })
+    trans = sorted({
+        u["transport_mode"] for u in per_user if u.get("transport_mode")
+    })
+    weak_pieces: list[str] = []
+    if liked:
+        weak_pieces.append(f"{', '.join(liked)} 선호 지역")
+    if times:
+        weak_pieces.append(f"선호 시간 {', '.join(times)}")
+    if trans:
+        weak_pieces.append(f"이동수단 {', '.join(trans)}")
+
+    def _join_named(phrases: list[str], marker: str = "") -> str:
+        if len(phrases) <= 2:
+            return " + ".join(phrases) + marker
+        return " + ".join(phrases[:2]) + f" 외 {len(phrases) - 2}명" + marker
+
+    parts: list[str] = []
+    if strong_phrases:
+        parts.append(_join_named(strong_phrases, " ✨"))
+    if mid_phrases:
+        parts.append(_join_named(mid_phrases))
+    if weak_pieces:
+        parts.append("다른 멤버 " + " / ".join(weak_pieces))
+
+    if not parts:
+        return ""
+    return " · ".join(parts) + " 반영"
+
+
 async def _load_meeting_preferences(state: GraphState) -> dict[str, Any]:
     """meeting_preferences 테이블에서 모임별 선호 정보를 로드하고 집계합니다.
 
@@ -2088,7 +2289,24 @@ async def search_place(state: GraphState) -> list[dict[str, Any]]:
     # place_suggestion intent에서 meeting_type이 없으면 기본 "맛집" 추가
     if not meeting_type and state.get("intent") == "place_suggestion":
         meeting_type = "맛집"
-    query = f"{place_hint} {meeting_type}".strip()
+
+    # 해결점 A5-3: cuisine 의도 식별. meeting_type 우선, 없으면 trigger/latest user msg에서.
+    cuisine = meeting_type if meeting_type in _CUISINE_CATEGORY_KEYWORDS else None
+    if not cuisine:
+        latest_user_msg = (state.get("trigger_message_text") or "").strip()
+        if not latest_user_msg:
+            for msg in reversed(state.get("message_records") or []):
+                if msg.get("role") == "user" and msg.get("content"):
+                    latest_user_msg = str(msg["content"])
+                    break
+        cuisine = _detect_cuisine_type(latest_user_msg)
+
+    # query 강제: cuisine이 있으면 cuisine 단어를 query에 명시.
+    if cuisine:
+        query = f"{place_hint} {cuisine}".strip()
+    else:
+        query = f"{place_hint} {meeting_type}".strip()
+
     place_coord = state.get("place_coord") or {}
     documents = await search_keyword(
         query,
@@ -2125,6 +2343,21 @@ async def search_place(state: GraphState) -> list[dict[str, Any]]:
         })
     # 거리 가까운 순으로 정렬 (Gemini 스코어링에서 재정렬됨)
     results.sort(key=lambda p: p["distance_m"] if p["distance_m"] > 0 else 99999)
+
+    # 해결점 A5-3 후처리: cuisine 카테고리로 필터. 0개면 원본 fallback (UX 빈 카드 방지).
+    if cuisine and results:
+        filtered = _filter_places_by_cuisine(results, cuisine)
+        if filtered:
+            logger.info(
+                "[KAKAO] cuisine filter %s: %d → %d",
+                cuisine, len(results), len(filtered),
+            )
+            return filtered
+        logger.info(
+            "[KAKAO] cuisine filter %s yielded 0, using unfiltered (%d)",
+            cuisine, len(results),
+        )
+
     return results
 
 
@@ -2317,6 +2550,27 @@ async def intent_detection(state: GraphState) -> GraphState:
                 state["confidence_score"] = 0.9
                 fast_path_hit = True
                 logger.info("[INTENT] fast-path: loose recommendation pattern → meeting_schedule (skip Gemini)")
+            else:
+                # 해결점 A5-1: cuisine/place 의도 + 한국 지명 동시 매칭 → place_suggestion 직행.
+                # entity_extraction에서 추가로 fast-skip되어 Gemini 6초 추출도 생략.
+                # 단 메시지에 날짜/인원/시간 신호가 있으면 Gemini에 위임 (constraint 손실 방지).
+                place_kw = _extract_korean_place_keyword(latest_user_message)
+                cuisine = _detect_cuisine_type(latest_user_message)
+                has_place_intent = bool(cuisine) or bool(_PLACE_INTENT_PATTERN.search(latest_user_message))
+                has_other_entities = bool(_OTHER_ENTITY_SIGNAL_PATTERN.search(latest_user_message))
+                if place_kw and has_place_intent and not has_other_entities:
+                    state["intent"] = "place_suggestion"
+                    state["intent_confidence"] = 0.92
+                    state["confidence_score"] = 0.92
+                    state["place_hint"] = place_kw
+                    state["meeting_type"] = cuisine or "맛집"
+                    fast_path_hit = True
+                    logger.info(
+                        "[INTENT] fast-path: place pattern → place_suggestion "
+                        "(skip Gemini, place=%s, cuisine=%s)",
+                        place_kw,
+                        cuisine or "맛집",
+                    )
 
         if not fast_path_hit:
             if state.get("conversation_summary"):
@@ -2462,6 +2716,38 @@ async def entity_extraction(state: GraphState) -> GraphState:
             )
             state["status"] = "entities_extracted"
             logger.info("[TIMING] entity_extraction (pre-extracted): %.2fs", time.monotonic() - _t0)
+            return state
+
+        # ── Fast-skip: 해결점 A5-1. intent_detection fast-path가 place_suggestion + place_hint를
+        # 이미 채웠으면 Gemini 엔티티 추출 생략 (−6s). place_coord만 추가 해석.
+        if (
+            state.get("intent") == "place_suggestion"
+            and state.get("place_hint")
+            and not state.get("date_hint")
+        ):
+            extracted: dict[str, Any] = {
+                "date_hint": None,
+                "date_hints": [],
+                "place_hint": state["place_hint"],
+                "headcount": None,
+                "meeting_type": state.get("meeting_type"),
+                "parsed_time_hint": None,
+                "date_is_flexible": False,
+                "date_hint_source_text": None,
+            }
+            state["extracted_entities"] = extracted
+            _update_slot_state(state, extracted)
+            place_coord = await _resolve_place_coord(state["place_hint"])
+            if place_coord:
+                state["place_coord"] = place_coord
+            state["is_location_first"] = True
+            state["status"] = "entities_extracted"
+            logger.info(
+                "[ENTITY] place fast-skip: place=%s cuisine=%s",
+                state.get("place_hint"),
+                state.get("meeting_type"),
+            )
+            logger.info("[TIMING] entity_extraction (place fast-skip): %.2fs", time.monotonic() - _t0)
             return state
 
         # ── Fast-skip: 명령형 추천 요청("일정 추천해줘" 등)은 뽑을 엔티티가 없음 → Gemini 호출 생략 (−3~4s).
@@ -3570,9 +3856,14 @@ async def place_recommendation(state: GraphState) -> GraphState:
         place_results = list(state.get("place_search_results", []))
         ranked_places = place_results
         disliked_foods = await _get_room_member_food_preferences(state)
-        # 6 카테고리 personal data 합산 (privacy-preserving — 누가 어떤 값인지 X).
+        # 6 카테고리 personal data 합산 (Gemini prompt용 — 익명).
         member_constraints = await _get_room_member_constraints(state)
-        group_constraints_summary = _build_group_constraints_summary(member_constraints)
+        # 해결점 A5-2: 카드 reasoning은 강도순 차등 (강한 제약은 이름 명시 + ✨, 약한 선호는 익명).
+        per_user_constraints = await _get_room_member_constraints_named(state)
+        group_constraints_summary = (
+            _build_named_constraints_summary(per_user_constraints)
+            or _build_group_constraints_summary(member_constraints)
+        )
 
         if place_results:
             top_candidates = place_results[:10]

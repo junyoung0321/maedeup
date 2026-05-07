@@ -213,6 +213,48 @@ async def guest_join_room(
     await session.commit()
     await session.refresh(guest)
 
+    # G-1: 다른 멤버에게 새 join 알림 → frontend가 받아서 캘린더 X/N 자동 갱신.
+    # _publish_social_message wrapper 사용 — Redis 실패 시 manager.broadcast fallback.
+    # 발행 실패는 join 자체를 실패시키지 않음 (silent).
+    try:
+        member_count_result = await session.execute(
+            select(sa_func.count()).select_from(RoomMember).where(RoomMember.room_id == room.id)
+        )
+        member_count = int(member_count_result.scalar() or 0)
+        from app.core.config import settings as _settings
+        from app.api.ws.social import _publish_social_message
+        import redis.asyncio as _aioredis
+        social_channel = f"social:{room.id}"
+        payload = json.dumps(
+            {
+                "type": "member_joined",
+                "room_id": room.id,
+                "user_id": guest.id,
+                "user_name": guest.name,
+                "member_count": member_count,
+            },
+            ensure_ascii=False,
+        )
+        try:
+            r = _aioredis.from_url(
+                _settings.REDIS_URL,
+                decode_responses=True,
+                socket_connect_timeout=1,
+                socket_timeout=1,
+            )
+        except Exception:
+            r = None
+        try:
+            await _publish_social_message(r, social_channel, payload)
+        finally:
+            if r is not None:
+                try:
+                    await r.aclose()
+                except Exception:
+                    pass
+    except Exception:
+        logger.warning("member_joined publish failed for room=%s", room.id, exc_info=True)
+
     token = issue_jwt(
         user_id=guest.id,
         email=guest.email,

@@ -148,6 +148,15 @@ export interface ScheduleConsensusReadyPayload {
   member_count: number;
 }
 
+// G-1: 새 멤버 join 시 다른 멤버 화면 캘린더 X/N 자동 갱신 트리거.
+export interface MemberJoinedPayload {
+  type: "member_joined";
+  room_id: number;
+  user_id: number;
+  user_name: string;
+  member_count: number;
+}
+
 export interface FinalizationState {
   proposal_id: string;
   version: number;
@@ -231,6 +240,17 @@ function isScheduleConsensusReadyPayload(data: unknown): data is ScheduleConsens
     typeof c.room_id === "number" &&
     typeof c.snapshot_hash === "string" &&
     typeof c.host_user_id === "number"
+  );
+}
+
+function isMemberJoinedPayload(data: unknown): data is MemberJoinedPayload {
+  if (!data || typeof data !== "object") return false;
+  const c = data as Partial<MemberJoinedPayload>;
+  return (
+    c.type === "member_joined" &&
+    typeof c.room_id === "number" &&
+    typeof c.user_id === "number" &&
+    typeof c.member_count === "number"
   );
 }
 
@@ -328,6 +348,8 @@ export function useSocialWebSocket(roomId: string, sender: string) {
   const [lastConfirmedMeeting, setLastConfirmedMeeting] = useState<MeetingConfirmedPayload | null>(null);
   // A3-2: TimeBar 합의 완료 시 host에게만 "확정하기" 버튼 노출용
   const [scheduleConsensus, setScheduleConsensus] = useState<ScheduleConsensusReadyPayload | null>(null);
+  // G-1: 새 멤버 join 시 캘린더 X/N 자동 갱신 트리거
+  const [lastMemberJoined, setLastMemberJoined] = useState<MemberJoinedPayload | null>(null);
   const [status, setStatus] = useState<WsStatus>("connecting");
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -563,6 +585,11 @@ export function useSocialWebSocket(roomId: string, sender: string) {
 
         if (isScheduleConsensusReadyPayload(data)) {
           setScheduleConsensus(data);
+          return;
+        }
+
+        if (isMemberJoinedPayload(data)) {
+          setLastMemberJoined(data);
           return;
         }
 
@@ -836,5 +863,6 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     clearFinalizationProposal,
     scheduleConsensus,
     clearScheduleConsensus: () => setScheduleConsensus(null),
+    lastMemberJoined,
   };
 }

@@ -99,6 +99,7 @@ export default function ChatPane() {
     finalizationPending,
     lastConfirmedMeeting,
     scheduleConsensus,
+    lastMemberJoined,
   } = useSocialWebSocket(roomId, currentUserName);
 
   // Bridge: socket의 peerSelections/sendDateSelection을 MeetingContext로 노출
@@ -114,6 +115,7 @@ export default function ChatPane() {
   const setFinalizationPending = meetingContext?.setFinalizationPending;
   const setLastConfirmedMeeting = meetingContext?.setLastConfirmedMeeting;
   const setScheduleConsensus = meetingContext?.setScheduleConsensus;
+  const refreshCalendar = meetingContext?.refreshCalendar;
   useEffect(() => {
     setPeerDateSelections?.(peerSelections);
   }, [peerSelections, setPeerDateSelections]);
@@ -153,6 +155,10 @@ export default function ChatPane() {
   useEffect(() => {
     setScheduleConsensus?.(scheduleConsensus);
   }, [scheduleConsensus, setScheduleConsensus]);
+  // G-1: 새 멤버 join → 다른 멤버 화면 캘린더 X/N 자동 갱신
+  useEffect(() => {
+    if (lastMemberJoined) refreshCalendar?.();
+  }, [lastMemberJoined, refreshCalendar]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });

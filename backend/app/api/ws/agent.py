@@ -435,6 +435,9 @@ async def _run_auto_trigger_pipeline(
                 slot_context["date_hints"] = timebar_data.get("date_hints", [])
                 slot_context["parsed_time_hint"] = timebar_data.get("parsed_time_hint")
                 slot_context["time_options"] = timebar_data.get("time_options", [])
+                consensus_label = timebar_data.get("consensus_label")
+                if consensus_label:
+                    slot_context["confirmed_time"] = consensus_label
 
         async with AsyncSessionLocal() as session:
             context = await MessageReader.load_agent_context(

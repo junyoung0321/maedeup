@@ -253,6 +253,26 @@ r"패스|불가능|곤란|선약|MT|시험"
 4. **Docker 재시작은 사용자 타이밍** — 자체 재시작 금지
 5. **PREFERRED_TIME_RANGES 동기화 주의** — 백엔드(langgraph_pipeline.py:49)와 프론트(InfoPane.tsx) 두 곳에 동일 정의. 한 쪽 변경 시 다른 쪽도 갱신.
 
+### J. 미커밋 — Codex P2 보강: `_ensure_pending_meeting_id` 재사용 로직 정밀화
+
+**상태**: 코드 적용 완료, Codex 4 iteration 통과, 미커밋.
+
+**파일**: `backend/app/services/langgraph_pipeline.py:3735~`
+
+**원인**: 다른 터미널 F-1 fix가 "룸의 최신 pending"을 무조건 재사용 → 무관한 stale pending에 새 카드가 잘못 붙는 cross-flow 누설.
+
+**최종 가드** (Codex 4-pass 후):
+1. `date_hint` 있으면 → 룸 최근 pending 10건 fetch → Python 측 매칭
+   - 1차: `scheduled_at` primary date 매칭
+   - 2차: `vote_options` 슬롯 중 어느 하나라도 같은 ISO 날짜면 매칭 (multi-date vote)
+   - 시간 제한 X (장시간 합의 흐름 보호)
+2. 매칭 실패 → 최근 30분 내 pending fallback (stale 차단)
+3. 둘 다 실패 → 새로 생성
+
+**충돌 영역**: `langgraph_pipeline.py` 내부, F-1 fix 영역과 같은 함수 — F-1 commit 후 이 변경이 위에 올라가야 함.
+
+---
+
 ### I. 미커밋 — F-4 `_analyze_conversation` 프롬프트 보강 (meeting_summary 풍부화)
 
 **상태**: 코드 적용 완료, 미커밋, Docker 미반영.

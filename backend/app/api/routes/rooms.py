@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -410,8 +410,18 @@ class LeaveRoomResponse(BaseModel):
     triggered_meeting_cancellation: bool = False
 
 
+class ChosenTime(BaseModel):
+    """A3-3: 호스트가 [조율] 모달에서 선택한 정밀 시간 범위."""
+    date: str  # "YYYY-MM-DD"
+    start_idx: int  # TimeBar slot index (30분 단위, 0~47)
+    end_idx: int    # inclusive
+
+
 class ScheduleConfirmRequest(BaseModel):
     snapshot_hash: str
+    # A3-3: "auto" = AI 추천 그대로, "manual" = 호스트 정밀 선택. 기본값으로 backward-compat.
+    mode: Literal["auto", "manual"] = "auto"
+    chosen_time: Optional[ChosenTime] = None  # mode="manual"일 때 필수
 
 
 class ScheduleConfirmResponse(BaseModel):
@@ -435,6 +445,7 @@ async def schedule_confirm(
     - 호스트 권한 필수 (room.created_by)
     - snapshot_hash 검증 (현재 availability와 일치해야)
     - idempotent (같은 snapshot 두 번 호출 시 첫 한 번만 발동)
+    - A3-3: mode="manual"이면 chosen_time 필수. 0명 슬롯은 거부 (적어도 1명 가능해야).
     """
     room_row = await session.execute(select(Room).where(Room.id == room_id))
     room = room_row.scalar_one_or_none()
@@ -451,8 +462,59 @@ async def schedule_confirm(
     if current_hash != body.snapshot_hash:
         raise HTTPException(status_code=409, detail="snapshot_outdated")
 
+    # A3-3: manual mode 검증 — chosen_time 범위에 적어도 1명 가능 슬롯 있어야.
+    manual_chosen_time: Optional[dict] = None
+    if body.mode == "manual":
+        if body.chosen_time is None:
+            raise HTTPException(status_code=400, detail="chosen_time_required_for_manual")
+        ct = body.chosen_time
+        if (
+            ct.start_idx < 0
+            or ct.end_idx >= sr.TIME_SLOT_MAX
+            or ct.start_idx > ct.end_idx
+        ):
+            raise HTTPException(status_code=400, detail="chosen_time_out_of_range")
+        # availability {user_id: [{date, start, end}]}에서 ct.date 기준 슬롯별 가능 인원
+        # 합산 후, chosen_time 범위 안 모든 슬롯이 ≥ 1명인지 검증.
+        # discontinuous segments [14-16] + [19-22] 사이 0명 영역 [16-19]를 통째로
+        # 선택하는 케이스 차단 (frontend strict mode 우회 시도 방어).
+        slot_count: dict[int, int] = {}
+        for entries in availability.values():
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("date") != ct.date:
+                    continue
+                try:
+                    e_start = int(entry.get("start"))
+                    e_end = int(entry.get("end"))
+                except (TypeError, ValueError):
+                    continue
+                # entry는 INCLUSIVE end_idx (scheduling_round.py:562)
+                for idx in range(e_start, e_end + 1):
+                    slot_count[idx] = slot_count.get(idx, 0) + 1
+        zero_slots = [
+            idx for idx in range(ct.start_idx, ct.end_idx + 1)
+            if slot_count.get(idx, 0) == 0
+        ]
+        if zero_slots:
+            raise HTTPException(
+                status_code=400,
+                detail=f"zero_member_slots:{','.join(map(str, zero_slots))}",
+            )
+        manual_chosen_time = {
+            "date": ct.date,
+            "start_idx": ct.start_idx,
+            "end_idx": ct.end_idx,
+        }
+
     triggered = await publish_schedule_auto_trigger(
-        redis, room_pk=room_id, snapshot_hash=body.snapshot_hash
+        redis,
+        room_pk=room_id,
+        snapshot_hash=body.snapshot_hash,
+        manual_chosen_time=manual_chosen_time,
     )
     return ScheduleConfirmResponse(triggered=triggered, snapshot_hash=body.snapshot_hash)
 

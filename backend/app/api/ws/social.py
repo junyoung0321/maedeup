@@ -115,11 +115,15 @@ async def publish_schedule_auto_trigger(
     *,
     room_pk: int,
     snapshot_hash: str,
+    manual_chosen_time: Optional[dict] = None,
 ) -> bool:
     """A3-2: 호스트 "확정하기" 클릭 시 호출. agent 채널에 ai_auto_trigger publish.
 
     Idempotent — 같은 snapshot_hash 두 번째 호출은 false 반환.
     Returns True if published, False if already triggered.
+
+    A3-3: manual_chosen_time이 dict면 호스트가 [조율] 모달에서 정밀 선택한
+    시간 범위. payload에 그대로 박아 LangGraph state로 흘림.
     """
     nx_key = f"schedule_auto_trigger_fired:{room_pk}:{snapshot_hash}"
     already = await redis_client.set(nx_key, "1", ex=300, nx=True)
@@ -134,13 +138,16 @@ async def publish_schedule_auto_trigger(
             "confidence": 1.0,
             "content": "모두 시간대를 선택했어요. 일정을 조율해볼게요!",
             "trigger_reason": "all_members_selected",
+            "manual_chosen_time": manual_chosen_time,
         },
         ensure_ascii=False,
     )
     await redis_client.publish(agent_channel, trigger_payload)
     logger.info(
-        "Host-confirmed schedule auto trigger for room %s (snapshot=%s)",
-        room_pk, snapshot_hash[:8] if isinstance(snapshot_hash, str) else snapshot_hash,
+        "Host-confirmed schedule auto trigger for room %s (snapshot=%s, manual=%s)",
+        room_pk,
+        snapshot_hash[:8] if isinstance(snapshot_hash, str) else snapshot_hash,
+        manual_chosen_time is not None,
     )
     return True
 

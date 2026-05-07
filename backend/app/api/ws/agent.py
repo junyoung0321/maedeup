@@ -730,13 +730,18 @@ async def agent_ws(
             if trigger_intent not in {"meeting_schedule", "place_suggestion"}:
                 continue
 
+            # A3-3: 호스트 [조율] 모달이 선택한 manual_chosen_time을 slot_context로 전달.
+            sc = dict(slot_context)
+            manual_time = trigger.get("manual_chosen_time")
+            if isinstance(manual_time, dict):
+                sc["manual_chosen_time"] = manual_time
             task = asyncio.create_task(
                 _run_auto_trigger_pipeline(
                     room_id,
                     trigger_content,
                     trigger_intent,
                     trigger_reason,
-                    dict(slot_context),
+                    sc,
                 )
             )
             task.add_done_callback(_log_detached_task_result)

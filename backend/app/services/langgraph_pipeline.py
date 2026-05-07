@@ -997,6 +997,16 @@ _OTHER_ENTITY_SIGNAL_PATTERN = re.compile(
     r"아침|점심|저녁|밤|새벽|오전|오후"
 )
 
+# 해결점 O: shortcut gate. context에 거부/불가능 키워드가 있으면 정규식 단축 경로를
+# 통과시키지 않고 Gemini 추출을 강제 — _pattern_extract_entities는 rejected_dates와
+# conflict_detected를 만들지 않으므로 단축이 hit하면 후속 vote_card 후보 필터에서
+# 거부 날짜가 누락되는 사각지대가 생김 (audit-findings.md 해결점 O).
+# 패턴은 entity_extraction Gemini prompt의 "거부 키워드 예시"와 동일 (line 1183).
+_REJECT_SIGNAL_PATTERN = re.compile(
+    r"안\s*[돼되]|못\s*가|못\s*해|힘들|어려워|어렵다|어렵겠|"
+    r"불가능|패스|빠질|곤란|선약|일정.*있어|일정.*잡혀"
+)
+
 
 def _detect_cuisine_type(text: str) -> str | None:
     """사용자 메시지에서 cuisine 의도 추출. 매칭되면 cuisine ID, 없으면 None."""
@@ -1114,14 +1124,20 @@ async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
 
     # --- OPTIMIZATION: Try pattern-based extraction first ---
     pattern_result = _pattern_extract_entities(context)
-    # If we got multiple date hints from patterns, skip Gemini (vote scenario)
-    if len(pattern_result.get("date_hints") or []) >= 2:
-        logger.info("[OPT] Multiple date hints found by pattern matching, skipping Gemini")
-        return pattern_result
-    # If we got at least date+place from patterns, skip Gemini
-    if pattern_result.get("date_hint") and pattern_result.get("place_hint"):
-        logger.info("[OPT] Entity extraction resolved by pattern matching, skipping Gemini")
-        return pattern_result
+    # 해결점 O: 거부/불가능 키워드가 context에 있으면 정규식 shortcut 차단.
+    # _pattern_extract_entities는 rejected_dates/conflict 정보를 못 만들기 때문.
+    has_reject_signal = bool(_REJECT_SIGNAL_PATTERN.search(context))
+    if has_reject_signal:
+        logger.info("[OPT] reject signal in context — forcing Gemini extraction (skip pattern shortcut)")
+    else:
+        # If we got multiple date hints from patterns, skip Gemini (vote scenario)
+        if len(pattern_result.get("date_hints") or []) >= 2:
+            logger.info("[OPT] Multiple date hints found by pattern matching, skipping Gemini")
+            return pattern_result
+        # If we got at least date+place from patterns, skip Gemini
+        if pattern_result.get("date_hint") and pattern_result.get("place_hint"):
+            logger.info("[OPT] Entity extraction resolved by pattern matching, skipping Gemini")
+            return pattern_result
 
     today_kst = datetime.now(KST).strftime("%Y-%m-%d")
     prompt = (
@@ -2544,16 +2560,12 @@ async def intent_detection(state: GraphState) -> GraphState:
                 state["confidence_score"] = 0.95
                 fast_path_hit = True
                 logger.info("[INTENT] fast-path: pref recommendation pattern → meeting_schedule (skip Gemini)")
-            elif any(re.search(kw, msg_lower) for kw in pref_keywords_loose) and not _place_hint_pattern.search(msg_lower):
-                state["intent"] = "meeting_schedule"
-                state["intent_confidence"] = 0.9
-                state["confidence_score"] = 0.9
-                fast_path_hit = True
-                logger.info("[INTENT] fast-path: loose recommendation pattern → meeting_schedule (skip Gemini)")
             else:
                 # 해결점 A5-1: cuisine/place 의도 + 한국 지명 동시 매칭 → place_suggestion 직행.
                 # entity_extraction에서 추가로 fast-skip되어 Gemini 6초 추출도 생략.
                 # 단 메시지에 날짜/인원/시간 신호가 있으면 Gemini에 위임 (constraint 손실 방지).
+                # pref_keywords_loose보다 먼저 시도 — "강남 한식 추천해줘"가 loose에 잡혀 meeting_schedule로
+                # 오분류되는 사각지대 방지 (Codex review 2026-05-07 P2).
                 place_kw = _extract_korean_place_keyword(latest_user_message)
                 cuisine = _detect_cuisine_type(latest_user_message)
                 has_place_intent = bool(cuisine) or bool(_PLACE_INTENT_PATTERN.search(latest_user_message))
@@ -2564,6 +2576,9 @@ async def intent_detection(state: GraphState) -> GraphState:
                     state["confidence_score"] = 0.92
                     state["place_hint"] = place_kw
                     state["meeting_type"] = cuisine or "맛집"
+                    # entity_extraction이 이번 run의 fast-path 한정으로만 fast-skip 하도록 sentinel.
+                    # 이전 턴에서 잔존한 place_hint + Gemini 분류 place_suggestion 조합으론 fast-skip 안 됨.
+                    state["_place_fast_path_this_run"] = True
                     fast_path_hit = True
                     logger.info(
                         "[INTENT] fast-path: place pattern → place_suggestion "
@@ -2571,6 +2586,12 @@ async def intent_detection(state: GraphState) -> GraphState:
                         place_kw,
                         cuisine or "맛집",
                     )
+                elif any(re.search(kw, msg_lower) for kw in pref_keywords_loose) and not _place_hint_pattern.search(msg_lower):
+                    state["intent"] = "meeting_schedule"
+                    state["intent_confidence"] = 0.9
+                    state["confidence_score"] = 0.9
+                    fast_path_hit = True
+                    logger.info("[INTENT] fast-path: loose recommendation pattern → meeting_schedule (skip Gemini)")
 
         if not fast_path_hit:
             if state.get("conversation_summary"):
@@ -2718,10 +2739,11 @@ async def entity_extraction(state: GraphState) -> GraphState:
             logger.info("[TIMING] entity_extraction (pre-extracted): %.2fs", time.monotonic() - _t0)
             return state
 
-        # ── Fast-skip: 해결점 A5-1. intent_detection fast-path가 place_suggestion + place_hint를
-        # 이미 채웠으면 Gemini 엔티티 추출 생략 (−6s). place_coord만 추가 해석.
+        # ── Fast-skip: 해결점 A5-1. intent_detection fast-path가 이번 run에서 직접 채운 경우만.
+        # sentinel 키로 검증 — 이전 턴 잔존 place_hint + Gemini 재분류 조합에서 헤드카운트 손실 방지.
         if (
-            state.get("intent") == "place_suggestion"
+            state.pop("_place_fast_path_this_run", False)
+            and state.get("intent") == "place_suggestion"
             and state.get("place_hint")
             and not state.get("date_hint")
         ):
@@ -3859,6 +3881,13 @@ async def place_recommendation(state: GraphState) -> GraphState:
         # 6 카테고리 personal data 합산 (Gemini prompt용 — 익명).
         member_constraints = await _get_room_member_constraints(state)
         # 해결점 A5-2: 카드 reasoning은 강도순 차등 (강한 제약은 이름 명시 + ✨, 약한 선호는 익명).
+        # ⚠ Privacy trade-off (Codex review 2026-05-07 P1, 시연용 의도적 수용):
+        # group_constraints_summary는 place_recommendation_payload에 포함되어 shared agent
+        # 채널로 broadcast + Redis 24h 캐시. 즉 다른 멤버들이 누가 어떤 식단/지역 제약을
+        # 갖는지 보게 됨 — 이전 _build_group_constraints_summary 익명 톤의 의도와 충돌.
+        # 사용자 결정 (2026-05-07): 시연 magical moment를 위해 노출 허용. 시연 후 정교화 항목:
+        #   - User에 share_name_in_recommendations 플래그 추가 + opt-in 멤버만 이름 노출
+        #   - 또는 trigger 사용자에게만 named version, 다른 멤버는 anonymous 표기
         per_user_constraints = await _get_room_member_constraints_named(state)
         group_constraints_summary = (
             _build_named_constraints_summary(per_user_constraints)

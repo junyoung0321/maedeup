@@ -51,12 +51,12 @@ function computePreferredTimeRange(
   if (counts.size === 0) return null;
   let bestKey = "";
   let bestCount = 0;
-  for (const [key, c] of counts) {
+  counts.forEach((c, key) => {
     if (c > bestCount) {
       bestCount = c;
       bestKey = key;
     }
-  }
+  });
   const range = PREFERRED_TIME_RANGES[bestKey];
   if (!range) return null;
   return { start: range[0], end: range[1] };

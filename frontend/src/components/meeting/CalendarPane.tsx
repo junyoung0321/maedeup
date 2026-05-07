@@ -64,6 +64,7 @@ export default function CalendarPane() {
   const unavailabilityByUser = meeting?.unavailabilityByUser ?? {};
   const sendUnavailableToggle = meeting?.sendUnavailableToggle ?? null;
   const myDateSelection = meeting?.myDateSelection ?? null;
+  const voteAwaitingTimeMeetingId = meeting?.voteAwaitingTimeMeetingId ?? null;
   const currentUserId = useMemo(() => getCurrentUserIdFromToken(), []);
 
   // localStorage 키 — 방별로 분리. 본인 UI 선호만 저장 (뷰 월/클릭 날짜).
@@ -117,12 +118,18 @@ export default function CalendarPane() {
   // 단, localStorage에 이미 clickedDay가 저장돼 있었다면 localStorage 우선.
   useEffect(() => {
     if (!myDateSelection) return;
-    if (clickedDay !== null) return; // 사용자가 이미 골라둔 게 있으면 덮어쓰지 않음
+    if (clickedDay !== null && !voteAwaitingTimeMeetingId) return; // 사용자가 이미 골라둔 게 있으면 덮어쓰지 않음
     const [py, pm, pd] = myDateSelection.split("-").map(Number);
+    if (voteAwaitingTimeMeetingId) {
+      setYear(py);
+      setMonth(pm);
+      setClickedDay(pd);
+      return;
+    }
     if (py === year && pm === month) {
       setClickedDay(pd);
     }
-  }, [myDateSelection, year, month, clickedDay]);
+  }, [myDateSelection, year, month, clickedDay, voteAwaitingTimeMeetingId]);
 
   // 날짜 문자열 → 그 날 불가능 처리한 user_id 수. 내 것도 포함.
   const unavailableCountByDate: Record<string, number> = {};

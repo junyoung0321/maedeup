@@ -43,6 +43,7 @@ interface MeetingState {
   voteCard: VoteCardPayload | null;
   voteUpdate: VoteUpdatePayload | null;
   placeRecommendation: PlaceRecommendationPayload | null;
+  voteAwaitingTimeMeetingId: number | null;
   candidateSlots: VoteCardTimeOption[];
   highlightedDates: string[]; // "YYYY-MM-DD"
   // InfoPane phase state machine
@@ -83,6 +84,7 @@ interface MeetingContextValue extends MeetingState {
   setVoteCard: (card: VoteCardPayload | null) => void;
   setVoteUpdate: (update: VoteUpdatePayload | null) => void;
   setPlaceRecommendation: (rec: PlaceRecommendationPayload | null) => void;
+  requestTimeChange: (slot: VoteCardTimeOption, meetingId: number) => void;
   resetCoordination: () => void;
   // InfoPane phase actions
   setInfoPanePhase: (phase: InfoPanePhase) => void;
@@ -136,6 +138,7 @@ export function MeetingProvider({
     voteCard: null,
     voteUpdate: null,
     placeRecommendation: null,
+    voteAwaitingTimeMeetingId: null,
     candidateSlots: [],
     highlightedDates: [],
     infoPanePhase: "idle",
@@ -271,10 +274,12 @@ export function MeetingProvider({
 
   const setVoteCard = useCallback((card: VoteCardPayload | null) => {
     setState((prev) => {
-      if (!card) return { ...prev, voteCard: null };
+      if (!card) return { ...prev, voteCard: null, voteAwaitingTimeMeetingId: null };
       const slots = card.time_options;
       const dateSet = new Set(slots.map((s) => s.start_at.split("T")[0]));
       const dates = Array.from(dateSet);
+      const shouldResetAwaiting =
+        card.meeting_id !== prev.voteAwaitingTimeMeetingId;
       // Don't reset phase if already past time confirmation (prevents
       // pipeline re-triggering from resetting the flow)
       const phaseAlreadyAdvanced =
@@ -284,6 +289,7 @@ export function MeetingProvider({
       return {
         ...prev,
         voteCard: card,
+        voteAwaitingTimeMeetingId: shouldResetAwaiting ? null : prev.voteAwaitingTimeMeetingId,
         candidateSlots: slots,
         highlightedDates: dates,
         ...(phaseAlreadyAdvanced ? {} : {
@@ -309,6 +315,19 @@ export function MeetingProvider({
       }
       return { ...prev, placeRecommendation: rec };
     });
+  }, []);
+
+  const requestTimeChange = useCallback((slot: VoteCardTimeOption, meetingId: number) => {
+    const selectedDate = slot.start_at.split("T")[0] || null;
+    setState((prev) => ({
+      ...prev,
+      myDateSelection: selectedDate,
+      infoPanePhase: "dateConfirmed" as InfoPanePhase,
+      confirmedDate: selectedDate,
+      confirmedTimeRange: null,
+      voteAwaitingTimeMeetingId: meetingId,
+      confirmedMeetingId: prev.confirmedMeetingId === meetingId ? null : prev.confirmedMeetingId,
+    }));
   }, []);
 
   // InfoPane phase actions
@@ -367,6 +386,7 @@ export function MeetingProvider({
       confirmedDate: null,
       confirmedTimeRange: null,
       confirmedMeetingId: null,
+      voteAwaitingTimeMeetingId: null,
     }));
   }, []);
 
@@ -381,6 +401,7 @@ export function MeetingProvider({
       voteCard: state.voteCard,
       voteUpdate: state.voteUpdate,
       placeRecommendation: state.placeRecommendation,
+      voteAwaitingTimeMeetingId: state.voteAwaitingTimeMeetingId,
       candidateSlots: state.candidateSlots,
       highlightedDates: state.highlightedDates,
       infoPanePhase: state.infoPanePhase,
@@ -420,6 +441,7 @@ export function MeetingProvider({
       setVoteCard,
       setVoteUpdate,
       setPlaceRecommendation,
+      requestTimeChange,
       resetCoordination,
       setInfoPanePhase,
       confirmDate,
@@ -438,6 +460,7 @@ export function MeetingProvider({
       state.voteCard,
       state.voteUpdate,
       state.placeRecommendation,
+      state.voteAwaitingTimeMeetingId,
       state.candidateSlots,
       state.highlightedDates,
       state.infoPanePhase,
@@ -477,6 +500,7 @@ export function MeetingProvider({
       setVoteCard,
       setVoteUpdate,
       setPlaceRecommendation,
+      requestTimeChange,
       resetCoordination,
       setInfoPanePhase,
       confirmDate,

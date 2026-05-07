@@ -6,6 +6,15 @@ import { apiFetch } from "@/lib/api";
 import { useMeeting } from "@/contexts/MeetingContext";
 import type { VoteCardPayload } from "@/hooks/useAgentWebSocket";
 
+function splitLabelParts(label: string): { date: string; time: string | null } {
+  const match = label.match(/^(.*?)(\d{1,2}:\d{2}\s*(?:~|-)\s*\d{1,2}:\d{2})\s*$/);
+  if (!match) return { date: label, time: null };
+  const date = match[1]?.trim();
+  const time = match[2]?.trim() ?? null;
+  if (!date || !time) return { date: label, time: null };
+  return { date, time };
+}
+
 function getCurrentUserIdFromToken(): number | null {
   if (typeof window === "undefined") return null;
   const token = localStorage.getItem("auth_token");
@@ -49,8 +58,12 @@ export default function ScheduleRecommendationCard({
     refreshCalendar,
     sendMessageToAi,
     setCalendarSyncStatus,
+    voteAwaitingTimeMeetingId,
+    requestTimeChange,
+    setContextMode,
   } = useMeeting();
   const voteCard = voteCardProp ?? contextVoteCard;
+  const isAwaitingTimeChange = !!voteCard && voteAwaitingTimeMeetingId === voteCard.meeting_id;
 
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   const [showAlternatives, setShowAlternatives] = useState(false);
@@ -131,6 +144,15 @@ export default function ScheduleRecommendationCard({
     }
   }, [voteCard, selectedSlotId, roomId, refreshCalendar, setCalendarSyncStatus, sendMessageToAi, onMeetingResolved]);
 
+  const handleRequestTimeChange = useCallback(() => {
+    if (!voteCard || !selectedSlotId) return;
+    if (typeof voteCard.meeting_id !== "number") return;
+    const slot = voteCard.time_options.find((o) => o.slot_id === selectedSlotId);
+    if (!slot) return;
+    requestTimeChange(slot, voteCard.meeting_id);
+    setContextMode("schedule");
+  }, [voteCard, selectedSlotId, requestTimeChange, setContextMode]);
+
   if (!voteCard) return null;
 
   const best = voteCard.time_options[0];
@@ -206,7 +228,21 @@ export default function ScheduleRecommendationCard({
         cursor: "pointer",
       }} onClick={() => setSelectedSlotId(best.slot_id)}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 15, fontWeight: 700, color: "#1e293b" }}>{best.label}</span>
+          <span style={{ fontSize: 15, fontWeight: 700, color: "#1e293b" }}>
+            {(() => {
+              const parts = splitLabelParts(best.label);
+              return (
+                <>
+                  <span>{parts.date}</span>
+                  {parts.time && (
+                    <span style={{ marginLeft: 6, color: "#9ca3af", fontSize: 12, fontWeight: 500 }}>
+                      {parts.time}
+                    </span>
+                  )}
+                </>
+              );
+            })()}
+          </span>
           <span style={{
             fontSize: 11, padding: "3px 8px", borderRadius: 8,
             background: "#4f46e5", color: "#fff", fontWeight: 600,
@@ -262,19 +298,57 @@ export default function ScheduleRecommendationCard({
         </>
       )}
 
-      {/* Action button */}
-      <button
-        onClick={handleConfirm}
-        disabled={!selectedSlotId || isConfirming}
-        style={{
-          width: "100%", padding: "11px 14px", borderRadius: 12, border: "none",
-          background: !selectedSlotId || isConfirming ? "#cbd5e1" : "#4f46e5",
-          color: "#fff", fontSize: 14, fontWeight: 700, cursor: !selectedSlotId || isConfirming ? "not-allowed" : "pointer",
-          fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-        }}
-      >
-        {isConfirming ? "확정 중..." : selectedSlot ? `${selectedSlot.label}로 확정` : "시간을 선택해주세요"}
-      </button>
+      {/* Action area — host: 두 버튼 stack, host & awaiting: placeholder */}
+      {isAwaitingTimeChange ? (
+        <div style={{
+          width: "100%", padding: "11px 14px", borderRadius: 12,
+          background: "#f1f5f9", color: "#64748b", fontSize: 13, fontWeight: 500,
+          textAlign: "center", fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+        }}>
+          시간대 합의 중...
+        </div>
+      ) : isHost ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <button
+            onClick={handleConfirm}
+            disabled={!selectedSlotId || isConfirming}
+            style={{
+              width: "100%", padding: "11px 14px", borderRadius: 12, border: "none",
+              background: !selectedSlotId || isConfirming ? "#cbd5e1" : "#4f46e5",
+              color: "#fff", fontSize: 14, fontWeight: 700, cursor: !selectedSlotId || isConfirming ? "not-allowed" : "pointer",
+              fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+            }}
+          >
+            {isConfirming ? "확정 중..." : selectedSlot ? `${selectedSlot.label}로 확정` : "시간을 선택해주세요"}
+          </button>
+          <button
+            onClick={handleRequestTimeChange}
+            disabled={!selectedSlotId || isConfirming}
+            style={{
+              width: "100%", padding: "11px 14px", borderRadius: 12,
+              border: "1px solid #cbd5e1", background: "#ffffff",
+              color: "#475569", fontSize: 14, fontWeight: 700,
+              cursor: !selectedSlotId || isConfirming ? "not-allowed" : "pointer",
+              fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+            }}
+          >
+            시간대 변경
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={handleConfirm}
+          disabled={!selectedSlotId || isConfirming}
+          style={{
+            width: "100%", padding: "11px 14px", borderRadius: 12, border: "none",
+            background: !selectedSlotId || isConfirming ? "#cbd5e1" : "#4f46e5",
+            color: "#fff", fontSize: 14, fontWeight: 700, cursor: !selectedSlotId || isConfirming ? "not-allowed" : "pointer",
+            fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+          }}
+        >
+          {isConfirming ? "확정 중..." : selectedSlot ? `${selectedSlot.label}로 확정` : "시간을 선택해주세요"}
+        </button>
+      )}
       {error && <span style={{ fontSize: 12, color: "#dc2626", fontWeight: 500 }}>{error}</span>}
     </div>
   );

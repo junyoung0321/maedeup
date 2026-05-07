@@ -253,6 +253,94 @@ r"패스|불가능|곤란|선약|MT|시험"
 4. **Docker 재시작은 사용자 타이밍** — 자체 재시작 금지
 5. **PREFERRED_TIME_RANGES 동기화 주의** — 백엔드(langgraph_pipeline.py:49)와 프론트(InfoPane.tsx) 두 곳에 동일 정의. 한 쪽 변경 시 다른 쪽도 갱신.
 
+### I. 미커밋 — F-4 `_analyze_conversation` 프롬프트 보강 (meeting_summary 풍부화)
+
+**상태**: 코드 적용 완료, 미커밋, Docker 미반영.
+
+**파일**: `backend/app/services/langgraph_pipeline.py` (`_analyze_conversation`, line 4750~)
+
+**증상** (audit-findings.md F-4):
+- 결과 `notes: ["시험 끝나고 모임"]` 수준의 한 줄. 시연 카드 임팩트 ↓
+- 멤버별 거부 사유, 합의 흐름 누락
+
+**수정**:
+1. **card.date 가이드 강화** — 자연어 한 줄 요약 X → 거부/합의 흐름 묘사 ("이번 주 금/토/일 모두 막힘, 다음 주 평일 후보")
+2. **card.notes 구조화** — 멤버별 사정과 합의 흐름을 별도 bullet:
+   - 거부 1건당 "{이름}: {날짜} {사유}" 형식
+   - 마지막 1 bullet에 합의 흐름 요약
+   - 3~5개 bullet 권장
+3. **End-to-end 예시 추가** — 시연 ACT 2 채팅 4줄 → 기대 card 출력 명시. Gemini few-shot 학습.
+
+**예상 효과** (시연 ACT 2):
+```
+이전: notes: ["시험 끝나고 모임"]
+이후: notes: [
+  "수현: 5/8 동아리 MT로 불가",
+  "민수: 5/9 본가 일정",
+  "예린: 5/10 휴식 원함, 다음 주 제안",
+  "이번 주 금/토/일 막힘 → 다음 주가 후보"
+]
+```
+
+**Side effect 가능성**:
+- Gemini few-shot이 강해서 다른 시나리오에서도 비슷한 형식 강제 가능. 시나리오가 다양하면 약간 부자연스러울 수 있음. 시연 시나리오엔 정확히 들어맞음.
+- 일관성을 위해 다른 발화 컨텍스트에서도 멤버별 사유 형식 따름. "회식 어디서 할까" 같이 거부 없는 대화는 notes가 다르게 채워짐 (자연스러움).
+
+**충돌 영역**: `langgraph_pipeline.py` 내부, 다른 터미널 작업과 충돌 없음.
+
+---
+
+### H. 미커밋 — F-3 entity_extraction direct_request fast-skip 추가
+
+**상태**: 코드 적용 완료, 미커밋, Docker 미반영. 사용자 테스트 필요.
+
+**파일**: `backend/app/services/langgraph_pipeline.py`
+
+**근본 원인**:
+- `_route_from_start` (line 4395)이 `direct_request` 트리거에 대해 **intent_detection 노드 스킵**
+- AI 패널 → quick_classify → place → trigger_reason="direct_request" 흐름은 entity_extraction부터 시작
+- 내가 만든 langgraph A5-1 fast-path는 `intent_detection` 안에 있어서 **direct_request에서 절대 발동 안 함**
+- 결과: entity_extraction Gemini 호출 그대로 ~15s, 시연 시 멘트 "3-5초"와 불일치
+
+**수정**:
+entity_extraction 노드 진입 시점, pre_extracted_signals 분기 다음, sentinel 기반 fast-skip **이전**에 새 fast-skip 추가:
+- 조건: `trigger_reason == "direct_request"` AND `direct_request_kind == "place"`
+- 추가 검증: 메시지에 cuisine 또는 place 의도 키워드 + 한국 지명 + 날짜/인원 등 다른 entity 신호 없음
+- 만족 시: place_hint, meeting_type 직접 set + extracted_entities 빌드 + place_coord 해석 + return → Gemini 호출 스킵
+
+**예상 효과**: AI 패널 "강남에서 다 같이 갈만한 한식집" → entity_extraction ~0.5s (Kakao address API만) — 이전 15.89s에서 ~30배 단축.
+
+**남은 병목**: place_recommendation 52s — Kakao 검색 + Gemini 점수화. 이건 별도 작업 (시나리오 "3-5초"엔 아직 못 미침).
+
+**충돌 영역**: `langgraph_pipeline.py` 내부, 다른 터미널 작업과 충돌 없음.
+
+---
+
+### G. 미커밋 — F-2 진단 로깅 추가 (TimeBar 추천 D 작동 검증)
+
+**상태**: 진단 로깅 적용, 미커밋. 사용자 테스트 + 브라우저 콘솔 확인 필요.
+
+**문제**: D 카테고리 (commit `6877461` + `b1dfd14`) 배포됐으나 TimeBar 추천이 여전히 9-13. 코드 자체엔 버그 없어 보임 — runtime 데이터 흐름 디버깅용 진단 로깅 추가.
+
+**파일**:
+- `frontend/src/components/meeting/InfoPane.tsx` — fetch + computePreferredTimeRange에 `console.info` 3개 + silent catch → `console.warn`
+- `frontend/src/components/meeting/TimeBarSelector.tsx` — preferredTimeRange prop 도착 추적 `console.info` 1개
+
+**진단 포인트** (브라우저 콘솔):
+1. `[InfoPane] room preferences fetched:` — API fetch 성공 + 응답 데이터
+2. `[InfoPane] preferredTimeRange computed:` — 계산된 hour range
+3. `[TimeBar] preferredTimeRange prop:` — TimeBar 도착 확인
+
+**예상 시나리오 분기**:
+| 로그 패턴 | 원인 | 다음 fix |
+|---|---|---|
+| `fetched` 로그 안 뜸, warn 뜸 | fetch 자체 실패 | API 경로 / 인증 확인 |
+| `count: 0` | popup 미입력 / DB 비어있음 | 시드 스크립트 또는 popup flow 검증 |
+| `range: null`인데 prefs 있음 | 포맷 불일치 (e.g. "평일 저녁" vs "평일저녁") | computePreferredTimeRange 로직 보강 |
+| `range: {18, 21}`인데 9-13 노출 | TimeBar 내부 계산 실패 | longestStreakInRange + aggregateAvailability 추가 진단 |
+
+**시연 후 제거**: `// F-2 진단:` 코멘트가 marker. 시연 안전선 확보 후 일괄 제거.
+
 ## 메모
 
 - 본 세션은 "여기서 커밋/푸시 안 한다" 정책으로 작업 중 (사용자 명시).

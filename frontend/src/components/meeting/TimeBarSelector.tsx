@@ -204,6 +204,11 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
     setSelectionEnd(null);
   }, [date]);
 
+  // F-2 진단: TimeBar가 받은 prop 추적용. 시연 후 제거.
+  useEffect(() => {
+    console.info("[TimeBar] preferredTimeRange prop:", preferredTimeRange, "members:", members.length);
+  }, [preferredTimeRange, members.length]);
+
   // AI recommended range: 선호 시간대(평일저녁 등) 내 longest streak 우선,
   // 없으면 전체 longest streak fallback. 최대 4시간 (8슬롯) 캡.
   const recommendedRange = useMemo(() => {

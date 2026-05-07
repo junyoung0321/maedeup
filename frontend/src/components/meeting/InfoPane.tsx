@@ -106,6 +106,7 @@ export default function InfoPane() {
     setCalendarSyncStatus,
     scheduleConsensus,
     setScheduleConsensus,
+    preferenceRefreshTrigger,
   } = useMeeting();
 
   const currentUserId = useMemo(() => getCurrentUserIdFromToken(), []);
@@ -121,20 +122,37 @@ export default function InfoPane() {
       `/api/v1/rooms/${roomId}/preferences`,
     )
       .then((data) => {
-        if (!cancelled) setRoomPreferences(data.preferences || []);
+        if (cancelled) return;
+        const prefs = data?.preferences || [];
+        // F-2 진단 로깅: 선호 데이터 fetch 확인용. 시연 후 제거.
+        console.info(
+          "[InfoPane] room preferences fetched:",
+          { count: prefs.length, sample: prefs.slice(0, 2) }
+        );
+        setRoomPreferences(prefs);
       })
-      .catch(() => {
-        /* 선호 미등록 / 실패 시 fallback 동작 — 무시 */
+      .catch((err) => {
+        // F-2 진단: silent catch 대신 console.warn으로 노출.
+        console.warn("[InfoPane] room preferences fetch failed:", err);
       });
     return () => {
       cancelled = true;
     };
-  }, [roomId]);
+  }, [roomId, preferenceRefreshTrigger]);
 
-  const preferredTimeRangeForDate = useMemo(
-    () => (confirmedDate ? computePreferredTimeRange(confirmedDate, roomPreferences) : null),
-    [confirmedDate, roomPreferences],
-  );
+  const preferredTimeRangeForDate = useMemo(() => {
+    const result = confirmedDate
+      ? computePreferredTimeRange(confirmedDate, roomPreferences)
+      : null;
+    if (confirmedDate) {
+      // F-2 진단: TimeBar에 전달되는 prop 추적용. 시연 후 제거.
+      console.info(
+        "[InfoPane] preferredTimeRange computed:",
+        { date: confirmedDate, prefsCount: roomPreferences.length, range: result }
+      );
+    }
+    return result;
+  }, [confirmedDate, roomPreferences]);
 
   const hasSelectedPlace = selectedPlace !== null;
   // Non-phased flow: place-only (no vote card, just place recommendation, not manually started)

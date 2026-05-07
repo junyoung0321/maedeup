@@ -40,7 +40,7 @@ export default function MeetingPage() {
 }
 
 function MeetingPageInner() {
-  const { contextMode, setContextMode, roomId } = useMeeting();
+  const { contextMode, setContextMode, roomId, refreshPreferences } = useMeeting();
   const { user, loading: authLoading } = useAuth();
   const [showPreferencePopup, setShowPreferencePopup] = useState(false);
   const [preferenceChecked, setPreferenceChecked] = useState(false);
@@ -66,9 +66,10 @@ function MeetingPageInner() {
       });
   }, [roomId, user, preferenceChecked]);
 
-  // 팝업 제출 후 팝업 닫기 (파이프라인 트리거는 백엔드 POST에서 자동 처리)
+  // 팝업 제출 후 팝업 닫기 + 선호도 데이터 InfoPane re-fetch 트리거 (F-2)
   const handlePreferenceSubmitted = () => {
     setShowPreferencePopup(false);
+    refreshPreferences();
   };
 
   // 로그인/게스트 가입 전에는 나머지 UI를 로드하지 않음. 모든 hook 호출 이후에

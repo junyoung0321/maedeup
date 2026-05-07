@@ -40,6 +40,8 @@ interface MeetingState {
   selectedPlace: PlaceResult | null;
   aiTriggerIntent: AiTriggerIntent | null;
   calendarRefreshTrigger: number;
+  // F-2: 선호도 팝업 제출 시 InfoPane room preferences re-fetch 신호.
+  preferenceRefreshTrigger: number;
   // Coordination state for calendar-AI bidirectional sync
   voteCard: VoteCardPayload | null;
   voteUpdate: VoteUpdatePayload | null;
@@ -83,6 +85,7 @@ interface MeetingContextValue extends MeetingState {
   setRoom: (id: string, name: string) => void;
   setAiTriggerIntent: (intent: AiTriggerIntent | null) => void;
   refreshCalendar: () => void;
+  refreshPreferences: () => void;
   // Coordination actions
   setVoteCard: (card: VoteCardPayload | null) => void;
   setVoteUpdate: (update: VoteUpdatePayload | null) => void;
@@ -139,6 +142,7 @@ export function MeetingProvider({
     selectedPlace: null,
     aiTriggerIntent: null,
     calendarRefreshTrigger: 0,
+    preferenceRefreshTrigger: 0,
     voteCard: null,
     voteUpdate: null,
     placeRecommendation: null,
@@ -284,6 +288,13 @@ export function MeetingProvider({
     }));
   }, []);
 
+  const refreshPreferences = useCallback(() => {
+    setState((prev) => ({
+      ...prev,
+      preferenceRefreshTrigger: prev.preferenceRefreshTrigger + 1,
+    }));
+  }, []);
+
   const setVoteCard = useCallback((card: VoteCardPayload | null) => {
     setState((prev) => {
       if (!card) return { ...prev, voteCard: null, voteAwaitingTimeMeetingId: null };
@@ -412,6 +423,7 @@ export function MeetingProvider({
       selectedPlace: state.selectedPlace,
       aiTriggerIntent: state.aiTriggerIntent,
       calendarRefreshTrigger: state.calendarRefreshTrigger,
+      preferenceRefreshTrigger: state.preferenceRefreshTrigger,
       voteCard: state.voteCard,
       voteUpdate: state.voteUpdate,
       placeRecommendation: state.placeRecommendation,
@@ -454,6 +466,7 @@ export function MeetingProvider({
       setRoom,
       setAiTriggerIntent,
       refreshCalendar,
+      refreshPreferences,
       setVoteCard,
       setVoteUpdate,
       setPlaceRecommendation,
@@ -469,6 +482,7 @@ export function MeetingProvider({
     [
       state.aiTriggerIntent,
       state.calendarRefreshTrigger,
+      state.preferenceRefreshTrigger,
       state.contextMode,
       state.roomId,
       state.roomName,
@@ -513,6 +527,7 @@ export function MeetingProvider({
       setAiTriggerIntent,
       setContextMode,
       refreshCalendar,
+      refreshPreferences,
       setRoom,
       setSelectedPlace,
       setVoteCard,

@@ -217,6 +217,9 @@ L과 F가 동시에 한 파일을 건드리는 zone이 충돌 위험. 아래 §3
 |---|---|---|---|
 | **F-1** | maedeup 카드 발행 후 vote_card 안 사라짐 | C5 카드 라이프사이클 — `_ensure_pending_meeting_id` 가드 (74779ba에서 강화) | meeting_id 같은 카드끼리 upsert. 새 meeting 생성 안 되도록 pending 재사용. |
 | **F-2** | TimeBar 추천 9-13 fallback (선호 평일저녁 미반영) | C3 GET /preferences 데이터 흐름 어딘가 단절. 진단 console.info 3종 활성. | 1. fetch 성공? 2. count > 0? 3. range 계산? 4. prop 도착? — 콘솔에서 4개 다 통과 확인. |
+| **F-2 종결** (2026-05-08) | 라이브 재진단 시 정상 작동 — fetch 성공 / range {18,21} / prop 정상 / "오후 6:00~9:00" 라벨. **자연 정정**. | 이전 9-13 fallback은 docker rebuild 사이 일시 race condition 또는 stale 빌드 추정 (정확한 원인 미특정). | 시연 직전 console.info 3종 cleanup만 남음. C3 contract 자체는 견고. 재발 시 동일 4분기 매핑 사용. |
+| **AsyncSessionLocal import 누락** (2026-05-08, P0-2 작업 중 발견) | `langgraph_pipeline.py` line 3860 / 3968 / 4213의 `AsyncSessionLocal()` 호출이 import 없이 try-except로 감싸짐 → `NameError`로 매번 except 진입 → silent broken. | **🔥 F-1 (vote_card 라이프사이클 깨짐) 회귀의 진짜 root cause 후보**. `_ensure_pending_meeting_id` 등 helper가 silent NameError로 실패 → meeting_id 없이 진행 → 카드 라이프사이클 깨짐 가능성. 74779ba (F-1 v2)의 가드 강화는 표면 증상 fix였고 진짜는 import 누락. | L의 P0-2 작업에서 `from app.database import AsyncSessionLocal` 추가로 자연 정정. **검증 시 F-1 v2 재검증 필수** — 가드와 import 둘 다 수정된 상태에서 vote_card → maedeup 라이프사이클 안정성 확인. **lesson**: `try-except: pass` 패턴이 import 오류를 silently swallow함. 의존성 누락이 production 런타임까지 안 걸림. |
+| **place tail-slice 버그** (2026-05-08, place top 5 + P0-2 묶음에서 Codex 잡음) | `top_candidates[:10]` → `[:5]` 변경 시 짝맞는 `ranked_places = reranked + place_results[10:]` 도 `[5:]`로 같이 안 바꿔서 인덱스 5-9 후보 누락. | 머리(scoring 대상 N개) + 꼬리(tail) 두 슬라이스가 같은 N에 의존. 한쪽만 바꾸면 중간 누락. | 변경 시 두 슬라이스 짝 검색 (`grep place_results\[`). top N 같은 매직 상수는 single source로 묶는 정교화 시연 후 권장. |
 | **F-3** | "강남에서 다 같이 갈만한 한식집" → entity_extraction Gemini 15s | direct_request fast-skip 추가 (4c5ce48) — 정규식 매칭 실패 시 fallback Gemini 그대로 | quick_classify의 `_PLACE_RE`와 entity_extraction `_PLACE_INTENT_PATTERN` 두 군데 동기화 필요 |
 | **F-4** | meeting_summary "시험 끝나고 모임" 한 줄 | `_analyze_conversation` 프롬프트 보강 (4c5ce48) | Gemini few-shot 프롬프트 — bullet 3-5개 강제 |
 | **F-4 v2** (2026-05-08) | F-4 본 효과는 살아났는데 `signals.preferred_dates` / `signals.date_hints`가 빈 배열로 떨어져 슬롯 빌드 실패 + 해결점 N(다음 주 자동 확장) 동반 사망 | (1) 4c5ce48 prompt example이 card 출력만 풍부하게 보여주고 signals 출력은 짝지어 안 줘서 Gemini가 자연어를 card에만 쏟음. (2) entity_extraction (line 2638-2643) parser는 `preferred_dates` 항목을 dict로만 expand — plain string array면 silent skip. | prompt example에 signals 출력 짝지어 추가 + dict 형태(`{"date": "YYYY-MM-DD"}`) 강제 + "card 자연어 → signals ISO 변환 필수" 규칙. **lesson**: LLM 멀티필드 추출은 example을 전부 짝지어 줘야 한쪽 빠뜨리지 않음. parser shape contract(dict vs array)도 prompt에 명시. |
@@ -271,8 +274,8 @@ USER AI 패널 입력 ──► assistant.py route → quick_classify → run_sh
 **완료**: A2 / A3-1 / A3-2 / A4-1 / A4-3(자연정정) / A5-1 / A6-1 / D / A0-1 / 시나리오 docs
 
 **진행/미해결**:
-- F-1 v2 (74779ba 적용 후 재검증 필요)
-- F-2 (D 작동 안 함, 진단 로깅 활성화 — 콘솔 결과 대기)
+- F-1 v2 (74779ba + L의 P0-2 commit 안 AsyncSessionLocal import 추가로 root cause 자연 정정 가능성 — **재검증 필수**: vote → maedeup 라이프사이클 안정성)
+- ~~F-2~~ ✅ 종결 (2026-05-08 라이브 재진단 정상 — 자연 정정. console.info cleanup만 시연 후)
 - F-3 (4c5ce48 적용 후 재검증 필요)
 - F-4 v2 (working tree에 fix 적용, L 완료 / Codex 2 iteration 통과 — G commit + rebuild + ACT 2 라이브 검증 대기. parser dict-shape contract 학습 반영)
 - A5-2 (시드 후 reasoning ✨ 이름 인용 검증)

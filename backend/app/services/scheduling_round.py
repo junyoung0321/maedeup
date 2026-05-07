@@ -548,19 +548,28 @@ async def load_room_availability(
     return result
 
 
-def _slot_idx_to_time(idx: int) -> str:
-    """TimeBar slot index (0..25) → 'HH:MM' starting at TIME_SLOT_FIRST_HOUR."""
+def slot_idx_to_time(idx: int) -> str:
+    """TimeBar slot index (0..25) → 'HH:MM' starting at TIME_SLOT_FIRST_HOUR.
+
+    C7 contract (2026-05-08): public API. backend/frontend 양쪽이 동일한 매핑 사용해야 함.
+    frontend 미러: `frontend/src/components/meeting/TimeBarSelector.tsx::slotToTime` (HOUR_START/SLOT_MINUTES).
+    상수 변경 시 양쪽 동기화 필수.
+    """
     total_minutes = TIME_SLOT_FIRST_HOUR * 60 + idx * TIME_SLOT_MINUTES
     hh = total_minutes // 60
     mm = total_minutes % 60
     return f"{hh:02d}:{mm:02d}"
 
 
+# 후방 호환 — 기존 private 호출자가 점진적으로 public으로 이전.
+_slot_idx_to_time = slot_idx_to_time
+
+
 def _format_slot(date: str, start_idx: int, end_idx: int) -> dict[str, Any]:
     """Convert a cell range into a slot dict for the proposal payload."""
-    start_str = _slot_idx_to_time(start_idx)
+    start_str = slot_idx_to_time(start_idx)
     # end_idx is INCLUSIVE; bump by one cell to get the exclusive end time.
-    end_str = _slot_idx_to_time(end_idx + 1)
+    end_str = slot_idx_to_time(end_idx + 1)
     return {
         "date": date,
         "start_idx": start_idx,

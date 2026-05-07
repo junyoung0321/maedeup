@@ -1,4 +1,5 @@
 import asyncio
+import copy
 from contextlib import suppress
 from datetime import datetime
 import json
@@ -122,10 +123,10 @@ async def _build_entities_from_timebar(room_id: str, db: Any, redis_client: aior
             return {}
 
         date_hint, first_slot_idx = common_slots[0]
-        parsed_time_hint = sr._slot_idx_to_time(first_slot_idx)
+        parsed_time_hint = sr.slot_idx_to_time(first_slot_idx)
         date_hints = list(dict.fromkeys(date for date, _ in common_slots))
         time_options = [
-            {"label": f"{date} {sr._slot_idx_to_time(slot_idx)}"}
+            {"label": f"{date} {sr.slot_idx_to_time(slot_idx)}"}
             for date, slot_idx in common_slots[:5]
         ]
 
@@ -146,7 +147,7 @@ async def _build_entities_from_timebar(room_id: str, db: Any, redis_client: aior
             if (cur_end - cur_start) > (best_end - best_start):
                 best_start, best_end = cur_start, cur_end
             end_idx = min(best_end + 1, sr.TIME_SLOT_MAX - 1)
-            consensus_label = f"{sr._slot_idx_to_time(best_start)}~{sr._slot_idx_to_time(end_idx)}"
+            consensus_label = f"{sr.slot_idx_to_time(best_start)}~{sr.slot_idx_to_time(end_idx)}"
 
         return {
             "date_hint": date_hint,
@@ -731,10 +732,13 @@ async def agent_ws(
                 continue
 
             # A3-3: 호스트 [조율] 모달이 선택한 manual_chosen_time을 slot_context로 전달.
-            sc = dict(slot_context)
+            # Codex P1 (2026-05-08): deep copy 사용 — 기존 shallow `dict(...)`는 nested
+            # mutable (pre_extracted_signals, place_coord 등) 원본과 공유. 현재 쓰기는 무해하나
+            # 향후 race / 동시 trigger에서 누설 위험. deep copy로 격리.
+            sc = copy.deepcopy(slot_context)
             manual_time = trigger.get("manual_chosen_time")
             if isinstance(manual_time, dict):
-                sc["manual_chosen_time"] = manual_time
+                sc["manual_chosen_time"] = copy.deepcopy(manual_time)
             task = asyncio.create_task(
                 _run_auto_trigger_pipeline(
                     room_id,

@@ -3177,10 +3177,10 @@ async def _slot_filling_all_members(state: GraphState, pref_data: dict[str, Any]
             and start_idx >= 0
             and end_idx >= start_idx
         ):
-            # TimeBar slot index → "HH:MM" 변환. sr._slot_idx_to_time이 권위 있는 매핑.
+            # TimeBar slot index → "HH:MM" 변환. sr.slot_idx_to_time이 권위 있는 매핑.
             # end_idx는 INCLUSIVE 슬롯이므로 end_str은 (end_idx + 1)으로 다음 슬롯 시작 시각.
-            start_str = sr._slot_idx_to_time(start_idx)
-            end_str = sr._slot_idx_to_time(end_idx + 1)
+            start_str = sr.slot_idx_to_time(start_idx)
+            end_str = sr.slot_idx_to_time(end_idx + 1)
             state["confirmed_date"] = date_str
             state["confirmed_time"] = f"{start_str}~{end_str}"
             state["parsed_time_hint"] = start_str

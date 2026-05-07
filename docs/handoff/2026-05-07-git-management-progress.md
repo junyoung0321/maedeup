@@ -60,18 +60,21 @@ Docker 상태: API + Frontend 모두 health 200, 새 코드 반영 완료 (마�
 | **A5-2 reasoning ✨** | place card group_constraints_summary 렌더 | `642f50b` | ✅ "수현님 채식 식단 · 홍대 비선호 ✨ · 김창윤님 한식 선호..." indigo 박스 |
 | **G-1 member_joined** | 새 게스트 join → 캘린더 X/N 자동 갱신 | `f2c2cde` | ✅ "4/4" → "5/5" reload 없이 즉시 |
 | **AsyncSessionLocal import** | F-1 v2 root cause 수정 | `493f48e` | ✅ silent NameError 차단, 라이프사이클 정상 |
+| **A3-3 manual path** | TimeBar 2-버튼 + HostTimeAdjustModal + manual host pick | `ad63b1b`+`333a935`+`3fe6b7e` | ✅ banner 2-버튼 노출 / `[TRIGGER] manual host pick: 2026-05-11 18:00~18:30` / TOTAL 0.02s / partial 영역도 호스트 권한 진행 OK / [확정] auto path 회귀 0건 |
 
 ---
 
 ## 진행 중 / Pending (다른 터미널)
 
-5/8 통합 검증 사이클 완료 — 9건 모두 ✅. 남은 항목:
+A3-3 통합 검증 — 핵심 7건 통과. 단 신규 3건 발견:
 
 | ID | 우선 | 작업 | 상태 |
 |---|---|---|---|
-| **A3-3** | ⚠️ P1 (UX) | TimeBar 합의 후 "일정 확정하기" 단일 → 2-버튼 분기 ([확정]/[조율]) | 미시작 |
-| **AI 응답 variance** | ⚠️ 외부 | place_recommendation Gemini scoring 22~53s 변동. 추가 단축 lever (캐싱/병렬화) | 시연 후 |
-| **F-2 console.info** | 🟢 cleanup | 시연 후 진단 로그(`[InfoPane]` / `[TimeBar]`) 제거 | 시연 후 |
+| **F-5** | ⚠️ P1 | TimeBar individual confirm 버튼 라이프사이클 (그룹 확정 후 hide/disable) | 미시작 |
+| **F-6** | ⚠️ P1 | AI 패널 카드/채팅 시간순 정렬 (카드가 항상 상단 누적되는 layout 문제) | 미시작 |
+| **A3-3 slider default** | ⚠️ 미세 | HostTimeAdjustModal default가 가장 긴 전원 segment 아닌 partial로 잡힘 | 미시작 |
+| **AI 응답 variance** | ⚠️ 외부 | place_recommendation Gemini scoring 22~53s 변동 | 시연 후 |
+| **F-2 console.info** | 🟢 cleanup | 진단 로그 제거 | 시연 후 |
 
 ---
 

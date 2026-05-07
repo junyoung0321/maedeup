@@ -155,5 +155,12 @@ F-1 ~ F-4 5/7 검증 + 5/8 회귀 fix 모두 commit + 라이브 검증 통과.
 
 | # | 우선 | 항목 |
 | --- | --- | --- |
-| **A3-3** | ⚠️ P1 (UX) | TimeBar 합의 후 "일정 확정하기" 단일 → 2-버튼 ([확정] AI 추천 시간 / [조율] TimeBar 모달로 호스트 직접 선택) |
 | **AI 응답 variance** | ⚠️ 외부 | place_recommendation Gemini scoring 22~53s 변동. 추가 단축 lever (캐싱/병렬화) 시연 후 |
+
+### 5/8 A3-3 라이브 후 신규 발견
+
+| # | 우선 | 항목 | 작업자 |
+| --- | --- | --- | --- |
+| **F-5** | ⚠️ P1 | **TimeBar individual confirm 버튼 라이프사이클** — host TimeBar slot click 후 노출된 "오후 6:00 ~ 오후 9:00로 확정" 버튼이 그룹 확정([✅ 추천 시간] 또는 [🔧 직접 조율])으로 maedeup 카드 발행 후에도 남아있음. F-1 v2는 vote_card / placeholder 라이프사이클 처리, TimeBar individual confirm은 별개 영역 — 비활성화 또는 hide 누락 | frontend |
+| **F-6** | ⚠️ P1 | **AI 패널 카드/채팅 시간순 정렬 깨짐** — 채팅 메시지와 카드가 시간순으로 흐르지 않고 **카드가 항상 상단으로 누적**됨. 흐름 부자연스러움 (사용자 메시지 → 카드 → 다음 메시지 → 다음 카드가 자연스러움) | frontend AssistantPane (또는 AI 패널 렌더 컴포넌트) — 카드 + 메시지 단일 timeline으로 통합 정렬 |
+| **A3-3 slider default** | ⚠️ 미세 | HostTimeAdjustModal slider default가 가장 긴 전원 segment(19:00-21:00) 아닌 18:00-18:30 (2명 partial)로 잡힘 | frontend `recommendedRange` 알고리즘 검토 |

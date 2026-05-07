@@ -313,6 +313,10 @@ async def _run_auto_trigger_pipeline(
     trigger_reason: str,
     slot_context: dict,
 ) -> None:
+    logger.info(
+        "[AUTO_TRIGGER] pipeline entry: room=%s intent=%s reason=%s",
+        room_id, trigger_intent, trigger_reason,
+    )
     shared_channel = f"agent:{room_id}"
     try:
         redis_client = aioredis.from_url(
@@ -688,6 +692,7 @@ async def agent_ws(
             except Exception:
                 break
 
+            logger.info("[AUTO_TRIGGER] received: %r", trigger)
             trigger_content = trigger.get("content", "")
             trigger_intent = trigger.get("intent", "")
             if not trigger_content:
@@ -732,30 +737,33 @@ async def agent_ws(
                 continue
 
             # A3-3: 호스트 [조율] 모달이 선택한 manual_chosen_time을 slot_context로 전달.
-            # Codex P1 (2026-05-08) selective deepcopy:
-            # 전체 deepcopy(`copy.deepcopy(slot_context)`)는 silent fail 회귀를 만들었음
-            # (3cfa26a 이후 trigger pipeline 진입 안 됨 — slot_context에 deepcopy 불가 객체
-            # 잠재 가능성). nested mutable 중 동시 trigger 누설 위험 있는 항목만 명시 deepcopy.
-            sc = dict(slot_context)  # top-level shallow
-            pre_signals = sc.get("pre_extracted_signals")
-            if isinstance(pre_signals, dict):
-                sc["pre_extracted_signals"] = copy.deepcopy(pre_signals)
-            place_coord = sc.get("place_coord")
-            if isinstance(place_coord, dict):
-                sc["place_coord"] = copy.deepcopy(place_coord)
+            # Codex P1 회귀 hotfix (2026-05-08): deepcopy + selective deepcopy 둘 다 silent fail.
+            # 진짜 원인 미확정 — 단순 shallow로 복원. P1 finding은 시연 후 재처리.
+            sc = dict(slot_context)
             manual_time = trigger.get("manual_chosen_time")
             if isinstance(manual_time, dict):
-                sc["manual_chosen_time"] = copy.deepcopy(manual_time)
-            task = asyncio.create_task(
-                _run_auto_trigger_pipeline(
-                    room_id,
-                    trigger_content,
-                    trigger_intent,
-                    trigger_reason,
-                    sc,
-                )
+                sc["manual_chosen_time"] = manual_time
+            logger.info(
+                "[AUTO_TRIGGER] passed filter: room=%s intent=%s reason=%s",
+                room_id, trigger_intent, trigger_reason,
             )
-            task.add_done_callback(_log_detached_task_result)
+            try:
+                task = asyncio.create_task(
+                    _run_auto_trigger_pipeline(
+                        room_id,
+                        trigger_content,
+                        trigger_intent,
+                        trigger_reason,
+                        sc,
+                    )
+                )
+                task.add_done_callback(_log_detached_task_result)
+                logger.info(
+                    "[AUTO_TRIGGER] task spawned: name=%s done=%s",
+                    task.get_name(), task.done(),
+                )
+            except Exception:
+                logger.exception("[AUTO_TRIGGER] task spawn failed")
 
     auto_trigger_task = asyncio.create_task(_process_auto_triggers())
 

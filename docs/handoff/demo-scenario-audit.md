@@ -161,6 +161,9 @@ F-1 ~ F-4 5/7 검증 + 5/8 회귀 fix 모두 commit + 라이브 검증 통과.
 
 | # | 우선 | 항목 | 작업자 |
 | --- | --- | --- | --- |
-| **F-5** | ⚠️ P1 | **TimeBar individual confirm 버튼 라이프사이클** — host TimeBar slot click 후 노출된 "오후 6:00 ~ 오후 9:00로 확정" 버튼이 그룹 확정([✅ 추천 시간] 또는 [🔧 직접 조율])으로 maedeup 카드 발행 후에도 남아있음. F-1 v2는 vote_card / placeholder 라이프사이클 처리, TimeBar individual confirm은 별개 영역 — 비활성화 또는 hide 누락 | frontend |
-| **F-6** | ⚠️ P1 | **AI 패널 카드/채팅 시간순 정렬 깨짐** — 채팅 메시지와 카드가 시간순으로 흐르지 않고 **카드가 항상 상단으로 누적**됨. 흐름 부자연스러움 (사용자 메시지 → 카드 → 다음 메시지 → 다음 카드가 자연스러움) | frontend AssistantPane (또는 AI 패널 렌더 컴포넌트) — 카드 + 메시지 단일 timeline으로 통합 정렬 |
-| **A3-3 slider default** | ⚠️ 미세 | HostTimeAdjustModal slider default가 가장 긴 전원 segment(19:00-21:00) 아닌 18:00-18:30 (2명 partial)로 잡힘 | frontend `recommendedRange` 알고리즘 검토 |
+| **F-5** | 🔥 P1 | **TimeBar individual confirm 버튼 라이프사이클** — host TimeBar slot click 후 노출된 "오후 6:00 ~ 오후 9:00로 확정" 버튼이 그룹 확정 후에도 잔존. **F-5 v1 fix(`43bb1b2`) 적용했으나 회귀 — `isMeetingConfirmed` 판정이 partial maedeup 케이스 미포함** (`lastConfirmedMeeting`/`infoPanePhase==="timeConfirmed"` 둘 다 partial 시점 set 안 됨). | frontend `TimeBarSelector` — `isMeetingConfirmed` 판정 조건에 partial maedeup 발행 시점 포함 (e.g. `infoPanePhase==="dateConfirmed"`이고 maedeup_card 존재 시) |
+| **F-6** | ⚠️ P1 | **AI 패널 카드/채팅 시간순 정렬 깨짐** — 채팅 메시지와 카드가 시간순으로 흐르지 않고 **카드가 항상 상단으로 누적**됨 | frontend AssistantPane — 카드 + 메시지 단일 timeline으로 통합 정렬 |
+| **F-7** | 🔥 P1 | **캘린더 멤버 현황 창의 "AI 추천 날짜" 라벨이 vote_card 실제 추천(5/11 18:00)과 불일치** | frontend `CalendarPane` (또는 일자 상세 패널) — vote_card / maedeup_card의 `recommended_date`를 SoT로. 자체 휴리스틱(가능 인원 최대 날짜)은 fallback으로만 |
+| **F-8** | 🔥 P1 | **TimeBar 추천 시간대 9-13으로 fallback** (평일저녁 18-21 시드인데도) — 추정 원인: host google calendar busy_periods가 18-21에 있어 그 영역 슬롯 점령 → `recommendedRange` longest-streak이 빈 9-13으로. preferredTimeRange prop은 들어가지만 busy 영역 안 빠지면 무력화 | frontend `TimeBarSelector.recommendedRange` — preferred 범위 안 가능 슬롯 1개라도 있으면 그쪽 우선 또는 visual 마커. 현재 1차 결과 0이면 2차로 빠지는 로직 보강 |
+| **F-9** | ⚠️ P1 | **PlaceDetailPane 장소 확정 버튼 동기화 누락** — AI 패널 장소 카드 [이 장소로 확정] 클릭 → maedeup 갱신되나 우측 PlaceDetailPane의 [이 장소로 확정] 버튼은 활성 그대로 (중복 confirm 가능) | `MeetingContext`에 `confirmedPlaceId` state 추가 + `PlaceDetailPane`에서 매치 시 disabled / "확정됨" 안내로 교체 |
+| **A3-3 slider default** | 🟢 fix됨 | HostTimeAdjustModal default 가장 긴 전원 segment 알고리즘 — `b86041c` 커밋 후 `findLongestFullCoverageSegment` 헬퍼로 정정 | (검증 후 재확인) |

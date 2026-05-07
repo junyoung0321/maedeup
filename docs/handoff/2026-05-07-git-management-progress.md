@@ -70,9 +70,11 @@ A3-3 통합 검증 — 핵심 7건 통과. 단 신규 3건 발견:
 
 | ID | 우선 | 작업 | 상태 |
 |---|---|---|---|
-| **F-5** | ⚠️ P1 | TimeBar individual confirm 버튼 라이프사이클 (그룹 확정 후 hide/disable) | 미시작 |
-| **F-6** | ⚠️ P1 | AI 패널 카드/채팅 시간순 정렬 (카드가 항상 상단 누적되는 layout 문제) | 미시작 |
-| **A3-3 slider default** | ⚠️ 미세 | HostTimeAdjustModal default가 가장 긴 전원 segment 아닌 partial로 잡힘 | 미시작 |
+| **F-5 v2** | 🔥 P1 | F-5 v1 (`43bb1b2`) fix 회귀 — `isMeetingConfirmed` 판정이 partial maedeup 미포함. 조건 보강 필요 | 미시작 |
+| **F-6** | ⚠️ P1 | AI 패널 카드/채팅 시간순 정렬 (카드 항상 상단 누적) | 미시작 |
+| **F-7** | 🔥 P1 | 캘린더 멤버 현황 창 "AI 추천 날짜" 라벨이 vote_card 추천과 불일치 — SoT 통합 | 미시작 |
+| **F-8** | 🔥 P1 | TimeBar 추천 9-13 fallback (busy_periods가 18-21 점령) — preferred 범위 우선 보강 | 미시작 |
+| **F-9** | ⚠️ P1 | PlaceDetailPane 확정 버튼 동기화 — confirmedPlaceId state 추가 | 미시작 |
 | **AI 응답 variance** | ⚠️ 외부 | place_recommendation Gemini scoring 22~53s 변동 | 시연 후 |
 | **F-2 console.info** | 🟢 cleanup | 진단 로그 제거 | 시연 후 |
 

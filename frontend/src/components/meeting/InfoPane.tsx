@@ -7,6 +7,7 @@ import FinalizationProposalCard from "@/components/meeting/FinalizationProposalC
 import PlaceDetailPane from "@/components/meeting/PlaceDetailPane";
 import VoteCardSection from "@/components/meeting/VoteCardSection";
 import TimeBarSelector from "@/components/meeting/TimeBarSelector";
+import HostTimeAdjustModal from "@/components/meeting/HostTimeAdjustModal";
 import { apiFetch } from "@/lib/api";
 import { useMeeting } from "@/contexts/MeetingContext";
 import { fs } from "@/lib/responsive";
@@ -112,6 +113,8 @@ export default function InfoPane() {
   const currentUserId = useMemo(() => getCurrentUserIdFromToken(), []);
 
   const [calendarCollapsed, setCalendarCollapsed] = useState(false);
+  // A3-3: 호스트 [조율] 모달 open 상태
+  const [showAdjustModal, setShowAdjustModal] = useState(false);
 
   // 방 선호 시간대 (TimeBar AI 추천 범위 우선순위에 사용)
   const [roomPreferences, setRoomPreferences] = useState<RoomPreference[]>([]);
@@ -386,34 +389,56 @@ export default function InfoPane() {
                       <div style={{ fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
                         {scheduleConsensus.member_count}명 전원 합의가 모였습니다. 일정을 확정하면 AI가 장소까지 정리해드릴게요.
                       </div>
-                      <button
-                        onClick={async () => {
-                          try {
-                            const { apiFetch } = await import("@/lib/api");
-                            await apiFetch(`/api/v1/rooms/${scheduleConsensus.room_id}/schedule-confirm`, {
-                              method: "POST",
-                              body: JSON.stringify({ snapshot_hash: scheduleConsensus.snapshot_hash }),
-                            });
-                            setScheduleConsensus(null);
-                          } catch (err) {
-                            console.error("schedule-confirm failed", err);
-                          }
-                        }}
-                        style={{
-                          width: "100%",
-                          padding: "11px 14px",
-                          borderRadius: 10,
-                          border: "none",
-                          background: "#4f46e5",
-                          color: "#fff",
-                          fontSize: 14,
-                          fontWeight: 700,
-                          cursor: "pointer",
-                          fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                        }}
-                      >
-                        일정 확정하기
-                      </button>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        <button
+                          onClick={async () => {
+                            try {
+                              const { apiFetch } = await import("@/lib/api");
+                              await apiFetch(`/api/v1/rooms/${scheduleConsensus.room_id}/schedule-confirm`, {
+                                method: "POST",
+                                body: JSON.stringify({
+                                  snapshot_hash: scheduleConsensus.snapshot_hash,
+                                  mode: "auto",
+                                }),
+                              });
+                              setScheduleConsensus(null);
+                            } catch (err) {
+                              console.error("schedule-confirm failed", err);
+                            }
+                          }}
+                          style={{
+                            width: "100%",
+                            padding: "11px 14px",
+                            borderRadius: 10,
+                            border: "none",
+                            background: "#4f46e5",
+                            color: "#fff",
+                            fontSize: 14,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                          }}
+                        >
+                          ✅ 추천 시간 그대로 확정
+                        </button>
+                        <button
+                          onClick={() => setShowAdjustModal(true)}
+                          style={{
+                            width: "100%",
+                            padding: "11px 14px",
+                            borderRadius: 10,
+                            border: "1px solid #cbd5e1",
+                            background: "#ffffff",
+                            color: "#475569",
+                            fontSize: 14,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                          }}
+                        >
+                          🔧 직접 조율
+                        </button>
+                      </div>
                     </div>
                   );
                 }
@@ -432,6 +457,33 @@ export default function InfoPane() {
                   </div>
                 );
               })()}
+
+              {/* A3-3: 호스트 [조율] 모달 */}
+              {showAdjustModal && scheduleConsensus && confirmedDate && (
+                <HostTimeAdjustModal
+                  snapshotHash={scheduleConsensus.snapshot_hash}
+                  confirmedDate={confirmedDate}
+                  memberCount={scheduleConsensus.member_count}
+                  onCancel={() => setShowAdjustModal(false)}
+                  onConfirm={async (chosenTime) => {
+                    try {
+                      const { apiFetch } = await import("@/lib/api");
+                      await apiFetch(`/api/v1/rooms/${scheduleConsensus.room_id}/schedule-confirm`, {
+                        method: "POST",
+                        body: JSON.stringify({
+                          snapshot_hash: scheduleConsensus.snapshot_hash,
+                          mode: "manual",
+                          chosen_time: chosenTime,
+                        }),
+                      });
+                      setShowAdjustModal(false);
+                      setScheduleConsensus(null);
+                    } catch (err) {
+                      console.error("schedule-confirm (manual) failed", err);
+                    }
+                  }}
+                />
+              )}
 
               {/* Phase: timeConfirmed → 장소 추천 카드는 AI 패널에만 렌더.
                   여기서 카드 중복 렌더 제거. 사용자가 AI 패널 카드의 장소명 클릭 시

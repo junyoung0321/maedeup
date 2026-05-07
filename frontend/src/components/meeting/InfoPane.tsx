@@ -7,11 +7,60 @@ import FinalizationProposalCard from "@/components/meeting/FinalizationProposalC
 import PlaceDetailPane from "@/components/meeting/PlaceDetailPane";
 import VoteCardSection from "@/components/meeting/VoteCardSection";
 import TimeBarSelector from "@/components/meeting/TimeBarSelector";
+import { apiFetch } from "@/lib/api";
 import { useMeeting } from "@/contexts/MeetingContext";
 import { fs } from "@/lib/responsive";
 import type { PlaceResult } from "@/types";
 
 // Removed fixed dimensions — uses flex layout from parent
+
+// 백엔드 `langgraph_pipeline.py:49-56` PREFERRED_TIME_RANGES 미러링.
+// 변경 시 양쪽 동기화 필요.
+const PREFERRED_TIME_RANGES: Record<string, [number, number]> = {
+  평일오전: [9, 12],
+  평일오후: [13, 17],
+  평일저녁: [18, 21],
+  주말오전: [9, 12],
+  주말오후: [13, 17],
+  주말저녁: [18, 21],
+};
+
+interface RoomPreference {
+  user_id: number;
+  preferred_times: string[];
+}
+
+function computePreferredTimeRange(
+  date: string,
+  preferences: RoomPreference[],
+): { start: number; end: number } | null {
+  if (!date || preferences.length === 0) return null;
+  const dateObj = new Date(date + "T00:00:00");
+  const dow = dateObj.getDay();
+  const isWeekend = dow === 0 || dow === 6;
+  const prefix = isWeekend ? "주말" : "평일";
+
+  const counts = new Map<string, number>();
+  for (const pref of preferences) {
+    for (const pt of pref.preferred_times || []) {
+      if (pt.startsWith(prefix)) {
+        counts.set(pt, (counts.get(pt) || 0) + 1);
+      }
+    }
+  }
+  if (counts.size === 0) return null;
+  let bestKey = "";
+  let bestCount = 0;
+  for (const [key, c] of counts) {
+    if (c > bestCount) {
+      bestCount = c;
+      bestKey = key;
+    }
+  }
+  const range = PREFERRED_TIME_RANGES[bestKey];
+  if (!range) return null;
+  return { start: range[0], end: range[1] };
+}
 
 function getCurrentUserIdFromToken(): number | null {
   if (typeof window === "undefined") return null;
@@ -60,6 +109,30 @@ export default function InfoPane() {
   const currentUserId = useMemo(() => getCurrentUserIdFromToken(), []);
 
   const [calendarCollapsed, setCalendarCollapsed] = useState(false);
+
+  // 방 선호 시간대 (TimeBar AI 추천 범위 우선순위에 사용)
+  const [roomPreferences, setRoomPreferences] = useState<RoomPreference[]>([]);
+  useEffect(() => {
+    if (!roomId) return;
+    let cancelled = false;
+    apiFetch<{ preferences: RoomPreference[] }>(
+      `/api/v1/rooms/${roomId}/preferences`,
+    )
+      .then((data) => {
+        if (!cancelled) setRoomPreferences(data.preferences || []);
+      })
+      .catch(() => {
+        /* 선호 미등록 / 실패 시 fallback 동작 — 무시 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [roomId]);
+
+  const preferredTimeRangeForDate = useMemo(
+    () => (confirmedDate ? computePreferredTimeRange(confirmedDate, roomPreferences) : null),
+    [confirmedDate, roomPreferences],
+  );
 
   const hasSelectedPlace = selectedPlace !== null;
   // Non-phased flow: place-only (no vote card, just place recommendation, not manually started)
@@ -267,6 +340,7 @@ export default function InfoPane() {
                     roomId={roomId}
                     onConfirm={handleTimeConfirm}
                     onBack={() => setInfoPanePhase("dateSelected")}
+                    preferredTimeRange={preferredTimeRangeForDate}
                   />
                 </div>
               )}

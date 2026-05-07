@@ -40,6 +40,9 @@ interface TimeBarSelectorProps {
   roomId: string;
   onConfirm: (startAt: string, endAt: string) => void;
   onBack?: () => void;
+  // 방 선호 시간대 ({start: 18, end: 21} 같은 hour range, end는 exclusive).
+  // null/undefined면 기존 동작 (전체 범위 longest streak).
+  preferredTimeRange?: { start: number; end: number } | null;
 }
 
 function slotToTime(slotIndex: number): string {
@@ -86,7 +89,7 @@ function isBusyAtSlot(
   return false;
 }
 
-export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: TimeBarSelectorProps) {
+export default function TimeBarSelector({ date, roomId, onConfirm, onBack, preferredTimeRange }: TimeBarSelectorProps) {
   const [memberData, setMemberData] = useState<Record<string, MemberBusyPeriod[]> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -201,26 +204,47 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack }: Tim
     setSelectionEnd(null);
   }, [date]);
 
-  // AI recommended range: longest streak where all members are available
-  // Only show if there are actual members with calendar data, and cap at 4 hours (8 slots)
+  // AI recommended range: 선호 시간대(평일저녁 등) 내 longest streak 우선,
+  // 없으면 전체 longest streak fallback. 최대 4시간 (8슬롯) 캡.
   const recommendedRange = useMemo(() => {
-    if (members.length === 0) return null; // No members → no recommendation
-    const MAX_RECOMMEND_SLOTS = 8; // 4 hours max
-    let bestStart = -1, bestLen = 0, curStart = -1, curLen = 0;
-    for (let i = 0; i < TOTAL_SLOTS; i++) {
-      if (aggregateAvailability[i]) {
-        if (curStart === -1) curStart = i;
-        curLen++;
-        if (curLen > bestLen) { bestStart = curStart; bestLen = curLen; }
-      } else {
-        curStart = -1; curLen = 0;
+    if (members.length === 0) return null;
+    const MAX_RECOMMEND_SLOTS = 8;
+
+    function longestStreakInRange(startSlot: number, endSlot: number): { start: number; len: number } | null {
+      const lo = Math.max(0, startSlot);
+      const hi = Math.min(TOTAL_SLOTS - 1, endSlot);
+      if (lo > hi) return null;
+      let bestStart = -1, bestLen = 0, curStart = -1, curLen = 0;
+      for (let i = lo; i <= hi; i++) {
+        if (aggregateAvailability[i]) {
+          if (curStart === -1) curStart = i;
+          curLen++;
+          if (curLen > bestLen) { bestStart = curStart; bestLen = curLen; }
+        } else {
+          curStart = -1; curLen = 0;
+        }
+      }
+      return bestLen >= 2 ? { start: bestStart, len: bestLen } : null;
+    }
+
+    // 1차 시도 — 선호 시간대 내. preferredTimeRange.end는 exclusive.
+    if (preferredTimeRange) {
+      const slotsPerHour = 60 / SLOT_MINUTES;
+      const prefStartSlot = (preferredTimeRange.start - HOUR_START) * slotsPerHour;
+      const prefEndSlot = (preferredTimeRange.end - HOUR_START) * slotsPerHour - 1;
+      const inPref = longestStreakInRange(prefStartSlot, prefEndSlot);
+      if (inPref) {
+        const cappedLen = Math.min(inPref.len, MAX_RECOMMEND_SLOTS);
+        return { start: inPref.start, end: inPref.start + cappedLen - 1 };
       }
     }
-    if (bestLen < 2) return null;
-    // Cap the recommended range
-    const cappedLen = Math.min(bestLen, MAX_RECOMMEND_SLOTS);
-    return { start: bestStart, end: bestStart + cappedLen - 1 };
-  }, [aggregateAvailability]);
+
+    // Fallback — 전체 범위.
+    const overall = longestStreakInRange(0, TOTAL_SLOTS - 1);
+    if (!overall) return null;
+    const cappedLen = Math.min(overall.len, MAX_RECOMMEND_SLOTS);
+    return { start: overall.start, end: overall.start + cappedLen - 1 };
+  }, [aggregateAvailability, preferredTimeRange]);
 
   const handleSlotClick = useCallback((slotIndex: number) => {
     if (selectionStart === null) {

@@ -165,6 +165,21 @@ L과 F가 동시에 한 파일을 건드리는 zone이 충돌 위험. 아래 §3
   - `meeting_id` 누락 → `Record<number, CardPayload>` 키 깨짐 → 카드 안 사라짐 (F-1 회귀)
   - vote_card 발행 시 partial maedeup이 같은 meeting_id 안 쓰면 두 카드 동시 표시
 
+### C7. TimeBar 슬롯 상수 미러 (backend ↔ frontend)
+
+- **Backend**: `backend/app/services/scheduling_round.py:36-38`
+  - `TIME_SLOT_FIRST_HOUR = 9` — TimeBar 09:00 시작
+  - `TIME_SLOT_MINUTES = 30` — 30분 슬롯
+  - `TIME_SLOT_MAX = 26` — 26 cells = 09:00~22:00, idx 0~25
+- **Frontend**: `frontend/src/components/meeting/TimeBarSelector.tsx:9-12`
+  - `HOUR_START = 9`, `SLOT_MINUTES = 30`, `TOTAL_SLOTS = 26`
+- **Backend 헬퍼**: `_slot_idx_to_time(idx)` (line 551, private — 필요 시 export)
+- **변환 공식**: `wall_minutes = TIME_SLOT_FIRST_HOUR * 60 + idx * TIME_SLOT_MINUTES`
+- **깨짐 증상**:
+  - 한쪽만 변경 → idx ↔ 시간 mismatch (09:00이 다른 시간으로 보이거나 storage 영역 밖 idx 통과)
+  - **A3-3 P2 (2026-05-08)**: rooms.py에 `0~47` 하드코딩한 게 실제 storage 상한 25와 어긋남 → 26~47 idx 통과 후 0명 거부 분기 잘못 작동. `sr.TIME_SLOT_MAX` 참조로 정정.
+- **변경 시 양쪽 commit 1건에 묶을 것** (C4 PREFERRED_TIME_RANGES 미러 동일 패턴)
+
 ### C6. LangGraph state 키 (노드 간 계약)
 
 | 키 | 누가 set | 누가 read | 라우팅 분기 |

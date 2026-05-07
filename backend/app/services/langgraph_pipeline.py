@@ -3511,10 +3511,12 @@ async def function_calling(state: GraphState) -> GraphState:
         if _has_node_error(state):
             return state
         if state["status"] == "conclusion_false_positive":
+            logger.info("[TIMING] function_calling (false_positive): %.2fs", time.monotonic() - _t0)
             return state
         if state["status"] == "time_only_ready":
             state["calendar_free_slots"] = []
             state["place_search_results"] = []
+            logger.info("[TIMING] function_calling (time_only_ready): %.2fs", time.monotonic() - _t0)
             return state
         state["blocker_notification_payload"] = None
 
@@ -4035,7 +4037,11 @@ async def place_recommendation(state: GraphState) -> GraphState:
         )
 
         if place_results:
-            top_candidates = place_results[:10]
+            # 시연 latency 최적화 (2026-05-08): top 10 → top 5.
+            # 측정상 place_recommendation 노드가 ~40s 단일 병목, prompt + output 토큰 절반 줄임.
+            # frontend는 어차피 top 5만 노출 (line 아래 ranked_places[:5]).
+            # Kakao API 응답이 이미 relevance/distance 정렬이라 top 5도 양질.
+            top_candidates = place_results[:5]
             headcount = state.get("headcount") or 0
             meeting_type = state.get("meeting_type") or "모임"
 
@@ -4057,7 +4063,7 @@ async def place_recommendation(state: GraphState) -> GraphState:
                         )
                     reranked.append(place_copy)
                 reranked.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
-                ranked_places = reranked + place_results[10:]
+                ranked_places = reranked + place_results[5:]
             else:
                 # Gemini scoring for larger result sets (>3)
                 scoring_payload = [
@@ -4144,7 +4150,7 @@ async def place_recommendation(state: GraphState) -> GraphState:
                             )
                         reranked.append(place_copy)
                     reranked.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
-                    ranked_places = reranked + place_results[10:]
+                    ranked_places = reranked + place_results[5:]
                 except Exception:
                     ranked_places = []
                     for place in place_results:
@@ -4273,6 +4279,8 @@ async def maedeup_card_creation(state: GraphState) -> GraphState:
             }
             state["maedeup_card_payload"] = payload
             state["status"] = "completed"
+            # P0-2: memory_extraction 분리 — graph latency에서 빼서 사용자 인식 latency ↓.
+            asyncio.create_task(_spawn_memory_extraction_async(state))
             return state
         if state.get("confirmed_place"):
             selected_place = {
@@ -4303,6 +4311,8 @@ async def maedeup_card_creation(state: GraphState) -> GraphState:
         }
         state["status"] = "completed"
         logger.info("[TIMING] maedeup_card_creation: %.2fs", time.monotonic() - _t0)
+        # P0-2: memory_extraction 분리 — graph latency에서 빼서 사용자 인식 latency ↓.
+        asyncio.create_task(_spawn_memory_extraction_async(state))
         return state
     except Exception as exc:
         return await _handle_node_exception("maedeup_card_creation", state, exc)
@@ -4348,6 +4358,25 @@ async def _publish_personal_data_updates(user_ids: list[int]) -> None:
             await r.aclose()
     except Exception as exc:  # noqa: BLE001
         logger.warning("personal_data Redis publish failed: %s", exc)
+
+
+async def _spawn_memory_extraction_async(state_snapshot: GraphState) -> None:
+    """P0-2 (2026-05-08): maedeup_card_creation 후 memory_extraction을 fire-and-forget으로 실행.
+
+    Graph가 이걸 sequential로 돌면 ACT 4 latency가 4.5s → ~0.05s 차이로 사용자 인식 침묵 발생.
+    분리해서 카드는 즉시 emit, ✨ 학습 카드는 ~4s 후 별도 emit (자연스러운 flow).
+
+    state['db'] 세션은 graph 종결 후 close 가능성 → 새 session 필수.
+    state 자체는 shallow copy로 detached task와 분리 (graph 이후 변경되어도 task 영향 X).
+    실패는 silent log only — 모임 카드는 이미 발행된 상태라 회복 불가능 + 모임 자체를 깨뜨리면 안 됨.
+    """
+    try:
+        async with AsyncSessionLocal() as new_session:
+            detached_state: GraphState = dict(state_snapshot)  # type: ignore[assignment]
+            detached_state["db"] = new_session
+            await memory_extraction(detached_state)
+    except Exception:
+        logger.exception("Detached memory_extraction failed")
 
 
 async def memory_extraction(state: GraphState) -> GraphState:
@@ -4622,7 +4651,8 @@ def _build_graph() -> Any:
     graph.add_node("vote_card_creation", vote_card_creation)
     graph.add_node("place_recommendation", place_recommendation)
     graph.add_node("maedeup_card_creation", maedeup_card_creation)
-    graph.add_node("memory_extraction", memory_extraction)
+    # P0-2 (2026-05-08): memory_extraction 노드를 graph에서 분리.
+    # maedeup_card_creation 안에서 fire-and-forget으로 spawn 됨 (~4s 사용자 인식 latency 제거).
 
     # 해결점 C: trigger_reason 기반 진입 분기 (노드1 스킵 가능)
     graph.add_conditional_edges(
@@ -4681,10 +4711,9 @@ def _build_graph() -> Any:
             END: END,
         },
     )
-    # 매듭 카드 생성 후 personal data 추출 → 그 후 종결.
-    # extraction 실패는 graph를 깨지 않음 (memory_extraction 내부에서 흡수).
-    graph.add_edge("maedeup_card_creation", "memory_extraction")
-    graph.add_edge("memory_extraction", END)
+    # P0-2 (2026-05-08): 매듭 카드 즉시 종결. memory_extraction은 카드 노드 내부에서
+    # asyncio.create_task로 fire-and-forget — graph latency에서 ~4s 빠짐.
+    graph.add_edge("maedeup_card_creation", END)
     return graph.compile()
 
 

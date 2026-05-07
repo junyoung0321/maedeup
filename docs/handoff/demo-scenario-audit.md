@@ -128,17 +128,23 @@
 > 풀-루프 재검증 (room 35). A3-2 게이트 + A4-3 Partial 카드 + A6-1 카테고리 차단 모두 통과.
 > 단 신규 4건 발견.
 
-### 신규 미해결 ❌ (P0/P1)
+### F 시리즈 — 모두 fix 완료 ✅
+
+F-1 ~ F-4 5/7 검증 + 5/8 회귀 fix 모두 commit + 라이브 검증 통과.
+
+| # | 결과 | Commit |
+| --- | --- | --- |
+| **F-1 v2** | ✅ pending meeting 재사용 가드 (date_hint 매칭 + 30분 fallback) — vote_card → maedeup_card 같은 meeting_id로 라이프사이클 | `74779ba` |
+| **F-2** | ✅ TimeBar 추천 18-21 정확 (refresh trigger + InfoPane 디버깅으로 자연 회복) | `42fef84` (overflowX 제거) + 진단 로그 |
+| **F-3** | ✅ entity_extraction direct_request fast-skip 0.09s (이전 15s) | `4c5ce48` |
+| **F-4 (1차)** | ✅ meeting_summary 풍부화 (멤버별 거부 사유 + 합의 흐름) | `4c5ce48` |
+| **F-4 (회귀)** | ✅ signals.preferred_dates ISO 변환 강제 — 풍부 카드 + slot 빌드 양립 | `b8dd909` |
+| F-5 | 무시 OK | (오늘 추천 없음 — 의도된 skip) |
+
+### 5/8 추가 P1 미해결
 
 | # | 우선 | 항목 | 위치 / 노트 |
 | --- | --- | --- | --- |
-| **F-1** | 🔥 P0 | **maedeup 카드 발행 후 vote_card 안 사라짐** | frontend `MeetingContext` 라이프사이클 — maedeup_card 수신 핸들러에 `setVoteCard(null)` 누락. UI에 vote_card + maedeup_card 동시 노출. |
-| **F-2** | 🔥 P0 | **TimeBar 추천 시간대 9-13** (선호 `평일저녁` 18-21 미반영) | D 카테고리 작동 안 함. `/preferences` API는 정상 응답 (`["평일저녁"]` 박혀 있음). frontend `computePreferredTimeRange` → prop → `recommendedRange` 흐름 어딘가 끊김. 디버깅 필요. |
-| **F-3** | 🔥 P0 | **ACT 5 단축 미발동** ("강남에서 다 같이 갈만한 한식집") | A5-1 fix 후에도 entity_extraction 15.89s + place_recommendation 52.23s = 68s. quick_classify 또는 LangGraph 분기 어딘가 정규식 매칭 안 됨. 재조정 필요. |
-| **F-4** | ⚠️ P1 | **meeting_summary 빈약** | `_analyze_conversation` (langgraph_pipeline.py:4644) 프롬프트 결과 `notes: ["시험 끝나고 모임"]` 수준. 거부 날짜 + 이유 + 멤버 입장 요약 등 구체화 프롬프트 보강 필요. |
-
-### 무시 OK
-
-| # | 항목 | 이유 |
-| --- | --- | --- |
-| F-5 | 오늘(5/7) 날짜 추천 없음 | 검증 시각 KST 21:00 — 평일저녁(18-21) 종료 + now+1h=22:00 > 21:00 → today bump 로직이 의도대로 skip. 시나리오 5/11 추천이라 영향 없음. |
+| **A5-2** | ⚠️ P1 | **reasoning ✨ 멤버 이름 인용 미렌더** — Personal Data 시드 후 ACT 5 query에도 카드/detail 어디에도 "수현님 채식 ✨ 반영" 같은 멤버 인용 텍스트 없음. backend는 user PD 읽긴 함 (`food_restrictions/disliked_areas` SELECT 로그) 단 카드 payload `reasoning` 필드에 named summary 안 박힘 OR frontend 미렌더 | backend `_build_named_constraints_summary`(langgraph_pipeline.py:2080~) 결과를 place card payload `reasoning`에 명시 박기 + frontend place card 또는 detail에 reasoning 텍스트 영역 추가 |
+| **A3-3** | ⚠️ P1 (UX) | TimeBar 합의 후 "일정 확정하기" 단일 → 2-버튼 ([확정] AI 추천 시간 / [조율] TimeBar 모달로 호스트 직접 선택) | frontend + backend (UX 설계 변경) |
+| **AI 응답 지연** | ⚠️ 외부 | place_recommendation 38s+ (Gemini scoring/ranking). Kakao 자체는 1초. fallback 점수 10% 노출 시 시연 인상 깎임 | Gemini scoring timeout 단축 또는 캐시 또는 시연용 mock |

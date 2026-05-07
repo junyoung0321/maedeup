@@ -16,6 +16,29 @@ function slotToTime(idx: number): string {
   return `${h}:${m.toString().padStart(2, "0")}`;
 }
 
+// A3-3: 전원 가능 슬롯 중 가장 긴 연속 segment. 단일 슬롯 segment도 포함 (edge case).
+function findLongestFullCoverageSegment(
+  heatmap: number[],
+  memberCount: number,
+): { start: number; end: number } | null {
+  const segments: { start: number; end: number }[] = [];
+  let curStart: number | null = null;
+  for (let i = 0; i < heatmap.length; i++) {
+    if (heatmap[i] === memberCount) {
+      if (curStart === null) curStart = i;
+    } else if (curStart !== null) {
+      segments.push({ start: curStart, end: i - 1 });
+      curStart = null;
+    }
+  }
+  if (curStart !== null) {
+    segments.push({ start: curStart, end: heatmap.length - 1 });
+  }
+  if (segments.length === 0) return null;
+  segments.sort((a, b) => (b.end - b.start) - (a.end - a.start));
+  return segments[0];
+}
+
 interface HostTimeAdjustModalProps {
   snapshotHash: string;
   confirmedDate: string;
@@ -52,32 +75,13 @@ export default function HostTimeAdjustModal({
 
   // default range — 가장 긴 "전원 가능" 연속 segment, 없으면 첫 부분 가능 슬롯
   const defaultRange = useMemo(() => {
-    let bestStart = -1, bestEnd = -1;
-    let curStart = -1, curEnd = -1;
+    const longest = findLongestFullCoverageSegment(heatmap, memberCount);
+    if (longest) return longest;
+    // fallback: 전원 가능 segment 없을 때 (1~3명만 가능한 케이스)
     for (let i = 0; i < TOTAL_SLOTS; i++) {
-      if (heatmap[i] === memberCount) {
-        if (curStart === -1) curStart = i;
-        curEnd = i;
-      } else {
-        if (curStart !== -1 && (curEnd - curStart) > (bestEnd - bestStart)) {
-          bestStart = curStart;
-          bestEnd = curEnd;
-        }
-        curStart = -1;
-        curEnd = -1;
-      }
+      if (heatmap[i] > 0) return { start: i, end: i };
     }
-    if (curStart !== -1 && (curEnd - curStart) > (bestEnd - bestStart)) {
-      bestStart = curStart;
-      bestEnd = curEnd;
-    }
-    if (bestStart === -1) {
-      for (let i = 0; i < TOTAL_SLOTS; i++) {
-        if (heatmap[i] > 0) return { start: i, end: i };
-      }
-      return { start: 0, end: 0 };
-    }
-    return { start: bestStart, end: bestEnd };
+    return { start: 0, end: 0 };
   }, [heatmap, memberCount]);
 
   const [startIdx, setStartIdx] = useState(defaultRange.start);

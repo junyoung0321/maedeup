@@ -114,3 +114,7 @@
 
 - ✅ **A5-1**: quick_classify 정규식 3-갈래 OR + langgraph `_PLACE_INTENT_PATTERN` 보강 — commit `13110cb`
 - ✅ **A3-1** (신규 추적): narration 합의 시간대 동적 주입 — commit `22b235b`
+- ✅ **A0-1**: PersonalData D-1 시드 스크립트 (`backend/scripts/seed_demo_personal_data.py`) — idempotent + `--dry-run` 지원
+- ✅ **D 카테고리**: TimeBar 추천 범위 선호도 동기화 (옵션 A) — commit `6877461`
+- ✅ **A3-2 backend**: 자동 발동 차단 + 호스트 확정 endpoint — commit `4478608` (frontend 핸들러는 별도)
+- ✅ **A4-1**: confirm 후속 안내 박스 emit (`agent_messaging.py` 헬퍼 + meetings.py 통합)

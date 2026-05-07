@@ -107,9 +107,14 @@
 - 선호 범위 내 streak ≥ 2가 없는 경우 (e.g. 평일저녁 범위가 캘린더 충돌로 가득) → fallback로 전체 longest 사용 — 사용자 의도 부분 손실되지만 빈 추천보단 나음
 - 라벨은 "추천: 오후 6:00 ~ 오후 9:00 (N명 전원 가능)" 그대로 — "선호 시간대 추천" 등으로 명료화 가능 (TODO)
 
-### E. 진행 중 — A4-3 Partial maedeup 카드 분기 (조사 단계)
+### E. 종결 — A4-3 Partial maedeup 카드 분기 (코드 수정 없음)
 
-**상태**: 조사 시작 전 / 코드 미수정.
+**상태**: ✅ 해결 — **시연 입력 패턴 정정으로 종결**. 코드 변경 X.
+
+**최종 결론** (2026-05-07): 사용자 테스트 시 선호도 팝업에 "강남" 입력 → `pref_data.best_location = "강남"` → `_slot_filling_all_members`의 2차 elif 분기 fire → place_recommendation 직행. 시나리오 doc은 명시적으로 "선호 장소 비워둠"이라 적혀있어서 **시연 시 공란 입력**이 정답. 코드 회귀 위험 없이 종결.
+
+**참고용 분석** (코드 변경했을 경우 발생 가능 문제 — 향후 일반 사용성 검토 시 재참조):
+
 
 **시연 영향**: 🔥 P0 — ACT 4 카드 라이프사이클 (partial → place 확정 → maedeup) 핵심.
 
@@ -126,8 +131,53 @@
 3. `partial_mode = "time_only"` 활성화 조건 — 어디서 set 되고 언제 maedeup_card_creation 노드가 partial 분기 타는지
 4. 실제 흐름이 place_recommendation으로 빠지는 분기점 — `function_calling` / `_route_after_*`
 
-**조사 결과 (코드 분석 후 채울 것)**:
-- (TBD)
+**조사 결과 (코드 분석 완료)**:
+
+**근본 원인 — `_slot_filling_all_members` (langgraph_pipeline.py:3105-3128)의 3-way 분기**:
+```python
+if state.get("place_hint"):
+    state["status"] = "location_first_ready"  # → place_recommendation
+elif best_location:                             # pref_data.best_location
+    state["place_hint"] = best_location
+    state["status"] = "location_first_ready"  # → place_recommendation
+else:
+    state["partial_mode"] = "time_only"
+    state["status"] = "time_only_ready"        # → maedeup partial 카드 ✓
+```
+
+`_route_after_validation` (line 4427)에서 `time_only_ready` status를 우선 체크해 maedeup_card_creation으로 라우팅하므로, **time_only_ready 분기에 진입하기만 하면 partial 카드 정상 발행**됨. 문제는 진입 못 함.
+
+**진입 못 하는 이유 (가능성 순)**:
+1. **`pre_extracted_signals.place_hint`가 set됨** — `_analyze_conversation` (langgraph_pipeline.py:4644)이 Gemini로 social chat 분석 시 `place_hint` 추출. 데모 ACT 2 채팅엔 장소 명시 없지만, 이전 turn 또는 시드 메시지에 "강남" 등이 있으면 잡힘. entity_extraction 노드가 pre_extracted를 그대로 state["place_hint"]로 주입 (line 2371).
+2. **`slot_context.place_hint` 잔존** — `agent.py:794-796`이 매 메시지마다 result.place_hint를 slot_context에 보존. ACT 2 trigger 결과가 place_hint를 채웠다면 ACT 3·4까지 잔존.
+3. **`_enrich_with_preferences` (line 2947-2950)** — pref_data.best_location이 set이면 (멤버가 preferred_location 입력) state.place_hint 자동 채움. 시나리오상 모두 빈 칸이라 발동 안 해야 정상.
+
+**수정 방향 (추천)**:
+`_slot_filling_all_members`를 **trigger_reason 기반으로 단순화** — `all_members_selected` 진입 시 place_hint 무관하게 **항상 time_only_ready**.
+
+Why: 시나리오 ACT 4-5 핵심은 카드 라이프사이클 (partial → place 확정 → maedeup 갱신). place_hint가 우연히 set 됐다고 해서 partial 단계 건너뛰면 시연 임팩트 (`"같은 카드가 partial → 완성으로 진화"`) 손실.
+
+```python
+async def _slot_filling_all_members(state, pref_data):
+    # 해결점 A4-3: TimeBar 전원 합의 → 항상 Partial maedeup 카드 (시간만).
+    # 장소는 ACT 5에서 사용자가 별도 요청 → place_recommendation 카드 → confirm → 같은
+    # meeting_id의 maedeup 카드 갱신 (partial → 완성). 시나리오 ACT 4-5 카드 라이프사이클.
+    state["partial_mode"] = "time_only"
+    state["status"] = "time_only_ready"
+    logger.info("[TRIGGER] all_members_selected → time-only partial card (always)")
+    # ... headcount/meeting_type defaults 등 기존 로직 유지
+```
+
+**Side effect 분석**:
+- 기존에 place_hint 있는 케이스가 place_recommendation으로 직행하던 경로가 사라짐.
+- 사용자가 ACT 5에서 "강남에서 갈만한 한식집" 같은 별도 메시지를 보내면 다시 place_recommendation 트리거됨 (시나리오 핵심 흐름).
+- 단점: 자동 트리거 없이 사용자 의도 파악만으로 place_recommendation을 주는 케이스는 사라짐. 시연 시나리오에선 영향 없음.
+
+**구현 단계**:
+1. `_slot_filling_all_members` 단순화 (위 코드)
+2. (선택) `_route_after_validation` line 4438의 `if trigger == "all_members_selected": return "place_recommendation"`은 죽은 분기 됨 — time_only_ready가 먼저 잡혀서. 정리 가능하지만 시연 안전을 위해 유지.
+3. Codex 리뷰
+4. 다른 터미널에서 commit
 
 **충돌 영역**: `langgraph_pipeline.py` 내부. 다른 터미널 A3-2는 `social.py` + 새 endpoint이라 직접 충돌 없음.
 

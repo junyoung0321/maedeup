@@ -13,9 +13,37 @@
 | `32d039a` | fix(frontend): vote_card label regex + awaiting state reset — #9 P1·P2 fix + regex 정교화 |
 | `22b235b` | fix(narration): A3-1 합의 시간대 동적 주입 — `_build_entities_from_timebar`에 `consensus_label` + greeting 동적화 |
 
-## 진행 중 작업 — A3-2 (TimeBar 자동 발동 차단)
+## 진행 중 작업 (미커밋)
 
-**상태**: 분석 완료, 코드 작성 시작.
+### A3-2 — TimeBar 자동 발동 차단 (backend 완료, frontend 대기)
+### A4-1 — confirm 후 AI 패널 확정 안내 박스 (backend 완료)
+
+신규 모듈 `backend/app/services/agent_messaging.py`:
+- `emit_agent_message(redis, room_id, content)` — DB ChatMessage commit + agent 채널 publish (silent fail). 호출처 다양 (A4-1 + 미래 사용)
+- `format_korean_meeting_time(dt)` — "5월 8일 (금) 오후 6:00" 포맷
+
+`backend/app/api/routes/meetings.py:confirm_meeting` (line 446 부근):
+- DB confirm 직후, GCal 등록 전에 두 메시지 emit:
+  1. `"✅ 일정이 확정되었어요 — {Korean time}"`
+  2. `"이제 어디서 만날지 정해볼까요? 장소를 추천해드릴게요."`
+- silent fail (DB commit unwind 없음)
+
+검증: docker restart 후 `/health` OK. 시연 검증은 chromium 보유 터미널에서 vote_card → 확정 → AI 패널 두 줄 떠야.
+
+### #8 — PersonalData D-1 시드 스크립트 (완료)
+신규 파일: `backend/scripts/seed_demo_personal_data.py`
+- `SEED_MAP` (지민 한식·강남·저녁형 / 수현 채식·홍대 비선호 / 민수 지하철)
+- `--room <id>` + `--dry-run` 인자
+- User.name 매칭으로 user_id 자동 찾기, `is_ai_filled[cat]=True`
+- Idempotent (이미 시드된 user는 skip)
+- dry-run 검증 통과
+
+시연 D-1 사용:
+```bash
+docker exec maedeup-api python -m scripts.seed_demo_personal_data --room <id>
+```
+
+### A3-2 (이전) — 분석 완료, 코드 작성 시작.
 **시연 영향**: 🔥 P0 — 사용자 의도 없이 AI 자동 발동되어 "AI 마음대로" 인상.
 
 ### 기대 동작

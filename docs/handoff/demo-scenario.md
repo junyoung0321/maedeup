@@ -15,6 +15,8 @@
 | 민수 | 멤버 ✅ | 지하철 ✨ |
 | 예린 | **게스트** (앱 없음, 카톡 링크) | — |
 
+> **사전 시드 (D-1)**: `docker exec maedeup-api python -m scripts.seed_demo_personal_data --room <id>` — ACT 0 메인 ✨ 노출 + ACT 5 reasoning 이름 인용용.
+
 ## **흐름 한눈에**
 
 ```markdown

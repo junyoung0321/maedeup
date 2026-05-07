@@ -181,6 +181,60 @@ async def _slot_filling_all_members(state, pref_data):
 
 **충돌 영역**: `langgraph_pipeline.py` 내부. 다른 터미널 A3-2는 `social.py` + 새 endpoint이라 직접 충돌 없음.
 
+### F. 미커밋 — A6-1 personal_data_extractor 거부 발화 차단 (3중 안전망)
+
+**상태**: 파일 적용 완료, 미커밋, Docker 미반영. Codex 리뷰 대기.
+
+**파일**: `backend/app/services/personal_data_extractor.py`
+
+**증상** (audit-findings.md A6-1):
+- `memory_extraction`이 채팅 거부 발화를 `time_preference` 카테고리에 잘못 저장
+- 예: "5월 8일 동아리 MT라 안 돼" → 수현 `time_preference: "5월 8일 동아리 MT로 인해 불가능"`
+- 시연 ACT 6 ✨ 학습 카드 정확도 ↓, ACT 5 reasoning에 헛소리 들어갈 위험
+
+**수정 — 3중 안전망**:
+1. **Prompt 강화** (`_PROMPT_TEMPLATE`): time_preference 정의에 "반복적 lifestyle 패턴만, 일회성 이벤트/거부 절대 X" 명시
+2. **부정 예시** (Prompt 후반): 5개 부정 예시 추가 ("5월 8일 동아리 MT라 안 돼" 등) — Gemini가 sneak-through 못 하게
+3. **Post-process 필터** (`_filter_invalid_time_preference`): 정규식 `_TIME_PREF_INVALID_PATTERN`으로 추출 결과 후처리. value/source_quote에 매칭 시 drop. Gemini + canned 양쪽 경로에 통일 적용 (`extract_personal_data` 반환 직전).
+
+**정규식 패턴**:
+```python
+r"\d+\s*월\s*\d+\s*일|"  # "5월 8일" 구체 날짜
+r"안\s*[돼되]|못\s*가|못\s*해|힘들|어려워|어렵다|어렵겠|"
+r"패스|불가능|곤란|선약|MT|시험"
+```
+
+**검증** (regex sanity, 9 테스트 케이스 통과):
+| 입력 | drop? |
+|---|---|
+| "주말 오후" | ❌ (pass) |
+| "평일 저녁 7시 이후" | ❌ (pass) |
+| "저녁형" | ❌ (pass) |
+| "5월 8일 동아리 MT라 안 돼" | ✅ drop |
+| "9일은 본가 내려가야 해서 패스" | ✅ drop |
+| "내일 시험이라 못 가" | ✅ drop |
+| "그 날은 어려워" | ✅ drop |
+| "주말 위주로 활동" | ❌ (pass) |
+| "평일 저녁이 좋아" | ❌ (pass) |
+
+**시연 영향**:
+- ACT 6 ✨ 학습 마무리 임팩트 정확도 ↑
+- ACT 5 reasoning에 거부 컨텍스트 누설 차단
+
+**Side effect 분석**:
+- `MT`/`시험` 키워드는 일반 대화에서 정성적으로 등장할 수도 있음 (예: "MT 가는 것 좋아해"). 이런 정상 케이스도 drop 됨 → false negative 가능. 시연 시나리오에선 발생 안 함.
+- 정규식 보수적이라 정상 추출 100% 보장은 아님. 시연 후 false negative 감지되면 패턴 정밀화.
+
+**Codex 리뷰 결과**: ✅ 통과 (3 iteration 후 clean):
+1. v1 — Codex P2: month-less day-only ("10일") + 휴식 마커 누락 → 정규식 강화로 수정
+2. v2 — Codex P2: source_quote 검사로 인한 false negative (혼합 발화) → value-only 검사로 변경
+3. v3 — Codex P2: prompt가 거부 키워드 발화 전체 무시 지시 → 혼합 발화 lifestyle만 추출하도록 prompt 미세 조정 + 긍정 예시 3개 추가
+4. v4 — 내 A6-1 변경 finding 0건. A3-2 관련 frontend 2건 (다른 터미널 영역)
+
+**충돌 영역**: `personal_data_extractor.py` — 다른 터미널 작업 영역 아님. 충돌 없음.
+
+
+
 
 
 | 영역 | 충돌 가능성 | 대응 |

@@ -15,7 +15,21 @@
 
 ## 진행 중 작업 (미커밋)
 
-### A3-2 — TimeBar 자동 발동 차단 (backend 완료, frontend 대기)
+### A3-2 — TimeBar 자동 발동 차단 (backend 완료, frontend 완료)
+
+Frontend 작업 (D commit 후 진행):
+- `useSocialWebSocket.ts`: `ScheduleConsensusReadyPayload` interface + type guard + state + handler. `scheduleConsensus`, `clearScheduleConsensus` return.
+- `MeetingContext.tsx`: state field + setter + value/deps 매핑
+- `ChatPane.tsx`: bridge useEffect (`setScheduleConsensus(scheduleConsensus)`)
+- `InfoPane.tsx`: banner UI — `dateConfirmed` phase + `scheduleConsensus !== null` 시 노출
+  - 호스트: "✅ 모두 시간대를 골랐어요" + "일정 확정하기" 버튼 → POST `/api/v1/rooms/{id}/schedule-confirm` with snapshot_hash
+  - 비호스트: "⏳ 방장이 확정하기를 기다리는 중이에요" placeholder
+
+tsc 통과. 검증 (chromium 보유 터미널 위임):
+- 4명 TimeBar 합의 → 호스트 화면 버튼, 비호스트 placeholder 분기
+- 호스트 클릭 → ai_auto_trigger 발동 + 파이프라인 정상 진행
+- meeting_confirmed 도착 시 banner 자동 사라짐 (useSocialWebSocket에서 clear)
+
 ### A4-1 — confirm 후 AI 패널 확정 안내 박스 (backend 완료)
 
 신규 모듈 `backend/app/services/agent_messaging.py`:

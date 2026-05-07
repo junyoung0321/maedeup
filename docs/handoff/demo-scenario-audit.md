@@ -116,5 +116,29 @@
 - ✅ **A3-1** (신규 추적): narration 합의 시간대 동적 주입 — commit `22b235b`
 - ✅ **A0-1**: PersonalData D-1 시드 스크립트 (`backend/scripts/seed_demo_personal_data.py`) — idempotent + `--dry-run` 지원
 - ✅ **D 카테고리**: TimeBar 추천 범위 선호도 동기화 (옵션 A) — commit `6877461`
-- ✅ **A3-2 backend**: 자동 발동 차단 + 호스트 확정 endpoint — commit `4478608` (frontend 핸들러는 별도)
-- ✅ **A4-1**: confirm 후속 안내 박스 emit (`agent_messaging.py` 헬퍼 + meetings.py 통합)
+- ✅ **A3-2 backend + frontend**: 자동 발동 차단 + 호스트 확정 게이트 — commits `4478608` + `7b3fce7`
+- ✅ **A4-1**: confirm 후속 안내 박스 emit (`agent_messaging.py` 헬퍼 + meetings.py 통합) — commit `5d709f2`
+- ✅ **A4-3**: all_members_selected → time-only Partial maedeup 카드 정상 발행 (`[TRIGGER] all_members_selected time-only partial card` 로그 확인) — A3-2 fix 이후 자연스럽게 정정
+- ✅ **A6-1**: memory_extractor 카테고리 misclass 차단 (거부 발화 → time_preference 저장 중단, `0 users affected` 로그 확인) — commit `cd2d7c2`
+
+---
+
+## 2026-05-07 후속 라이브 검증 (A3-2 frontend 적용 후)
+
+> 풀-루프 재검증 (room 35). A3-2 게이트 + A4-3 Partial 카드 + A6-1 카테고리 차단 모두 통과.
+> 단 신규 4건 발견.
+
+### 신규 미해결 ❌ (P0/P1)
+
+| # | 우선 | 항목 | 위치 / 노트 |
+| --- | --- | --- | --- |
+| **F-1** | 🔥 P0 | **maedeup 카드 발행 후 vote_card 안 사라짐** | frontend `MeetingContext` 라이프사이클 — maedeup_card 수신 핸들러에 `setVoteCard(null)` 누락. UI에 vote_card + maedeup_card 동시 노출. |
+| **F-2** | 🔥 P0 | **TimeBar 추천 시간대 9-13** (선호 `평일저녁` 18-21 미반영) | D 카테고리 작동 안 함. `/preferences` API는 정상 응답 (`["평일저녁"]` 박혀 있음). frontend `computePreferredTimeRange` → prop → `recommendedRange` 흐름 어딘가 끊김. 디버깅 필요. |
+| **F-3** | 🔥 P0 | **ACT 5 단축 미발동** ("강남에서 다 같이 갈만한 한식집") | A5-1 fix 후에도 entity_extraction 15.89s + place_recommendation 52.23s = 68s. quick_classify 또는 LangGraph 분기 어딘가 정규식 매칭 안 됨. 재조정 필요. |
+| **F-4** | ⚠️ P1 | **meeting_summary 빈약** | `_analyze_conversation` (langgraph_pipeline.py:4644) 프롬프트 결과 `notes: ["시험 끝나고 모임"]` 수준. 거부 날짜 + 이유 + 멤버 입장 요약 등 구체화 프롬프트 보강 필요. |
+
+### 무시 OK
+
+| # | 항목 | 이유 |
+| --- | --- | --- |
+| F-5 | 오늘(5/7) 날짜 추천 없음 | 검증 시각 KST 21:00 — 평일저녁(18-21) 종료 + now+1h=22:00 > 21:00 → today bump 로직이 의도대로 skip. 시나리오 5/11 추천이라 영향 없음. |

@@ -41,24 +41,29 @@ Docker 상태: API + Frontend 모두 health 200, 새 코드 반영 완료 (마�
 |---|---|---|---|
 | **A2** | 자연어 거부 5/8·9·10 ISO 추출 + 캘린더 sync (해결점 F·P) | (기존) | ✅ chromium UI |
 | **A2 선호 시간** | 평일 저녁 18:00 정확 반영 | (기존) | ✅ |
-| **A3-1** | TimeBar 합의 narration "19:00~21:00이 겹쳐요" 동적 | `22b235b` | ✅ |
+| **A3-1** | TimeBar 합의 narration "19:00~21:00이 겹쳐요" 동적 | `22b235b` | ✅ (host TimeBar 두 번째 클릭 정상 시) |
+| **A3-2** | 자동 발동 차단 + 호스트 "확정하기" 게이트 | `4478608` + `7b3fce7` | ✅ consensus_ready → host click → trigger 흐름 검증 |
 | **A4-1** | confirm 후속 안내 박스 emit | `5d709f2` | ⏳ 미검증 |
-| **A5-1** | quick_classify 정규식 + 즉시 약속 슬롯 | `13110cb` | ✅ 부분 (단축 경로 발동, 18s) |
-| **D** | TimeBar 추천 범위 선호도 동기화 | `6877461` + `b1dfd14` | ⏳ 미검증 |
-| **A3-2 backend** | 자동 발동 차단 + 호스트 확정 endpoint | `4478608` | ⏳ frontend 짝 대기 |
-| **A0-1** | PersonalData D-1 시드 스크립트 | `91cb4ef` | (도구) |
+| **A4-3** | all_members_selected → time-only Partial 카드 발행 | (자연 정정, A3-2 이후) | ✅ `[TRIGGER] all_members_selected time-only partial card` 로그 |
+| **A5-1** | quick_classify 정규식 + 즉시 약속 슬롯 | `13110cb` | ⚠️ 부분 (이전 검증 OK, 이번 회귀 — F-3 신규 이슈) |
+| **A6-1** | extractor 카테고리 misclass 차단 | `cd2d7c2` | ✅ `0 users affected` 로그 (거부 발화 학습 거부) |
+| **D** | TimeBar 추천 범위 선호도 동기화 | `6877461` + `b1dfd14` | ❌ F-2 신규 이슈 (작동 안 함) |
+| **A0-1** | PersonalData D-1 시드 스크립트 | `91cb4ef` | ✅ (스크립트 사용 검증) |
 | **시나리오 docs** | v3 통합본 + 시드 안내 한 줄 | `acd38a0` | (docs) |
 
 ---
 
 ## 진행 중 / Pending (다른 터미널)
 
+A3-2 / A4-3 / A6-1 모두 commit + 검증 완료 → "이미 fix됨"으로 이동. 신규 후속 4건:
+
 | ID | 우선 | 작업 | 작업자 | 상태 |
 |---|---|---|---|---|
-| **A3-2 frontend** | 🔥 P0 | useSocialWebSocket schedule_consensus_ready 핸들러 + "확정하기" 버튼 + POST /schedule-confirm 호출 | frontend | 미시작 (D commit 인지 후 가능 — **이미 main에 있음**) |
-| **A4-3** | 🔥 P0 | all_members_selected → place 직행 막고 Partial maedeup 카드 강제 발행 | langgraph | 미시작 |
-| **A6-1** | ⚠️ P1 | memory_extractor 카테고리 misclassification (거부 발화 → time_preference) | langgraph | 미시작 |
-| **A5-2** | ⚠️ P1 | reasoning ✨ 이름 인용 검증 (시드 후 재테스트 필요) | (검증) | 시드 스크립트 사용 후 이쪽 재검증 |
+| **F-1** | 🔥 P0 | maedeup 카드 발행 후 vote_card 안 사라짐 (라이프사이클 버그) | frontend `MeetingContext` | 미시작 |
+| **F-2** | 🔥 P0 | TimeBar 추천 9-13 (선호 평일저녁 미반영, D 작동 안 함) | langgraph (D 작성자) — 디버깅 | 미시작 |
+| **F-3** | 🔥 P0 | ACT 5 단축 미발동 — "강남에서 다 같이 갈만한 한식집" 정규식 미스 | langgraph quick_classify 재조정 | 미시작 |
+| **F-4** | ⚠️ P1 | meeting_summary 빈약 ("시험 끝나고 모임" 수준) | langgraph `_analyze_conversation` 프롬프트 보강 | 미시작 |
+| **A5-2** | ⚠️ P1 | reasoning ✨ 이름 인용 검증 (시드 후 재테스트) | (검증) | F-3 fix 후 ACT 5 재검증 시 함께 |
 
 ---
 

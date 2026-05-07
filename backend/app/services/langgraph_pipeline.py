@@ -1659,6 +1659,48 @@ def _filter_out_rejected(
     ]
 
 
+async def _load_busy_by_user_for_state(
+    state: GraphState,
+) -> dict[str, list[dict[str, Any]]]:
+    """function_calling preference_based path 등에서 사용할 busy_by_user 빌더.
+    get_free_slots의 consenting_users + GCal freeBusy 패턴 재사용 (4주 range 고정).
+    GCal 연결된 멤버 0명이거나 room/user 없으면 빈 dict."""
+    db = state["db"]
+    room_pk = _room_id_as_int(state["room_id"])
+    if room_pk is None or not settings.GOOGLE_CLIENT_ID:
+        return {}
+
+    member_result = await db.execute(
+        select(RoomMember).where(RoomMember.room_id == room_pk)
+    )
+    members = member_result.scalars().all()
+    user_ids = [m.user_id for m in members]
+    if not user_ids:
+        return {}
+
+    user_result = await db.execute(
+        select(User).where(User.id.in_(user_ids)).where(User.calendar_consent == True)  # noqa: E712
+    )
+    consenting_users = [
+        user
+        for user in user_result.scalars().all()
+        if user.google_access_token or user.google_refresh_token
+    ]
+    if not consenting_users:
+        return {}
+
+    now = datetime.now(timezone.utc)
+    time_min = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    time_max = time_min + timedelta(days=29)
+
+    busy_by_user: dict[str, list[dict[str, Any]]] = {}
+    for user in consenting_users:
+        busy_by_user[_user_calendar_key(user)] = await _get_user_busy_periods(
+            user, time_min, time_max, db
+        )
+    return busy_by_user
+
+
 async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
     """구글 캘린더 API로 룸 멤버 전원의 빈 시간대를 조회합니다.
     불가능 날짜(방 내 누군가 명시한 날)는 결과에서 제외."""
@@ -3663,7 +3705,11 @@ async def function_calling(state: GraphState) -> GraphState:
             and state.get("intent") != "place_suggestion"
         ):
             # 생성 단계부터 blocked_dates를 제외하면서 만들어야 5개 채우기 가능.
-            pref_slots = _build_preference_time_slots(state, pref_times, blocked_dates)
+            # F-8 v2 후속: GCal busy 반영해 호스트 일정과 충돌하는 슬롯 skip / 라벨 정확.
+            busy_by_user = await _load_busy_by_user_for_state(state)
+            pref_slots = _build_preference_time_slots(
+                state, pref_times, blocked_dates, busy_by_user=busy_by_user
+            )
             pref_slots = _filter_out_rejected(pref_slots, rejected_dates)
             state["calendar_free_slots"] = pref_slots
             state["calendar_strategy"] = "preference_based"

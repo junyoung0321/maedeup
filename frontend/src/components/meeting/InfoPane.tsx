@@ -104,6 +104,8 @@ export default function InfoPane() {
     calendarEventForSelf,
     calendarMemberCount,
     setCalendarSyncStatus,
+    scheduleConsensus,
+    setScheduleConsensus,
   } = useMeeting();
 
   const currentUserId = useMemo(() => getCurrentUserIdFromToken(), []);
@@ -344,6 +346,75 @@ export default function InfoPane() {
                   />
                 </div>
               )}
+
+              {/* A3-2: TimeBar 전원 합의 → 호스트 "일정 확정하기" 버튼 노출.
+                   비호스트는 "방장이 확정 대기 중" placeholder. */}
+              {scheduleConsensus && currentUserId !== null && (() => {
+                const isHost = scheduleConsensus.host_user_id === currentUserId;
+                if (isHost) {
+                  return (
+                    <div style={{
+                      margin: "0 4px",
+                      padding: "14px 16px",
+                      borderRadius: 14,
+                      background: "#eef2ff",
+                      border: "1.5px solid #4f46e5",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 10,
+                    }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#1e1b4b" }}>
+                        ✅ 모두 시간대를 골랐어요
+                      </div>
+                      <div style={{ fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
+                        {scheduleConsensus.member_count}명 전원 합의가 모였습니다. 일정을 확정하면 AI가 장소까지 정리해드릴게요.
+                      </div>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const { apiFetch } = await import("@/lib/api");
+                            await apiFetch(`/api/v1/rooms/${scheduleConsensus.room_id}/schedule-confirm`, {
+                              method: "POST",
+                              body: JSON.stringify({ snapshot_hash: scheduleConsensus.snapshot_hash }),
+                            });
+                            setScheduleConsensus(null);
+                          } catch (err) {
+                            console.error("schedule-confirm failed", err);
+                          }
+                        }}
+                        style={{
+                          width: "100%",
+                          padding: "11px 14px",
+                          borderRadius: 10,
+                          border: "none",
+                          background: "#4f46e5",
+                          color: "#fff",
+                          fontSize: 14,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                        }}
+                      >
+                        일정 확정하기
+                      </button>
+                    </div>
+                  );
+                }
+                return (
+                  <div style={{
+                    margin: "0 4px",
+                    padding: "10px 14px",
+                    borderRadius: 14,
+                    background: "#f1f5f9",
+                    color: "#64748b",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    textAlign: "center",
+                  }}>
+                    ⏳ 방장이 확정하기를 기다리는 중이에요
+                  </div>
+                );
+              })()}
 
               {/* Phase: timeConfirmed → 장소 추천 카드는 AI 패널에만 렌더.
                   여기서 카드 중복 렌더 제거. 사용자가 AI 패널 카드의 장소명 클릭 시

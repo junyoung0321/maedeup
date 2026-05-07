@@ -138,6 +138,16 @@ export interface MeetingConfirmedPayload {
   title: string;
 }
 
+// A3-2: TimeBar 전원 합의 완료 → 호스트가 "확정하기" 클릭해야 AI 파이프라인 발동.
+// 백엔드가 이 노티 송출, 프론트는 host에게만 "일정 확정하기" 버튼 노출.
+export interface ScheduleConsensusReadyPayload {
+  type: "schedule_consensus_ready";
+  room_id: number;
+  snapshot_hash: string;
+  host_user_id: number;
+  member_count: number;
+}
+
 export interface FinalizationState {
   proposal_id: string;
   version: number;
@@ -210,6 +220,17 @@ function isMeetingConfirmedPayload(data: unknown): data is MeetingConfirmedPaylo
     c.type === "meeting_confirmed" &&
     typeof c.meeting_id === "number" &&
     typeof c.proposal_id === "string"
+  );
+}
+
+function isScheduleConsensusReadyPayload(data: unknown): data is ScheduleConsensusReadyPayload {
+  if (!data || typeof data !== "object") return false;
+  const c = data as Partial<ScheduleConsensusReadyPayload>;
+  return (
+    c.type === "schedule_consensus_ready" &&
+    typeof c.room_id === "number" &&
+    typeof c.snapshot_hash === "string" &&
+    typeof c.host_user_id === "number"
   );
 }
 
@@ -305,6 +326,8 @@ export function useSocialWebSocket(roomId: string, sender: string) {
   const [finalizationProposal, setFinalizationProposal] = useState<FinalizationState | null>(null);
   const [finalizationPending, setFinalizationPending] = useState<boolean>(false);
   const [lastConfirmedMeeting, setLastConfirmedMeeting] = useState<MeetingConfirmedPayload | null>(null);
+  // A3-2: TimeBar 합의 완료 시 host에게만 "확정하기" 버튼 노출용
+  const [scheduleConsensus, setScheduleConsensus] = useState<ScheduleConsensusReadyPayload | null>(null);
   const [status, setStatus] = useState<WsStatus>("connecting");
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -538,8 +561,15 @@ export function useSocialWebSocket(roomId: string, sender: string) {
           return;
         }
 
+        if (isScheduleConsensusReadyPayload(data)) {
+          setScheduleConsensus(data);
+          return;
+        }
+
         if (isMeetingConfirmedPayload(data)) {
           setLastConfirmedMeeting(data);
+          // A3-2: 확정되면 schedule_consensus 상태 해제
+          setScheduleConsensus(null);
           setFinalizationProposal((prev) => {
             if (prev && prev.proposal_id === data.proposal_id) {
               return { ...prev, status: "confirmed" };
@@ -804,5 +834,7 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     finalizationPending,
     lastConfirmedMeeting,
     clearFinalizationProposal,
+    scheduleConsensus,
+    clearScheduleConsensus: () => setScheduleConsensus(null),
   };
 }

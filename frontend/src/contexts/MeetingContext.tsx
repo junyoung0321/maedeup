@@ -8,6 +8,7 @@ import type {
   MeetingConfirmedPayload,
   PeerSelection,
   PeerTimeSelection,
+  ScheduleConsensusReadyPayload,
 } from "@/hooks/useSocialWebSocket";
 
 // ┌─────────────────┐    setVoteCard/etc     ┌──────────────┐
@@ -72,6 +73,8 @@ interface MeetingState {
   calendarEventForSelf: boolean | null;
   // 직전 액션 후 캘린더 이벤트를 가진 멤버 수.
   calendarMemberCount: number;
+  // A3-2: TimeBar 합의 완료 노티 (호스트만 "확정하기" 버튼 노출용)
+  scheduleConsensus: ScheduleConsensusReadyPayload | null;
 }
 
 interface MeetingContextValue extends MeetingState {
@@ -115,6 +118,7 @@ interface MeetingContextValue extends MeetingState {
   setFinalizationPending: (pending: boolean) => void;
   setLastConfirmedMeeting: (payload: MeetingConfirmedPayload | null) => void;
   setCalendarSyncStatus: (forSelf: boolean | null, memberCount: number) => void;
+  setScheduleConsensus: (payload: ScheduleConsensusReadyPayload | null) => void;
 }
 
 export const MeetingContext = createContext<MeetingContextValue | null>(null);
@@ -155,6 +159,7 @@ export function MeetingProvider({
     lastConfirmedMeeting: null,
     calendarEventForSelf: null,
     calendarMemberCount: 0,
+    scheduleConsensus: null,
   });
 
   const [sendMessageToAi, setSendMessageToAiRaw] = useState<((msg: string) => void) | null>(null);
@@ -230,6 +235,13 @@ export function MeetingProvider({
         calendarEventForSelf: forSelf,
         calendarMemberCount: memberCount,
       }));
+    },
+    [],
+  );
+
+  const setScheduleConsensus = useCallback(
+    (payload: ScheduleConsensusReadyPayload | null) => {
+      setState((prev) => ({ ...prev, scheduleConsensus: payload }));
     },
     [],
   );
@@ -431,10 +443,12 @@ export function MeetingProvider({
       lastConfirmedMeeting: state.lastConfirmedMeeting,
       calendarEventForSelf: state.calendarEventForSelf,
       calendarMemberCount: state.calendarMemberCount,
+      scheduleConsensus: state.scheduleConsensus,
       setFinalizationProposal,
       setFinalizationPending,
       setLastConfirmedMeeting,
       setCalendarSyncStatus,
+      setScheduleConsensus,
       setContextMode,
       setSelectedPlace,
       setRoom,
@@ -490,10 +504,12 @@ export function MeetingProvider({
       state.lastConfirmedMeeting,
       state.calendarEventForSelf,
       state.calendarMemberCount,
+      state.scheduleConsensus,
       setFinalizationProposal,
       setFinalizationPending,
       setLastConfirmedMeeting,
       setCalendarSyncStatus,
+      setScheduleConsensus,
       setAiTriggerIntent,
       setContextMode,
       refreshCalendar,

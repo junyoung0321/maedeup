@@ -67,3 +67,50 @@
 - 시나리오 SoT: `demo-scenario.md`
 - 누적 해결점 A~P 원장: `audit-findings.md`
 - 노션 원천: 9주차 (2026-05-06) 토글 "수정안 05-06"
+
+---
+
+## 2026-05-07 라이브 검증 결과
+
+> chromium UI 통한 시연 시나리오 풀-루프 검증. 4명 멤버 (지민 호스트 + 수현/민수/예린 게스트), Personal Data 시드 후.
+
+### 통과 ✅
+
+| ACT | 항목 | 비고 |
+| --- | --- | --- |
+| 2 | 4번째 메시지 자동 교착 감지 + "대화가 길어지네요" narration (해결점 A·B) | 즉시 발화 |
+| 2 | 자연어 거부 ISO 추출 5/8·9·10 모두 (해결점 F) | "동아리 MT", "본가", "쉬고 싶다" 모두 매핑 |
+| 2 | 캘린더 sync 5/8·9·10 빨간 카운트 1 표시 (해결점 P) | `_sync_chat_rejected_to_unavailability` |
+| 2 | 선호 시간 18:00 반영 (시나리오 "평일 저녁") | ACT 1 선호도 입력 필수 — 누락 시 14:00 기본값 |
+| 2 | meeting_summary 카드 자동 발행 ("날짜: 다음 주 / 시험 끝나고 / 이번 주 금/토/일 불가") | 추가 가치 |
+| 3 | narration "모두 시간 선택 완료! 19:00~21:00이 겹쳐요" | **A3-1 fix 적용 후** (commit `22b235b`) |
+| 4 | vote_card "시간대 변경" → 캘린더 자동 highlight + "시간대 합의 중..." placeholder | 4b 분기 정상 |
+| 5 | quick_classify 단축 → 장소 카드 발행 (한식집 query) | **A5-1 fix 적용 후** (commit `13110cb`). 18s — 시나리오 3~5s보다 길지만 일반 채팅 fallback 회피 ✓ |
+| 6 | `personal_data_extractor` 자동 호출 — 거부 발화에서 멤버별 정보 학습 | `is_ai_filled` 갱신 확인 |
+
+### 신규 미해결 ❌
+
+| # | 우선 | 항목 | 위치 / 노트 |
+| --- | --- | --- | --- |
+| **A3-2** | 🔥 P0 | TimeBar 전원 합의 즉시 자동 파이프라인 발동 — **사용자 의도 없이 AI가 마음대로 확정**으로 보임. 합의 시각 narration도 자동으로 떠버림. | 기대: TimeBar 합의 → 시각화만 (전원 row 색칠) → 호스트 "확정하기" 클릭 → 그제서야 narration + 파이프라인. <br>변경 위치: `social.py:_maybe_emit_proposal:104` 의 `redis.publish(agent_channel, trigger_payload)` 자동 호출 제거. 새 WS msg type `schedule_consensus_ready` 송출 (호스트에 "확정하기" 버튼 노출용). 호스트 클릭 → 새 핸들러 (`schedule_confirm` WS 또는 REST) → `ai_auto_trigger` publish. agent.py 측은 변경 없음. |
+| **A4-3** | 🔥 P0 | `all_members_selected` trigger → 시나리오 ACT 4 = **Partial maedeup 카드** 기대인데 실제 **place_recommendation 카드 직행**. | 호스트 PD(한식·강남·저녁형) 영향으로 trigger_intent가 place로 분기 추정. `langgraph_pipeline` trigger 분기 로직 검토. Partial 카드 (시간만, 장소 placeholder) 강제 발행 옵션 또는 trigger_reason 기반 분기. |
+| **A6-1** | ⚠️ P1 | `memory_extraction`이 채팅 거부 발화를 `time_preference` 카테고리에 저장 — *"5월 8일 동아리 MT로 인해 불가능"* 같은 거부 메시지가 `time_preference` 필드에 들어감. | 카테고리 misclassification. `time_preference`는 "저녁형/오전형" 같은 정성 값이어야 함. 거부는 별도 unavailability 또는 rejected_dates로. extractor 프롬프트/스키마 보강 필요. |
+
+### Docs 정정 (시나리오 자체 수정)
+
+| # | 시나리오 박힌 값 | 실제 / 권장 | 노트 |
+| --- | --- | --- | --- |
+| **D-A2-1** | 추천 카드 "5/12 (월) 18:00" — 다음주 N-확장 가정 | 실제 5/11 (월) — 5/8·9·10만 거부, 5/11 살아있어 N 미발동 | "가장 가까운 가능 후보 노출" 로직 정상. 시나리오 멘트 정정 또는 5번째 메시지 추가 (예: "11일도 시험"). |
+| **D-A2-3** | "5/12 (월)" | 실제 5/12는 **화요일** | 요일 표기 단순 오류 |
+| **D-A3-1** | narration "19:00~20:30이 겹쳐요" | 실제 A3-1 fix는 longest contiguous overlap = "19:00~21:00이 겹쳐요" | 시나리오 selections 산수상 19:00~21:00이 맞음 |
+
+### 우선순위 (이 세션 기준)
+
+- 🔥 P0 신규: **A3-2** (자동 발동 차단), **A4-3** (Partial 카드 분기)
+- ⚠️ P1 신규: **A6-1** (extractor 카테고리), 기존 **A5-2** (reasoning ✨ 이름 인용 미검증, 카드 detail 확인 또는 프롬프트 보강)
+- 🟡 docs: **D-A2-1**, **D-A2-3**, **D-A3-1** — `demo-scenario.md` 단순 정정
+
+### 이미 fix됨
+
+- ✅ **A5-1**: quick_classify 정규식 3-갈래 OR + langgraph `_PLACE_INTENT_PATTERN` 보강 — commit `13110cb`
+- ✅ **A3-1** (신규 추적): narration 합의 시간대 동적 주입 — commit `22b235b`

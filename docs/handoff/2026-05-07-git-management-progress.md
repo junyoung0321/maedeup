@@ -55,18 +55,23 @@ Docker 상태: API + Frontend 모두 health 200, 새 코드 반영 완료 (마�
 | **F-4 (1차)** | meeting_summary 풍부화 | `4c5ce48` | ✅ 멤버별 거부 사유 |
 | **F-4 (회귀 fix)** | signals ISO 변환 강제 | `b8dd909` | ✅ vote_card 정상 발행 (5/11~5/15) |
 | **A4-1** | confirm 후속 안내 박스 | `5d709f2` | ✅ "일정이 확정되었어요 — 5/11 (월) 오후 6:00" + "어디서 만날지" |
+| **place top 5** | place_recommendation top 10 → 5 (시연 latency 최적화) | `a0d6136` | ✅ 38.27s → 22.14s first / 53s second variance (Gemini 외부 의존) |
+| **P0-2 ACT 4 단축** | function_calling 신규 [TIMING] + memory_extraction 분리 fire-and-forget | `a0d6136` | ✅ TOTAL **0.02s** (이전 4.51s, -99.5%). DetachedInstanceError 0건 |
+| **A5-2 reasoning ✨** | place card group_constraints_summary 렌더 | `642f50b` | ✅ "수현님 채식 식단 · 홍대 비선호 ✨ · 김창윤님 한식 선호..." indigo 박스 |
+| **G-1 member_joined** | 새 게스트 join → 캘린더 X/N 자동 갱신 | `f2c2cde` | ✅ "4/4" → "5/5" reload 없이 즉시 |
+| **AsyncSessionLocal import** | F-1 v2 root cause 수정 | `493f48e` | ✅ silent NameError 차단, 라이프사이클 정상 |
 
 ---
 
 ## 진행 중 / Pending (다른 터미널)
 
-F-1 ~ F-4 모두 commit + 라이브 검증 완료 → "이미 fix됨"으로 이동. 5/8 추가 미해결:
+5/8 통합 검증 사이클 완료 — 9건 모두 ✅. 남은 항목:
 
-| ID | 우선 | 작업 | 작업자 | 상태 |
-|---|---|---|---|---|
-| **A5-2** | ⚠️ P1 | reasoning ✨ 멤버 이름 인용 미렌더 — backend `_build_named_constraints_summary` 결과를 place card payload `reasoning` 필드에 박기 + frontend 카드/detail에 reasoning 텍스트 영역 | langgraph + frontend | 미시작 |
-| **A3-3** | ⚠️ P1 | TimeBar 합의 후 "일정 확정하기" 단일 → 2-버튼 분기 ([확정] AI 추천 시간 / [조율] TimeBar 모달) | frontend + backend (UX 설계 변경) | 미시작 |
-| **AI 응답 지연** | ⚠️ 외부 | place_recommendation Gemini scoring 38s+ / 점수 10% fallback 노출 | langgraph timeout 단축 또는 캐시 | 미시작 |
+| ID | 우선 | 작업 | 상태 |
+|---|---|---|---|
+| **A3-3** | ⚠️ P1 (UX) | TimeBar 합의 후 "일정 확정하기" 단일 → 2-버튼 분기 ([확정]/[조율]) | 미시작 |
+| **AI 응답 variance** | ⚠️ 외부 | place_recommendation Gemini scoring 22~53s 변동. 추가 단축 lever (캐싱/병렬화) | 시연 후 |
+| **F-2 console.info** | 🟢 cleanup | 시연 후 진단 로그(`[InfoPane]` / `[TimeBar]`) 제거 | 시연 후 |
 
 ---
 

@@ -141,10 +141,19 @@ F-1 ~ F-4 5/7 검증 + 5/8 회귀 fix 모두 commit + 라이브 검증 통과.
 | **F-4 (회귀)** | ✅ signals.preferred_dates ISO 변환 강제 — 풍부 카드 + slot 빌드 양립 | `b8dd909` |
 | F-5 | 무시 OK | (오늘 추천 없음 — 의도된 skip) |
 
-### 5/8 추가 P1 미해결
+### 5/8 후속 — 모두 ✅ 통과
 
-| # | 우선 | 항목 | 위치 / 노트 |
-| --- | --- | --- | --- |
-| **A5-2** | ⚠️ P1 | **reasoning ✨ 멤버 이름 인용 미렌더** — Personal Data 시드 후 ACT 5 query에도 카드/detail 어디에도 "수현님 채식 ✨ 반영" 같은 멤버 인용 텍스트 없음. backend는 user PD 읽긴 함 (`food_restrictions/disliked_areas` SELECT 로그) 단 카드 payload `reasoning` 필드에 named summary 안 박힘 OR frontend 미렌더 | backend `_build_named_constraints_summary`(langgraph_pipeline.py:2080~) 결과를 place card payload `reasoning`에 명시 박기 + frontend place card 또는 detail에 reasoning 텍스트 영역 추가 |
-| **A3-3** | ⚠️ P1 (UX) | TimeBar 합의 후 "일정 확정하기" 단일 → 2-버튼 ([확정] AI 추천 시간 / [조율] TimeBar 모달로 호스트 직접 선택) | frontend + backend (UX 설계 변경) |
-| **AI 응답 지연** | ⚠️ 외부 | place_recommendation 38s+ (Gemini scoring/ranking). Kakao 자체는 1초. fallback 점수 10% 노출 시 시연 인상 깎임 | Gemini scoring timeout 단축 또는 캐시 또는 시연용 mock |
+| # | 검증 결과 | Commit |
+| --- | --- | --- |
+| **A5-2** | ✅ reasoning ✨ 멤버 이름 인용 — "수현님 채식 식단 · 홍대 비선호 ✨ · 김창윤님 한식 선호 ..." place card에 indigo 박스로 정상 노출 | `642f50b` (frontend 렌더) + 기존 `_build_named_constraints_summary` |
+| **AI 응답 지연 (top 5 lever)** | ✅ place_recommendation 38.27s → 22.14s (-42%, first run). variance 큼 (53s second) — Gemini 외부 의존, 단축 효과는 명확 | `a0d6136` |
+| **F-1 v2 root cause** | ✅ AsyncSessionLocal import 누락 fix — silent NameError 차단. 라이프사이클 정상 | `493f48e` |
+| **G-1 member_joined** | ✅ 게스트 join 시 캘린더 X/N reload 없이 자동 갱신 ("4/4" → "5/5") | `f2c2cde` |
+| **P0-2 ACT 4 단축** | ✅ TOTAL 4.51s → 0.02s (-99.5%). function_calling 신규 [TIMING] 라인 분리 / memory_extraction 4초 별도 fire-and-forget | `a0d6136` |
+
+### 남은 P1 (시연 영향 미미)
+
+| # | 우선 | 항목 |
+| --- | --- | --- |
+| **A3-3** | ⚠️ P1 (UX) | TimeBar 합의 후 "일정 확정하기" 단일 → 2-버튼 ([확정] AI 추천 시간 / [조율] TimeBar 모달로 호스트 직접 선택) |
+| **AI 응답 variance** | ⚠️ 외부 | place_recommendation Gemini scoring 22~53s 변동. 추가 단축 lever (캐싱/병렬화) 시연 후 |

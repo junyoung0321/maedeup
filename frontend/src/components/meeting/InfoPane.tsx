@@ -246,7 +246,6 @@ export default function InfoPane() {
         display: "flex",
         flexDirection: "column",
         overflowY: "auto",
-        overflowX: "hidden",
         borderRadius: 20,
         border: "1px solid #e2e8f0",
         boxShadow: "0 4px 3.5px rgba(0,0,0,0.25)",

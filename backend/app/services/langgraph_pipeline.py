@@ -2743,6 +2743,59 @@ async def entity_extraction(state: GraphState) -> GraphState:
             logger.info("[TIMING] entity_extraction (pre-extracted): %.2fs", time.monotonic() - _t0)
             return state
 
+        # ── Fast-skip: 해결점 F-3 (2026-05-07). AI 패널 direct_request 경로 전용.
+        # _route_from_start가 direct_request에 대해 intent_detection을 스킵하므로 sentinel
+        # (intent_detection 내부에서 set)이 안 박힘. 여기서 동일 조건 직접 체크해서
+        # Gemini 추출 ~15s 생략. quick_classify가 이미 "place" 분류한 경우만.
+        if (
+            state.get("trigger_reason") == "direct_request"
+            and state.get("direct_request_kind") == "place"
+        ):
+            latest_msg = (state.get("trigger_message_text") or "").strip()
+            if not latest_msg:
+                for m in reversed(state.get("message_records") or []):
+                    if m.get("role") == "user" and m.get("content"):
+                        latest_msg = str(m["content"]).strip()
+                        break
+            place_kw = _extract_korean_place_keyword(latest_msg)
+            cuisine = _detect_cuisine_type(latest_msg)
+            has_place_intent = bool(cuisine) or bool(_PLACE_INTENT_PATTERN.search(latest_msg))
+            has_other_entities = bool(_OTHER_ENTITY_SIGNAL_PATTERN.search(latest_msg))
+            if place_kw and has_place_intent and not has_other_entities:
+                state["intent"] = "place_suggestion"
+                state["intent_confidence"] = 0.92
+                state["confidence_score"] = 0.92
+                state["place_hint"] = place_kw
+                if not state.get("meeting_type"):
+                    state["meeting_type"] = cuisine or "맛집"
+                extracted: dict[str, Any] = {
+                    "date_hint": None,
+                    "date_hints": [],
+                    "place_hint": place_kw,
+                    "headcount": None,
+                    "meeting_type": state.get("meeting_type"),
+                    "parsed_time_hint": None,
+                    "date_is_flexible": False,
+                    "date_hint_source_text": None,
+                }
+                state["extracted_entities"] = extracted
+                _update_slot_state(state, extracted)
+                place_coord = await _resolve_place_coord(place_kw)
+                if place_coord:
+                    state["place_coord"] = place_coord
+                state["is_location_first"] = True
+                state["status"] = "entities_extracted"
+                logger.info(
+                    "[ENTITY] direct_request place fast-skip: place=%s cuisine=%s",
+                    place_kw,
+                    cuisine or "맛집",
+                )
+                logger.info(
+                    "[TIMING] entity_extraction (direct_request fast-skip): %.2fs",
+                    time.monotonic() - _t0,
+                )
+                return state
+
         # ── Fast-skip: 해결점 A5-1. intent_detection fast-path가 이번 run에서 직접 채운 경우만.
         # sentinel 키로 검증 — 이전 턴 잔존 place_hint + Gemini 재분류 조합에서 헤드카운트 손실 방지.
         if (
@@ -3683,6 +3736,27 @@ async def _ensure_pending_meeting_id(state: GraphState, title: str) -> int:
     room_pk = _room_id_as_int(state["room_id"])
     if room_pk is None:
         raise ValueError(f"room_id is invalid for pending meeting creation: {state['room_id']!r}")
+
+    # F-1 fix: Reuse the room's most recent pending meeting (from a prior
+    # vote_card_creation run) instead of creating a fresh one. Without this,
+    # all_members_selected fast-path would emit a maedeup_card with a new
+    # meeting_id while frontend's cardsByMeetingId still holds the old
+    # vote_card under the previous id → both cards remain visible.
+    existing_pending = (
+        await db.execute(
+            select(MeetingSchedule)
+            .where(MeetingSchedule.room_id == room_pk)
+            .where(MeetingSchedule.status == "pending")
+            .order_by(MeetingSchedule.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing_pending is not None and existing_pending.id is not None:
+        logger.info(
+            "Reusing existing pending meeting id=%s for room=%s (F-1: avoid stranded vote_card)",
+            existing_pending.id, room_pk,
+        )
+        return existing_pending.id
 
     member_result = await db.execute(
         select(RoomMember).where(RoomMember.room_id == room_pk).limit(1)
@@ -4682,11 +4756,11 @@ async def _analyze_conversation(
         "출력 형식:\n"
         "{\n"
         '  "card": {\n'
-        '    "date": "자연어 날짜/시간 정보 또는 null",\n'
+        '    "date": "자연어 날짜/시간 요약 또는 null (예: \"이번 주 금/토/일 모두 막힘, 다음 주 평일 후보\")",\n'
         '    "place": "표시용 장소 또는 null",\n'
         '    "headcount": "표시용 인원 또는 null",\n'
         '    "type": "모임 유형(식사/카페/술 등) 또는 null",\n'
-        '    "notes": ["기타 메모"]\n'
+        '    "notes": ["멤버별 거부 사유와 합의 흐름을 구체적으로 3-5개 bullet"]\n'
         "  },\n"
         '  "signals": {\n'
         '    "date_hint": "YYYY-MM-DD 또는 YYYY-MM-DD~YYYY-MM-DD 또는 null",\n'
@@ -4730,7 +4804,30 @@ async def _analyze_conversation(
         "    → rejected_dates=[금요일 ISO, 토요일 ISO], conflict_options=[]\n\n"
         "  대화4: \"금요일 좋아\" / \"금요일도 OK인데 토요일이 더 좋아\"\n"
         "    → rejected_dates=[], conflict_options=[\"금요일\", \"토요일\"]\n"
-        "- place_hint는 구체적 지명/역/동/구/장소명만 담으세요. 아무데나, 근처, 다시 추천, 장소 정하자 같은 모호한 표현은 null입니다.\n"
+        "- place_hint는 구체적 지명/역/동/구/장소명만 담으세요. 아무데나, 근처, 다시 추천, 장소 정하자 같은 모호한 표현은 null입니다.\n\n"
+        "card 작성 가이드 (시연 임팩트 — 빈약한 card는 카드 의미 약화):\n"
+        "- card.date는 \"시험 끝나고 모임\" 같은 한 줄 요약 X. **거부/합의 흐름을 묘사**.\n"
+        "  좋은 예: \"이번 주 금/토/일 모두 불가, 다음 주 평일 후보\"\n"
+        "  좋은 예: \"5/12 화요일 저녁으로 좁혀짐\"\n"
+        "- card.notes는 **멤버별 사정과 합의 흐름**을 별도 bullet으로 분리:\n"
+        "  - 거부 1건당 \"{멤버이름}: {날짜} {사유}\" 형태로 1 bullet\n"
+        "  - 마지막에 합의 흐름 요약 1 bullet (예: \"다음 주 평일이 가장 가능성 높음\")\n"
+        "  - 3~5개 bullet 권장. 너무 많으면 카드 길어짐.\n\n"
+        "card 예시 input → output:\n"
+        "  대화:\n"
+        "    지민: 다들 시험 끝나고 한번 보자!\n"
+        "    수현: 5월 8일 금요일은 동아리 MT라 안 돼\n"
+        "    민수: 9일은 본가 내려가야 해서 패스\n"
+        "    예린: 10일 토요일은 좀 쉬고 싶다… 다음주 어때?\n"
+        "  card 출력:\n"
+        "    date: \"이번 주 금/토/일 모두 막힘, 다음 주 평일이 후보\"\n"
+        "    type: \"회식\"\n"
+        "    notes: [\n"
+        "      \"수현: 5/8 동아리 MT로 불가\",\n"
+        "      \"민수: 5/9 본가 일정\",\n"
+        "      \"예린: 5/10 휴식 원함, 다음 주 제안\",\n"
+        "      \"이번 주 금/토/일 막힘 → 다음 주가 후보\"\n"
+        "    ]\n\n"
         f"대화:\n{conversation}"
     )
 

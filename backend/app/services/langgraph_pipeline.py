@@ -4816,7 +4816,7 @@ async def _analyze_conversation(
         '  "signals": {\n'
         '    "date_hint": "YYYY-MM-DD 또는 YYYY-MM-DD~YYYY-MM-DD 또는 null",\n'
         '    "date_hints": ["YYYY-MM-DD"],\n'
-        '    "preferred_dates": ["YYYY-MM-DD"],\n'
+        '    "preferred_dates": [{"date": "YYYY-MM-DD"}],\n'
         '    "rejected_dates": ['
         '{"date": "YYYY-MM-DD", "user": "발신자 또는 null", "reason": "거부 이유 또는 null"}'
         "],\n"
@@ -4835,6 +4835,12 @@ async def _analyze_conversation(
         "signals 작성 규칙:\n"
         "- 날짜는 가능하면 ISO 형식(YYYY-MM-DD)으로 변환하세요. 요일만 언급되면 오늘 이후 가장 가까운 미래 날짜로 변환하세요.\n"
         "- date_hints는 여러 날짜 선택지가 있을 때 모두 담고, preferred_dates는 가능/선호로 표현된 날짜를 담으세요.\n"
+        "- **card에 자연어로 적은 모든 날짜 표현은 signals에 ISO로 반드시 변환해 담을 것.** card.date/notes만 채우고\n"
+        "  signals.preferred_dates 또는 signals.date_hints를 비워두면 후속 슬롯 빌드가 실패함.\n"
+        "  preferred_dates 각 항목은 반드시 `{\"date\": \"YYYY-MM-DD\"}` dict 형태. plain string array 금지.\n"
+        "  예: card.date='다음 주 평일이 후보' → signals.preferred_dates=[{\"date\":\"2026-05-11\"}, {\"date\":\"2026-05-12\"}, ...] (다음 주 월~금 ISO 5개).\n"
+        "  예: card.date='5/12 화요일 저녁으로 좁혀짐' → signals.date_hint='2026-05-12'.\n"
+        "- 거부된 날짜는 rejected_dates에만, 가능/선호 날짜는 preferred_dates에. 서로 배타.\n"
         "[필드 의미 구분 - 반드시 따를 것]\n\n"
         "rejected_dates: 어떤 사람이라도 다음 거부 표현을 명시적으로 사용한 날짜.\n"
         "  거부 키워드: \"안 돼\", \"못 가\", \"힘들어\", \"불가능\", \"어려워\", \"패스\", \"어렵다\"\n"
@@ -4864,7 +4870,7 @@ async def _analyze_conversation(
         "  - 거부 1건당 \"{멤버이름}: {날짜} {사유}\" 형태로 1 bullet\n"
         "  - 마지막에 합의 흐름 요약 1 bullet (예: \"다음 주 평일이 가장 가능성 높음\")\n"
         "  - 3~5개 bullet 권장. 너무 많으면 카드 길어짐.\n\n"
-        "card 예시 input → output:\n"
+        "전체 예시 input → output (오늘=2026-05-07 가정):\n"
         "  대화:\n"
         "    지민: 다들 시험 끝나고 한번 보자!\n"
         "    수현: 5월 8일 금요일은 동아리 MT라 안 돼\n"
@@ -4872,13 +4878,33 @@ async def _analyze_conversation(
         "    예린: 10일 토요일은 좀 쉬고 싶다… 다음주 어때?\n"
         "  card 출력:\n"
         "    date: \"이번 주 금/토/일 모두 막힘, 다음 주 평일이 후보\"\n"
+        "    place: null\n"
+        "    headcount: null\n"
         "    type: \"회식\"\n"
         "    notes: [\n"
         "      \"수현: 5/8 동아리 MT로 불가\",\n"
         "      \"민수: 5/9 본가 일정\",\n"
         "      \"예린: 5/10 휴식 원함, 다음 주 제안\",\n"
         "      \"이번 주 금/토/일 막힘 → 다음 주가 후보\"\n"
-        "    ]\n\n"
+        "    ]\n"
+        "  signals 출력 (card에 자연어로 적은 날짜를 ISO로 변환해 짝지어 채울 것):\n"
+        "    date_hint: null\n"
+        "    date_hints: []\n"
+        "    preferred_dates: [\n"
+        "      {\"date\": \"2026-05-11\"}, {\"date\": \"2026-05-12\"}, {\"date\": \"2026-05-13\"},\n"
+        "      {\"date\": \"2026-05-14\"}, {\"date\": \"2026-05-15\"}\n"
+        "    ]  // 다음 주 월~금 ISO, 각 항목은 {\"date\": \"YYYY-MM-DD\"} dict 형태로\n"
+        "    rejected_dates: [\n"
+        "      {\"date\": \"2026-05-08\", \"user\": \"수현\", \"reason\": \"동아리 MT\"},\n"
+        "      {\"date\": \"2026-05-09\", \"user\": \"민수\", \"reason\": \"본가\"},\n"
+        "      {\"date\": \"2026-05-10\", \"user\": \"예린\", \"reason\": \"휴식 원함\"}\n"
+        "    ]\n"
+        "    place_hint: null\n"
+        "    headcount: 0\n"
+        "    meeting_type: \"회식\"\n"
+        "    conflict_detected: false\n\n"
+        "    ⚠️ card.notes의 \"다음 주 제안\"이 signals.preferred_dates에 ISO 5개로 변환되어 들어가야 함.\n"
+        "    signals만 비우면 슬롯 빌드 실패 + 다음주 자동 확장 발동 못 함.\n\n"
         f"대화:\n{conversation}"
     )
 

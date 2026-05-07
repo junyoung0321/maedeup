@@ -15,6 +15,8 @@ from langgraph.graph import END, START, StateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from app.db.session import AsyncSessionLocal
+
 import holidays
 
 import redis.asyncio as aioredis

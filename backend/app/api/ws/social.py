@@ -84,12 +84,48 @@ async def _maybe_emit_proposal(
 
     # 중복 트리거 방지: 같은 availability 스냅샷이면 스킵
     snapshot_hash = sr.compute_snapshot_hash(availability)
-    nx_key = f"schedule_auto_trigger:{room_pk}:{snapshot_hash}"
+    nx_key = f"schedule_consensus_ready:{room_pk}:{snapshot_hash}"
     already = await redis_client.set(nx_key, "1", ex=300, nx=True)
     if not already:
         return
 
-    # 전원 선택 완료 → agent 채널로 AI 파이프라인 자동 트리거
+    # A3-2: AI 파이프라인 자동 발동 차단 — 호스트가 "확정하기" 클릭해야 트리거.
+    # social 채널로 schedule_consensus_ready 노티만 보냄 (호스트 한정 UI 노출).
+    # 호스트 클릭 → POST /api/v1/rooms/{room_id}/schedule-confirm → publish_schedule_auto_trigger.
+    social_channel = f"social:{room_pk}"
+    notice_payload = json.dumps(
+        {
+            "type": "schedule_consensus_ready",
+            "room_id": room_pk,
+            "snapshot_hash": snapshot_hash,
+            "host_user_id": room.created_by,
+            "member_count": member_count,
+        },
+        ensure_ascii=False,
+    )
+    await redis_client.publish(social_channel, notice_payload)
+    logger.info(
+        "Schedule consensus ready for room %s (all %d members selected). Awaiting host confirmation.",
+        room_pk, member_count,
+    )
+
+
+async def publish_schedule_auto_trigger(
+    redis_client: aioredis.Redis,
+    *,
+    room_pk: int,
+    snapshot_hash: str,
+) -> bool:
+    """A3-2: 호스트 "확정하기" 클릭 시 호출. agent 채널에 ai_auto_trigger publish.
+
+    Idempotent — 같은 snapshot_hash 두 번째 호출은 false 반환.
+    Returns True if published, False if already triggered.
+    """
+    nx_key = f"schedule_auto_trigger_fired:{room_pk}:{snapshot_hash}"
+    already = await redis_client.set(nx_key, "1", ex=300, nx=True)
+    if not already:
+        return False
+
     agent_channel = f"agent:{room_pk}"
     trigger_payload = json.dumps(
         {
@@ -102,7 +138,11 @@ async def _maybe_emit_proposal(
         ensure_ascii=False,
     )
     await redis_client.publish(agent_channel, trigger_payload)
-    logger.info("Auto-triggered schedule recommendation for room %s (all %d members selected)", room_pk, member_count)
+    logger.info(
+        "Host-confirmed schedule auto trigger for room %s (snapshot=%s)",
+        room_pk, snapshot_hash[:8] if isinstance(snapshot_hash, str) else snapshot_hash,
+    )
+    return True
 
 
 async def _publish_social_message(

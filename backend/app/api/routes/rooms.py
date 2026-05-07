@@ -24,6 +24,8 @@ from app.api.routes.finalization import (
     _publish_finalization_event,
     get_redis as get_finalization_redis,
 )
+from app.api.ws.social import publish_schedule_auto_trigger
+from app.services import scheduling_round as sr
 from app.models.chat import ChatMessage, PaneType, Visibility
 from app.models.meeting import MeetingParticipant, MeetingSchedule, MeetingStatus
 from app.models.meeting_preference import MeetingPreference
@@ -364,6 +366,53 @@ class LeaveRoomResponse(BaseModel):
     room_id: int
     cancelled_meeting_ids: list[int] = []
     triggered_meeting_cancellation: bool = False
+
+
+class ScheduleConfirmRequest(BaseModel):
+    snapshot_hash: str
+
+
+class ScheduleConfirmResponse(BaseModel):
+    triggered: bool
+    snapshot_hash: str
+
+
+@router.post("/{room_id}/schedule-confirm", response_model=ScheduleConfirmResponse)
+async def schedule_confirm(
+    room_id: int,
+    body: ScheduleConfirmRequest,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+    redis=Depends(get_finalization_redis),
+):
+    """A3-2: 호스트가 TimeBar 합의 후 "확정하기" 클릭 시 호출.
+
+    schedule_consensus_ready 노티 받은 호스트가 명시적으로 확정 의사를 표하면
+    그제서야 ai_auto_trigger publish → 파이프라인 발동.
+
+    - 호스트 권한 필수 (room.created_by)
+    - snapshot_hash 검증 (현재 availability와 일치해야)
+    - idempotent (같은 snapshot 두 번 호출 시 첫 한 번만 발동)
+    """
+    room_row = await session.execute(select(Room).where(Room.id == room_id))
+    room = room_row.scalar_one_or_none()
+    if room is None:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if room.created_by != int(current_user.sub):
+        raise HTTPException(status_code=403, detail="방장만 확정할 수 있습니다.")
+
+    # 현재 availability snapshot이 요청 hash와 일치하는지 검증 (stale 요청 방어)
+    availability = await sr.load_room_availability(redis, room_id=room_id)
+    if not availability:
+        raise HTTPException(status_code=409, detail="schedule_not_ready")
+    current_hash = sr.compute_snapshot_hash(availability)
+    if current_hash != body.snapshot_hash:
+        raise HTTPException(status_code=409, detail="snapshot_outdated")
+
+    triggered = await publish_schedule_auto_trigger(
+        redis, room_pk=room_id, snapshot_hash=body.snapshot_hash
+    )
+    return ScheduleConfirmResponse(triggered=triggered, snapshot_hash=body.snapshot_hash)
 
 
 @router.post("/{room_id}/leave", response_model=LeaveRoomResponse)

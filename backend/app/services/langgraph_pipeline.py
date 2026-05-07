@@ -1775,7 +1775,9 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
 
     if not busy_by_user:
         if preferred_times:
-            return _build_preference_time_slots(state, preferred_times, blocked_dates)
+            return _build_preference_time_slots(
+                state, preferred_times, blocked_dates, busy_by_user=busy_by_user
+            )
         return []
 
     full_slots = _find_free_slots(
@@ -3436,17 +3438,48 @@ def _build_multi_date_slots(state: GraphState) -> list[dict[str, Any]]:
     return slots
 
 
+def _is_busy_during(
+    busy_periods: list[dict[str, Any]],
+    start_at: datetime,
+    end_at: datetime,
+) -> bool:
+    """슬롯 [start_at, end_at)이 busy_periods 어느 항목과 겹치면 True.
+    busy_periods 항목은 {"start": datetime, "end": datetime} 형식 (aware UTC가 일반).
+    문자열로 들어오는 경우도 _parse_iso_datetime로 안전하게 변환."""
+    for period in busy_periods:
+        ps = period.get("start")
+        pe = period.get("end")
+        if isinstance(ps, str):
+            ps = _parse_iso_datetime(ps)
+        if isinstance(pe, str):
+            pe = _parse_iso_datetime(pe)
+        if not isinstance(ps, datetime) or not isinstance(pe, datetime):
+            continue
+        # aware/naive 정렬: slot은 KST aware, busy도 보통 aware. naive면 UTC 가정.
+        if ps.tzinfo is None:
+            ps = ps.replace(tzinfo=timezone.utc)
+        if pe.tzinfo is None:
+            pe = pe.replace(tzinfo=timezone.utc)
+        if ps < end_at and pe > start_at:
+            return True
+    return False
+
+
 def _build_preference_time_slots(
     state: GraphState, pref_times: list[str],
     blocked_dates: Optional[set[str]] = None,
+    busy_by_user: Optional[dict[str, list[dict[str, Any]]]] = None,
 ) -> list[dict[str, Any]]:
     """선호 시간대 기반으로 이번 주/다음 주 투표용 슬롯을 생성합니다.
-    blocked_dates에 있는 날짜는 애초에 생성하지 않음 (뒤에서 잘라내면 5개 미만 위험)."""
+    blocked_dates에 있는 날짜는 애초에 생성하지 않음 (뒤에서 잘라내면 5개 미만 위험).
+    busy_by_user가 주어지면 각 슬롯이 멤버 GCal busy와 겹치는지 검사해 라벨/카운트에 반영
+    (전원 불참 슬롯은 skip). None/빈 dict면 기존 fallback 동작 유지."""
     now_kst = datetime.now(KST)
     slots: list[dict[str, Any]] = []
     slot_index = 0
     _blocked = blocked_dates or set()
     normalized_pref_times = _normalize_preferred_times(pref_times)
+    headcount_total = state.get("headcount") or 0
 
     # 오늘 포함 향후 4주 — 오늘은 현재 시각 + 1h 룰로 즉시 약속 가능.
     for day_offset in range(0, 29):
@@ -3485,16 +3518,25 @@ def _build_preference_time_slots(
 
             holiday = _get_korean_holiday(target)
 
+            unavailable: list[str] = []
+            if busy_by_user:
+                for user_key, busy_periods in busy_by_user.items():
+                    if _is_busy_during(busy_periods, start_at, end_at):
+                        unavailable.append(_user_display_name(user_key))
+                # 모두 못 가는 슬롯 skip — 의미 없는 추천 회피
+                if len(unavailable) == len(busy_by_user):
+                    continue
+
             slot_index += 1
             slots.append({
                 "slot_id": f"pref-slot-{slot_index}",
                 "start_at": start_at.isoformat(),
                 "end_at": end_at.isoformat(),
-                "label": _format_slot_label(start_at, []),
-                "available_count": state.get("headcount"),
-                "total_count": state.get("headcount"),
-                "has_conflict": False,
-                "unavailable_users": [],
+                "label": _format_slot_label(start_at, unavailable),
+                "available_count": max(headcount_total - len(unavailable), 0) if headcount_total else None,
+                "total_count": headcount_total or None,
+                "has_conflict": bool(unavailable),
+                "unavailable_users": unavailable,
                 "is_holiday": bool(holiday),
                 "holiday_name": holiday,
                 "is_weekend": is_weekend,
@@ -3533,16 +3575,25 @@ def _build_preference_time_slots(
             if date_str in existing_dates:
                 continue
             holiday = _get_korean_holiday(target)
+
+            unavailable: list[str] = []
+            if busy_by_user:
+                for user_key, busy_periods in busy_by_user.items():
+                    if _is_busy_during(busy_periods, start_at, end_at):
+                        unavailable.append(_user_display_name(user_key))
+                if len(unavailable) == len(busy_by_user):
+                    continue
+
             slot_index += 1
             slots.append({
                 "slot_id": f"pref-slot-{slot_index}",
                 "start_at": start_at.isoformat(),
                 "end_at": end_at.isoformat(),
-                "label": _format_slot_label(start_at, []),
-                "available_count": state.get("headcount"),
-                "total_count": state.get("headcount"),
-                "has_conflict": False,
-                "unavailable_users": [],
+                "label": _format_slot_label(start_at, unavailable),
+                "available_count": max(headcount_total - len(unavailable), 0) if headcount_total else None,
+                "total_count": headcount_total or None,
+                "has_conflict": bool(unavailable),
+                "unavailable_users": unavailable,
                 "is_holiday": bool(holiday),
                 "holiday_name": holiday,
                 "is_weekend": target.weekday() >= 5,

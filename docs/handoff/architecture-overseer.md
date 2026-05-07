@@ -240,6 +240,8 @@ L과 F가 동시에 한 파일을 건드리는 zone이 충돌 위험. 아래 §3
 | **A5-2 v2 통과** (2026-05-08) | reasoning ✨ 정상 노출 — "수현님 채식 식단 · 홍대 비선호 ✨ · 김창윤님 한식 선호 · 다른 멤버 강남 선호 지역 / 선호 시간 저녁형 / 이동수단 지하철 반영" 완벽. | 642f50b — frontend `PlaceRecommendationPayload`에 `group_constraints_summary` interface 추가 + PlaceRecommendationCard 렌더 영역. backend는 line 4180에서 이미 박고 있었음. | lesson: backend payload 필드 추가 시 frontend interface 누락이 silent ignore 패턴. **schema 양쪽 동시 commit 강제**가 향후 회귀 방지. C5 contract 견고화. |
 | **F-4 v2 통과** (2026-05-08) | `[DATE_HINTS] Expanded: [] -> ['2026-05-11', ..., '2026-05-15']` 5건. vote_card 5/11 + 다음 주 5건. 해결점 N(다음 주 자동 확장) 정상 발동. | b8dd909 — prompt example에 signals 출력 짝지어 추가 + `{"date": "YYYY-MM-DD"}` dict 형태 강제. | lesson: LLM 멀티필드 추출은 example 전부 짝지어 줘야 누락 없음 + parser shape contract도 prompt에 박아야. |
 | **member_joined 통과** (2026-05-08) | "4/4" → "5/5" reload 없이 즉시 갱신. Codex P2 wrapper(`_publish_social_message`) 적용으로 Redis 다운 시 manager.broadcast fallback. | f2c2cde + Codex P2 wrapper. C1 contract 새 type `member_joined` 양쪽 동시 commit. | A5-2 v2 lesson 적용 첫 사례 — schema 미러 누락 0건. |
+| **A3-3 통과** (2026-05-08 라이브 검증 7건) | manual path 백엔드+frontend 모두 정상. [확정] backward-compat 회귀 0. F-1 v2 라이프사이클 manual path에서도 정상 (voteSurvived false). 백엔드 가드 chain (snapshot_outdated → chosen_time_required → out_of_range → zero_member_slots) code-level 검증. partial 영역 1~3명 인라인 경고 + 호스트 권한 진행 정상. | L: GraphState `manual_chosen_time` + `_slot_filling_all_members` 분기 + maedeup partial 빌더 `confirmed_time` 보존. F: schedule_confirm body 확장(mode/chosen_time) + manual mode validation (TIME_SLOT_MAX 가드 + 모든 슬롯 ≥ 1명 검증) + InfoPane 2-버튼 + HostTimeAdjustModal heatmap+슬라이더+경고. C7 (TimeBar 슬롯 상수 미러) 신규 contract 등록. | wall-clock 변환 brief 첫 라운드 09:00 base 누락 → L이 `sr._slot_idx_to_time` 헬퍼 재사용으로 자연 정정. **lesson**: 슬롯 인덱스 ↔ wall clock 변환은 backend 헬퍼 단일 source 권장 (TIME_SLOT_FIRST_HOUR + TIME_SLOT_MINUTES). 시연 후 정교화: `_slot_idx_to_time` private → public + frontend export. **검증 미달 항목**: discontinuous segments(#3) + 0명 영역 클릭 차단(#4) — CDP 자동화 한계로 시연자 직접 확인 권장. |
+| **A3-3 slider default 부정확** (2026-05-08 #2 ⚠️) | HostTimeAdjustModal 모달 open 시 슬라이더 default가 18:00~18:30 (2명 partial)로 잡힘. 19:00~21:00 4명 전원 segment가 있는데도. | F Phase 3 모달 안 default segment 계산 로직 추정 — 첫 번째 가능한 슬롯 또는 myTimeSelection 기반으로 잡고, "가장 긴 전원 segment" 우선 알고리즘 미구현 또는 회귀. | F 영역 1~10줄 fix. computeAvailabilityHeatmap 결과에서 `count === memberCount` segments 추출 → `length` desc sort → 첫 번째 segment의 [start, end]로 default. 시연 임팩트 中 (호스트 drag 한 번 더 필요). |
 | **F-3** | "강남에서 다 같이 갈만한 한식집" → entity_extraction Gemini 15s | direct_request fast-skip 추가 (4c5ce48) — 정규식 매칭 실패 시 fallback Gemini 그대로 | quick_classify의 `_PLACE_RE`와 entity_extraction `_PLACE_INTENT_PATTERN` 두 군데 동기화 필요 |
 | **F-4** | meeting_summary "시험 끝나고 모임" 한 줄 | `_analyze_conversation` 프롬프트 보강 (4c5ce48) | Gemini few-shot 프롬프트 — bullet 3-5개 강제 |
 | **F-4 v2** (2026-05-08) | F-4 본 효과는 살아났는데 `signals.preferred_dates` / `signals.date_hints`가 빈 배열로 떨어져 슬롯 빌드 실패 + 해결점 N(다음 주 자동 확장) 동반 사망 | (1) 4c5ce48 prompt example이 card 출력만 풍부하게 보여주고 signals 출력은 짝지어 안 줘서 Gemini가 자연어를 card에만 쏟음. (2) entity_extraction (line 2638-2643) parser는 `preferred_dates` 항목을 dict로만 expand — plain string array면 silent skip. | prompt example에 signals 출력 짝지어 추가 + dict 형태(`{"date": "YYYY-MM-DD"}`) 강제 + "card 자연어 → signals ISO 변환 필수" 규칙. **lesson**: LLM 멀티필드 추출은 example을 전부 짝지어 줘야 한쪽 빠뜨리지 않음. parser shape contract(dict vs array)도 prompt에 명시. |
@@ -312,9 +314,13 @@ USER AI 패널 입력 ──► assistant.py route → quick_classify → run_sh
 9. F-2 정상 유지
 
 **남은 항목 (시연 후 정교화 / 또는 시간 여유 시 추진)**:
-- A3-3 (2-버튼 분기 UX) — 추진 시 회귀 surface 中. user 결정 대기.
+- ~~A3-3~~ ✅ 통과 (2026-05-08, 검증 7건. discontinuous + 0명 차단은 시연자 직접 확인 항목)
+- ~~🟡 A3-3 slider default~~ ✅ 완료 (2026-05-08, F #1 — `findLongestFullCoverageSegment` helper, 단일 슬롯 edge case 안전)
+- ~~🔴 F-5 TimeBar individual confirm 라이프사이클~~ ✅ 완료 (2026-05-08, F #2 — `lastConfirmedMeeting` + `infoPanePhase` 체크 시 "✓ 일정이 확정되었습니다" 안내 박스로 교체)
+- 🔴 **F-6 카드/채팅 시간순 정렬** — 시연 D-7 + 검증 9건 통과 직후 회귀 누적 risk → **시연 후 정교화 1순위**로 박음. 시연 시 멘트로 우회 ("AI 카드 위에, 대화 아래에 — 모임 진행 단계 보존").
 - AI 응답 variance — Gemini scoring 캐싱 또는 모델 변경 (시연 후)
 - console.info cleanup (F-2 진단 로그 — 시연 후)
+- `_slot_idx_to_time` private → public + frontend export (C7 contract 단일 source 정교화 — 시연 후)
 
 ---
 

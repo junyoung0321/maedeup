@@ -3410,12 +3410,18 @@ async def _slot_filling_default_partial(state: GraphState, has_date: bool, has_p
     return state
 
 
-def _build_multi_date_slots(state: GraphState) -> list[dict[str, Any]]:
-    """여러 날짜 힌트로부터 투표용 슬롯을 생성합니다."""
+def _build_multi_date_slots(
+    state: GraphState,
+    busy_by_user: Optional[dict[str, list[dict[str, Any]]]] = None,
+) -> list[dict[str, Any]]:
+    """여러 날짜 힌트로부터 투표용 슬롯을 생성합니다.
+    busy_by_user가 주어지면 멤버 GCal busy를 라벨/카운트에 반영하고 전원 불참 슬롯은 skip
+    (b56aa4b _build_preference_time_slots 패턴 재사용)."""
     date_hints = state.get("date_hints") or []
     now_kst = datetime.now(KST)
     slots: list[dict[str, Any]] = []
     preferred_times = _normalize_preferred_times(state.get("preference_common_times"))
+    headcount_total = state.get("headcount") or 0
 
     for index, hint in enumerate(date_hints, start=1):
         target_date: datetime | None = None
@@ -3463,15 +3469,25 @@ def _build_multi_date_slots(state: GraphState) -> list[dict[str, Any]]:
         end_at = min(start_at + timedelta(minutes=SLOT_MINUTES), end_of_pref)
         holiday = _get_korean_holiday(target_date)
 
+        # F-8 v2 후속 #2 (2026-05-08): GCal busy 정밀 반영 — b56aa4b _build_preference_time_slots 패턴.
+        unavailable: list[str] = []
+        if busy_by_user:
+            for user_key, busy_periods in busy_by_user.items():
+                if _is_busy_during(busy_periods, start_at, end_at):
+                    unavailable.append(_user_display_name(user_key))
+            # 모두 못 가는 슬롯 skip — 의미 없는 추천 회피
+            if len(unavailable) == len(busy_by_user):
+                continue
+
         slots.append({
             "slot_id": f"date-option-{index}",
             "start_at": start_at.isoformat(),
             "end_at": end_at.isoformat(),
-            "label": _format_slot_label(start_at, []),
-            "available_count": state.get("headcount"),
-            "total_count": state.get("headcount"),
-            "has_conflict": False,
-            "unavailable_users": [],
+            "label": _format_slot_label(start_at, unavailable),
+            "available_count": max(headcount_total - len(unavailable), 0) if headcount_total else None,
+            "total_count": headcount_total or None,
+            "has_conflict": bool(unavailable),
+            "unavailable_users": unavailable,
             "is_holiday": bool(holiday),
             "holiday_name": holiday,
             "is_weekend": _is_weekend(target_date),
@@ -3684,8 +3700,13 @@ async def function_calling(state: GraphState) -> GraphState:
         # 여러 날짜 선택지 → 각 날짜별 슬롯 생성
         multi_date_hints = state.get("date_hints") or []
         if state.get("intent") != "place_suggestion" and len(multi_date_hints) >= 2:
+            # F-8 v2 후속 #2: stalemate path (multi-date)도 GCal busy 반영해 호스트 일정과 충돌하는 슬롯 skip / 라벨 정확.
+            busy_by_user = await _load_busy_by_user_for_state(state)
             multi_slots = _filter_out_rejected(
-                _filter_out_blocked(_build_multi_date_slots(state), blocked_dates),
+                _filter_out_blocked(
+                    _build_multi_date_slots(state, busy_by_user=busy_by_user),
+                    blocked_dates,
+                ),
                 rejected_dates,
             )
             if multi_slots:

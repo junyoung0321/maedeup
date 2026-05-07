@@ -732,10 +732,17 @@ async def agent_ws(
                 continue
 
             # A3-3: 호스트 [조율] 모달이 선택한 manual_chosen_time을 slot_context로 전달.
-            # Codex P1 (2026-05-08): deep copy 사용 — 기존 shallow `dict(...)`는 nested
-            # mutable (pre_extracted_signals, place_coord 등) 원본과 공유. 현재 쓰기는 무해하나
-            # 향후 race / 동시 trigger에서 누설 위험. deep copy로 격리.
-            sc = copy.deepcopy(slot_context)
+            # Codex P1 (2026-05-08) selective deepcopy:
+            # 전체 deepcopy(`copy.deepcopy(slot_context)`)는 silent fail 회귀를 만들었음
+            # (3cfa26a 이후 trigger pipeline 진입 안 됨 — slot_context에 deepcopy 불가 객체
+            # 잠재 가능성). nested mutable 중 동시 trigger 누설 위험 있는 항목만 명시 deepcopy.
+            sc = dict(slot_context)  # top-level shallow
+            pre_signals = sc.get("pre_extracted_signals")
+            if isinstance(pre_signals, dict):
+                sc["pre_extracted_signals"] = copy.deepcopy(pre_signals)
+            place_coord = sc.get("place_coord")
+            if isinstance(place_coord, dict):
+                sc["place_coord"] = copy.deepcopy(place_coord)
             manual_time = trigger.get("manual_chosen_time")
             if isinstance(manual_time, dict):
                 sc["manual_chosen_time"] = copy.deepcopy(manual_time)

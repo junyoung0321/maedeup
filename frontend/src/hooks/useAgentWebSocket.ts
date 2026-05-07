@@ -51,6 +51,9 @@ export interface PlaceRecommendationPayload {
   room_id: string;
   place_hint: string;
   recommendations: PlaceRecommendationItem[];
+  // A5-2: 백엔드가 _build_named_constraints_summary로 박는 멤버별 제약 요약.
+  // 시드된 PersonalData가 있으면 이름+✨ 인용, 없으면 익명 그룹 톤.
+  group_constraints_summary?: string;
 }
 
 export interface MaedeupCardSelectionTime {
@@ -172,11 +175,15 @@ function isPlaceRecommendationPayload(data: unknown): data is PlaceRecommendatio
   }
 
   const candidate = data as Partial<PlaceRecommendationPayload>;
+  const summaryOk =
+    candidate.group_constraints_summary === undefined ||
+    typeof candidate.group_constraints_summary === "string";
   return (
     candidate.type === "place_recommendation" &&
     typeof candidate.room_id === "string" &&
     typeof candidate.place_hint === "string" &&
-    Array.isArray(candidate.recommendations)
+    Array.isArray(candidate.recommendations) &&
+    summaryOk
   );
 }
 

@@ -126,6 +126,22 @@ export default function PlaceRecommendationCard({
           <span style={{ fontSize: 17, fontWeight: 700, color: "#1e293b" }}>{placeRecommendation.place_hint} 추천 장소</span>
         </div>
       </div>
+      {/* A5-2: 멤버별 PersonalData 인용 reasoning. 시드 있으면 "수현님 채식·홍대 비선호 ✨ 반영" 톤,
+          없으면 익명 그룹 톤 ("멤버 중 채식주의자가 있어요"). 빈/공백 문자열이면 표시 안 함. */}
+      {placeRecommendation.group_constraints_summary?.trim() && (
+        <div style={{
+          padding: "10px 13px",
+          borderRadius: 12,
+          background: "#eef2ff",
+          border: "1px solid #c7d2fe",
+          fontSize: 13,
+          fontWeight: 500,
+          lineHeight: 1.5,
+          color: "#4338ca",
+        }}>
+          {placeRecommendation.group_constraints_summary.trim()}
+        </div>
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {placeRecommendation.recommendations.map((place) => {
           const isSelected = selectedPlaceId === place.place_id;

@@ -220,6 +220,11 @@ L과 F가 동시에 한 파일을 건드리는 zone이 충돌 위험. 아래 §3
 | **F-2 종결** (2026-05-08) | 라이브 재진단 시 정상 작동 — fetch 성공 / range {18,21} / prop 정상 / "오후 6:00~9:00" 라벨. **자연 정정**. | 이전 9-13 fallback은 docker rebuild 사이 일시 race condition 또는 stale 빌드 추정 (정확한 원인 미특정). | 시연 직전 console.info 3종 cleanup만 남음. C3 contract 자체는 견고. 재발 시 동일 4분기 매핑 사용. |
 | **AsyncSessionLocal import 누락** (2026-05-08, P0-2 작업 중 발견) | `langgraph_pipeline.py` line 3860 / 3968 / 4213의 `AsyncSessionLocal()` 호출이 import 없이 try-except로 감싸짐 → `NameError`로 매번 except 진입 → silent broken. | **🔥 F-1 (vote_card 라이프사이클 깨짐) 회귀의 진짜 root cause 후보**. `_ensure_pending_meeting_id` 등 helper가 silent NameError로 실패 → meeting_id 없이 진행 → 카드 라이프사이클 깨짐 가능성. 74779ba (F-1 v2)의 가드 강화는 표면 증상 fix였고 진짜는 import 누락. | L의 P0-2 작업에서 `from app.database import AsyncSessionLocal` 추가로 자연 정정. **검증 시 F-1 v2 재검증 필수** — 가드와 import 둘 다 수정된 상태에서 vote_card → maedeup 라이프사이클 안정성 확인. **lesson**: `try-except: pass` 패턴이 import 오류를 silently swallow함. 의존성 누락이 production 런타임까지 안 걸림. |
 | **place tail-slice 버그** (2026-05-08, place top 5 + P0-2 묶음에서 Codex 잡음) | `top_candidates[:10]` → `[:5]` 변경 시 짝맞는 `ranked_places = reranked + place_results[10:]` 도 `[5:]`로 같이 안 바꿔서 인덱스 5-9 후보 누락. | 머리(scoring 대상 N개) + 꼬리(tail) 두 슬라이스가 같은 N에 의존. 한쪽만 바꾸면 중간 누락. | 변경 시 두 슬라이스 짝 검색 (`grep place_results\[`). top N 같은 매직 상수는 single source로 묶는 정교화 시연 후 권장. |
+| **P0-2 통과** (2026-05-08 라이브 검증 room 39) | ACT 4 TOTAL 4.51s → **0.02s (-99.5%)**. memory_extraction 3.43s 별도 발생 (graph 후 fire-and-forget). DetachedInstanceError 0건. | graph edge 변경 + `_spawn_memory_extraction_async` + AsyncSessionLocal import 누락 동반 fix. F-1 v2 root cause 정정 효과까지 확인 (vote_card 깨끗이 사라짐). | a0d6136 + 493f48e 두 commit. lesson 누적: try-except가 import 오류 silent swallow + 이런 path는 production 런타임까지 안 드러남. |
+| **place top 10→5 통과** (2026-05-08) | ACT 5 first 22.14s (이전 38.27s, **-42%**), second 53.18s — variance 큼. 점수 정상화 50-60% (이전 fallback 10% 탈출). | top 5만 Gemini scoring → prompt + output 토큰 절반. variance dominance는 Gemini API 자체 latency. | a0d6136. 추가 lever 필요 시 Gemini 호출 캐싱 또는 모델 변경. function_calling은 0.10s로 small이라 P0-1 (busy_periods 병렬화) 효과 미미 확인 — **시연 후 정교화로 보류**. |
+| **A5-2 v2 통과** (2026-05-08) | reasoning ✨ 정상 노출 — "수현님 채식 식단 · 홍대 비선호 ✨ · 김창윤님 한식 선호 · 다른 멤버 강남 선호 지역 / 선호 시간 저녁형 / 이동수단 지하철 반영" 완벽. | 642f50b — frontend `PlaceRecommendationPayload`에 `group_constraints_summary` interface 추가 + PlaceRecommendationCard 렌더 영역. backend는 line 4180에서 이미 박고 있었음. | lesson: backend payload 필드 추가 시 frontend interface 누락이 silent ignore 패턴. **schema 양쪽 동시 commit 강제**가 향후 회귀 방지. C5 contract 견고화. |
+| **F-4 v2 통과** (2026-05-08) | `[DATE_HINTS] Expanded: [] -> ['2026-05-11', ..., '2026-05-15']` 5건. vote_card 5/11 + 다음 주 5건. 해결점 N(다음 주 자동 확장) 정상 발동. | b8dd909 — prompt example에 signals 출력 짝지어 추가 + `{"date": "YYYY-MM-DD"}` dict 형태 강제. | lesson: LLM 멀티필드 추출은 example 전부 짝지어 줘야 누락 없음 + parser shape contract도 prompt에 박아야. |
+| **member_joined 통과** (2026-05-08) | "4/4" → "5/5" reload 없이 즉시 갱신. Codex P2 wrapper(`_publish_social_message`) 적용으로 Redis 다운 시 manager.broadcast fallback. | f2c2cde + Codex P2 wrapper. C1 contract 새 type `member_joined` 양쪽 동시 commit. | A5-2 v2 lesson 적용 첫 사례 — schema 미러 누락 0건. |
 | **F-3** | "강남에서 다 같이 갈만한 한식집" → entity_extraction Gemini 15s | direct_request fast-skip 추가 (4c5ce48) — 정규식 매칭 실패 시 fallback Gemini 그대로 | quick_classify의 `_PLACE_RE`와 entity_extraction `_PLACE_INTENT_PATTERN` 두 군데 동기화 필요 |
 | **F-4** | meeting_summary "시험 끝나고 모임" 한 줄 | `_analyze_conversation` 프롬프트 보강 (4c5ce48) | Gemini few-shot 프롬프트 — bullet 3-5개 강제 |
 | **F-4 v2** (2026-05-08) | F-4 본 효과는 살아났는데 `signals.preferred_dates` / `signals.date_hints`가 빈 배열로 떨어져 슬롯 빌드 실패 + 해결점 N(다음 주 자동 확장) 동반 사망 | (1) 4c5ce48 prompt example이 card 출력만 풍부하게 보여주고 signals 출력은 짝지어 안 줘서 Gemini가 자연어를 card에만 쏟음. (2) entity_extraction (line 2638-2643) parser는 `preferred_dates` 항목을 dict로만 expand — plain string array면 silent skip. | prompt example에 signals 출력 짝지어 추가 + dict 형태(`{"date": "YYYY-MM-DD"}`) 강제 + "card 자연어 → signals ISO 변환 필수" 규칙. **lesson**: LLM 멀티필드 추출은 example을 전부 짝지어 줘야 한쪽 빠뜨리지 않음. parser shape contract(dict vs array)도 prompt에 명시. |
@@ -274,11 +279,27 @@ USER AI 패널 입력 ──► assistant.py route → quick_classify → run_sh
 **완료**: A2 / A3-1 / A3-2 / A4-1 / A4-3(자연정정) / A5-1 / A6-1 / D / A0-1 / 시나리오 docs
 
 **진행/미해결**:
-- F-1 v2 (74779ba + L의 P0-2 commit 안 AsyncSessionLocal import 추가로 root cause 자연 정정 가능성 — **재검증 필수**: vote → maedeup 라이프사이클 안정성)
+- ~~F-1 v2~~ ✅ 종결 (2026-05-08 — AsyncSessionLocal import 누락 fix가 진짜 root cause였음 확정. vote_card 깨끗이 사라지는 라이프사이클 정상)
 - ~~F-2~~ ✅ 종결 (2026-05-08 라이브 재진단 정상 — 자연 정정. console.info cleanup만 시연 후)
-- F-3 (4c5ce48 적용 후 재검증 필요)
-- F-4 v2 (working tree에 fix 적용, L 완료 / Codex 2 iteration 통과 — G commit + rebuild + ACT 2 라이브 검증 대기. parser dict-shape contract 학습 반영)
-- A5-2 (시드 후 reasoning ✨ 이름 인용 검증)
+- ~~F-3~~ ✅ 종결 (2026-05-08 ACT 5 entity_extraction direct_request fast-skip 0.05~0.1s 정상)
+- ~~F-4 v2~~ ✅ 종결 (2026-05-08 ISO 변환 + 다음 주 자동 확장 정상)
+- ~~A5-2~~ ✅ 종결 (2026-05-08 ✨ reasoning 완벽 노출)
+
+**시연 안전선 통과 (2026-05-08 라이브 검증 9건 / 0 회귀)**:
+1. ACT 4 latency 0.02s (이전 4.51s) — P0-2 효과
+2. ACT 5 latency first 22s (이전 38s) — top 10→5 효과, variance 53s spike 외부 API 의존
+3. F-1 v2 root cause 정정 — AsyncSessionLocal import
+4. A5-2 ✨ 멤버 인용 reasoning 정상
+5. F-4 v2 preferred_dates ISO + 다음 주 자동 확장
+6. member_joined 자동 갱신
+7. DetachedInstanceError 0
+8. ACT 6 ✨ 학습 카드 (A6-1 거부 발화 학습 거부 정상 작동, 시드된 PD ACT 5 reasoning 노출)
+9. F-2 정상 유지
+
+**남은 항목 (시연 후 정교화 / 또는 시간 여유 시 추진)**:
+- A3-3 (2-버튼 분기 UX) — 추진 시 회귀 surface 中. user 결정 대기.
+- AI 응답 variance — Gemini scoring 캐싱 또는 모델 변경 (시연 후)
+- console.info cleanup (F-2 진단 로그 — 시연 후)
 
 ---
 

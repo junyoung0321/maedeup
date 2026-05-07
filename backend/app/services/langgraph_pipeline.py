@@ -4424,6 +4424,8 @@ async def maedeup_card_creation(state: GraphState) -> GraphState:
                         explicit_start, explicit_end = cand_start, cand_end
             display_time = explicit_start or parsed_time
             selected_time = {}
+            start_dt: datetime | None = None
+            end_dt: datetime | None = None
             if date_value and display_time:
                 import datetime as _dt
                 try:
@@ -4444,10 +4446,41 @@ async def maedeup_card_creation(state: GraphState) -> GraphState:
                     }
                 except Exception:
                     selected_time = {"label": f"{date_value} {display_time}"}
+                    start_dt = None
+                    end_dt = None
             elif date_value:
                 selected_time = {"label": date_value}
             elif display_time:
                 selected_time = {"label": display_time}
+
+            # P0 fix (2026-05-08): partial maedeup 발행 시 DB scheduled_at/end_at 동기화.
+            # ACT 5 [이 장소로 확정] 후 갱신 maedeup이 _publish_maedeup_place_update에서
+            # DB row 시간을 SoT로 사용 → partial 시점에 정확히 박아두지 않으면 stale 1h fallback 노출.
+            if meeting_id and start_dt and end_dt:
+                try:
+                    db = state["db"]
+                    meeting_row = await db.execute(
+                        select(MeetingSchedule).where(MeetingSchedule.id == meeting_id)
+                    )
+                    meeting_obj = meeting_row.scalar_one_or_none()
+                    if meeting_obj is not None:
+                        ms = start_dt.replace(tzinfo=None) if start_dt.tzinfo else start_dt
+                        me = end_dt.replace(tzinfo=None) if end_dt.tzinfo else end_dt
+                        meeting_obj.scheduled_at = ms
+                        meeting_obj.end_at = me
+                        meeting_obj.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                        db.add(meeting_obj)
+                        await db.commit()
+                        logger.info(
+                            "[MAEDEUP] partial DB time sync meeting_id=%s %s~%s",
+                            meeting_id, ms.isoformat(), me.isoformat(),
+                        )
+                except Exception:
+                    logger.warning(
+                        "partial maedeup DB time sync failed (meeting_id=%s)",
+                        meeting_id, exc_info=True,
+                    )
+
             payload = {
                 "type": "maedeup_card",
                 "meeting_id": meeting_id,

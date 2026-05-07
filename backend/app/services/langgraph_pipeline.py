@@ -103,6 +103,10 @@ class GraphState(TypedDict, total=False):
     # direct_request fast path 분류 결과 (해결점 E).
     # 값: "schedule" | "place" | "schedule+place" | "general" | None
     direct_request_kind: str | None
+    # A3-3 (2026-05-08): 호스트가 [조율] 모달에서 직접 선택한 시간. ai_auto_trigger 흐름의
+    # slot_context를 통해 주입됨. _slot_filling_all_members가 이 값을 confirmed_date/time으로
+    # 박고 partial maedeup 카드 직행. 값: {"date": "YYYY-MM-DD", "start_idx": int, "end_idx": int} | None.
+    manual_chosen_time: dict[str, Any] | None
     # 해결점 N: 모든 후보 날짜가 거부되어 다음 주로 확장됐는지 표시.
     # _slot_filling_stalemate가 이 플래그 보고 alternative vote 카드 발행.
     expanded_to_next_week: bool
@@ -189,6 +193,7 @@ def _default_state(
         "trigger_reason": ctx.get("trigger_reason"),
         "partial_mode": ctx.get("partial_mode"),
         "direct_request_kind": ctx.get("direct_request_kind"),
+        "manual_chosen_time": ctx.get("manual_chosen_time"),
         "social_recent": [],
         "social_summary": "",
         "seen_message_ids": seen_ids,
@@ -3158,6 +3163,45 @@ async def _slot_filling_conclusion(state: GraphState, pref_data: dict[str, Any])
 
 
 async def _slot_filling_all_members(state: GraphState, pref_data: dict[str, Any]) -> GraphState:
+    # A3-3 (2026-05-08): 호스트 [조율] path. manual_chosen_time이 들어오면 그 값으로 시간 박고
+    # partial maedeup 카드 직행. ai_auto_trigger 흐름 재사용 — slot_context를 통해 주입.
+    manual_time = state.get("manual_chosen_time")
+    if isinstance(manual_time, dict):
+        date_str = manual_time.get("date")
+        start_idx = manual_time.get("start_idx")
+        end_idx = manual_time.get("end_idx")
+        if (
+            isinstance(date_str, str)
+            and isinstance(start_idx, int)
+            and isinstance(end_idx, int)
+            and start_idx >= 0
+            and end_idx >= start_idx
+        ):
+            # TimeBar slot index → "HH:MM" 변환. sr._slot_idx_to_time이 권위 있는 매핑.
+            # end_idx는 INCLUSIVE 슬롯이므로 end_str은 (end_idx + 1)으로 다음 슬롯 시작 시각.
+            start_str = sr._slot_idx_to_time(start_idx)
+            end_str = sr._slot_idx_to_time(end_idx + 1)
+            state["confirmed_date"] = date_str
+            state["confirmed_time"] = f"{start_str}~{end_str}"
+            state["parsed_time_hint"] = start_str
+            state["date_hint"] = date_str
+            state["partial_mode"] = "time_only"
+            state["status"] = "time_only_ready"
+            if not state.get("headcount"):
+                state["headcount"] = pref_data.get("total_members", 4)
+            if not state.get("meeting_type"):
+                state["meeting_type"] = "모임"
+            state["all_slots_filled"] = True
+            state["missing_slots"] = []
+            state["awaiting_user_reply"] = False
+            state["wait_timed_out"] = False
+            state["message_count_since_last_trigger"] = 0
+            logger.info(
+                "[TRIGGER] all_members_selected manual host pick: %s %s~%s",
+                date_str, start_str, end_str,
+            )
+            return state
+
     best_location = pref_data.get("best_location")
     if state.get("place_hint"):
         state["status"] = "location_first_ready"
@@ -4246,28 +4290,51 @@ async def maedeup_card_creation(state: GraphState) -> GraphState:
         if state.get("partial_mode") == "time_only":
             parsed_time = state.get("parsed_time_hint")
             date_value = state.get("date_hint")
+            # A3-3 (2026-05-08): manual host pick은 confirmed_time을 "HH:MM~HH:MM" 형식으로 박음.
+            # 그 경우 정확한 end 시각을 보존 (auto-trigger의 +1h fallback이 manual 범위를 깨뜨리지 않게).
+            confirmed_time_raw = state.get("confirmed_time")
+            explicit_start: str | None = None
+            explicit_end: str | None = None
+            if isinstance(confirmed_time_raw, str) and "~" in confirmed_time_raw:
+                parts = confirmed_time_raw.split("~", 1)
+                if len(parts) == 2:
+                    cand_start, cand_end = parts[0].strip(), parts[1].strip()
+                    if (
+                        re.match(r"^\d{2}:\d{2}$", cand_start)
+                        and re.match(r"^\d{2}:\d{2}$", cand_end)
+                    ):
+                        explicit_start, explicit_end = cand_start, cand_end
+            display_time = explicit_start or parsed_time
             selected_time = {}
-            if date_value and parsed_time:
+            if date_value and display_time:
                 import datetime as _dt
                 try:
-                    start_dt = _dt.datetime.fromisoformat(f"{date_value}T{parsed_time}:00")
-                    end_dt = start_dt + _dt.timedelta(hours=1)
+                    start_dt = _dt.datetime.fromisoformat(f"{date_value}T{display_time}:00")
+                    if explicit_end:
+                        end_dt = _dt.datetime.fromisoformat(f"{date_value}T{explicit_end}:00")
+                    else:
+                        end_dt = start_dt + _dt.timedelta(hours=1)
+                    label = (
+                        f"{date_value} {display_time}~{explicit_end}"
+                        if explicit_end
+                        else f"{date_value} {display_time}"
+                    )
                     selected_time = {
-                        "label": f"{date_value} {parsed_time}",
+                        "label": label,
                         "start_at": start_dt.isoformat(),
                         "end_at": end_dt.isoformat(),
                     }
                 except Exception:
-                    selected_time = {"label": f"{date_value} {parsed_time}"}
+                    selected_time = {"label": f"{date_value} {display_time}"}
             elif date_value:
                 selected_time = {"label": date_value}
-            elif parsed_time:
-                selected_time = {"label": parsed_time}
+            elif display_time:
+                selected_time = {"label": display_time}
             payload = {
                 "type": "maedeup_card",
                 "meeting_id": meeting_id,
                 "date": date_value,
-                "time": parsed_time,
+                "time": display_time,
                 "place": None,
                 "place_pending": True,
                 "place_pending_message": "멤버들이 장소를 정하면 자동으로 정리해드릴게요!",

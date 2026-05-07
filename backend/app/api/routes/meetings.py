@@ -443,6 +443,27 @@ async def confirm_meeting(
                 body.proposal_id, meeting.id, exc_info=True,
             )
 
+    # A4-1: AI 패널에 확정 안내 박스 emit (시연 멘트 "원클릭으로 일정 확정"
+    # 직후 화면 변화 0인 어색함 해결). DB 커밋 후, GCal 등록 전.
+    try:
+        from app.services.agent_messaging import emit_agent_message, format_korean_meeting_time
+        time_label = format_korean_meeting_time(scheduled_at)
+        await emit_agent_message(
+            redis,
+            body.room_id,
+            f"✅ 일정이 확정되었어요 — {time_label}",
+        )
+        await emit_agent_message(
+            redis,
+            body.room_id,
+            "이제 어디서 만날지 정해볼까요? 장소를 추천해드릴게요.",
+        )
+    except Exception:
+        logger.warning(
+            "A4-1 confirm announcement failed (meeting_id=%s)",
+            meeting.id, exc_info=True,
+        )
+
     # Best-effort: push the confirmed meeting onto each consenting member's
     # Google Calendar. Failures here MUST NOT unwind the DB commit.
     try:

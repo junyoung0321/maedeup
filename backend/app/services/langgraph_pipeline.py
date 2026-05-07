@@ -988,6 +988,15 @@ _CUISINE_CATEGORY_KEYWORDS: dict[str, list[str]] = {
 # Place 의도 키워드 (cuisine 없어도 fast-path 진입 허용).
 _PLACE_INTENT_PATTERN = re.compile(r"맛집|추천|식당|음식점|예약|있는데|어디|놀러|가볼")
 
+# Place fast-path gate: 날짜/인원/시간 등 다른 entity 신호가 있으면 Gemini 추출에 위임.
+# 시연 단순 케이스("강남 한식 맛집 추천")만 fast-path, 복합 케이스는 정상 흐름.
+_OTHER_ENTITY_SIGNAL_PATTERN = re.compile(
+    r"\d+\s*명|\d+\s*시|\d+\s*분|\d+\s*월|\d+\s*일|"
+    r"월요일|화요일|수요일|목요일|금요일|토요일|일요일|"
+    r"주말|평일|내일|모레|오늘|이번\s*주|다음\s*주|이번\s*주말|다음\s*주말|"
+    r"아침|점심|저녁|밤|새벽|오전|오후"
+)
+
 
 def _detect_cuisine_type(text: str) -> str | None:
     """사용자 메시지에서 cuisine 의도 추출. 매칭되면 cuisine ID, 없으면 None."""
@@ -2073,17 +2082,19 @@ def _build_named_constraints_summary(per_user: list[dict[str, Any]]) -> str:
     if not per_user:
         return ""
 
-    # 강한 제약: food_restrictions / disliked_areas
+    # 강한 제약: food_restrictions / disliked_areas.
+    # food_restrictions와 disliked_areas는 의미가 다르므로(식단 제약 vs 지역 회피)
+    # 분리해서 표기 — "수현님 채식 비선호"처럼 의미 반전 방지.
     strong_phrases: list[str] = []
     strong_names: set[str] = set()
     for u in per_user:
         bits: list[str] = []
         if u.get("food_restrictions"):
-            bits.extend(u["food_restrictions"])
+            bits.append(f"{', '.join(u['food_restrictions'])} 식단")
         if u.get("disliked_areas"):
-            bits.extend(u["disliked_areas"])
+            bits.append(f"{', '.join(u['disliked_areas'])} 비선호")
         if bits:
-            strong_phrases.append(f"{u['name']}님 {'·'.join(bits)} 비선호")
+            strong_phrases.append(f"{u['name']}님 " + " · ".join(bits))
             strong_names.add(u["name"])
 
     # 중간: food_preferences (강한 제약 가진 멤버는 제외)
@@ -2542,10 +2553,12 @@ async def intent_detection(state: GraphState) -> GraphState:
             else:
                 # 해결점 A5-1: cuisine/place 의도 + 한국 지명 동시 매칭 → place_suggestion 직행.
                 # entity_extraction에서 추가로 fast-skip되어 Gemini 6초 추출도 생략.
+                # 단 메시지에 날짜/인원/시간 신호가 있으면 Gemini에 위임 (constraint 손실 방지).
                 place_kw = _extract_korean_place_keyword(latest_user_message)
                 cuisine = _detect_cuisine_type(latest_user_message)
                 has_place_intent = bool(cuisine) or bool(_PLACE_INTENT_PATTERN.search(latest_user_message))
-                if place_kw and has_place_intent:
+                has_other_entities = bool(_OTHER_ENTITY_SIGNAL_PATTERN.search(latest_user_message))
+                if place_kw and has_place_intent and not has_other_entities:
                     state["intent"] = "place_suggestion"
                     state["intent_confidence"] = 0.92
                     state["confidence_score"] = 0.92

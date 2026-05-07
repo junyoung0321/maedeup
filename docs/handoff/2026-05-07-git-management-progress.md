@@ -9,9 +9,19 @@
 
 ---
 
-## 현재 main HEAD (origin 동기화)
+## 현재 main HEAD (origin 동기화) — 2026-05-08 23:55 시점
 
 ```
+fb0a6ab fix(pipeline): partial maedeup 발행 시 DB scheduled_at/end_at 동기화
+17eba08 fix(pipeline): multi-date 빌더도 GCal busy 반영 (stalemate path)
+b56aa4b fix(pipeline): function_calling preference_based path에서 busy_by_user 채움
+d3323d4 feat(pipeline): preference 슬롯도 GCal busy 반영 + ACT3 검증 스크립트
+c786ebb fix(agent): all_members_selected → confirmed_time(consensus_label) 주입
+f67a30d fix(agent): trigger pipeline silent fail hotfix — deepcopy 전부 제거 + 진단 로그
+f72ed42 fix(agent): deepcopy 회귀 정정 — selective deepcopy 전환
+3cfa26a docs(overseer): F-5 v2 / F-7 / F-9 / C7 contract / 진행 갱신
+cab4330 fix(frontend): F-5 v2 + F-7 + F-9 + F-2 cleanup + UpcomingMeeting refresh
+dc9d66b fix(pipeline): C7 contract — slot_idx_to_time public화 + slot_context deepcopy
 b1dfd14 fix(infopane): Map iteration → forEach (TS downlevelIteration 회피)
 acd38a0 docs(handoff): 시드 안내 + audit 진행 갱신 + 세션 progress
 91cb4ef chore(scripts): A0-1 PersonalData 시연 시드 스크립트
@@ -61,22 +71,28 @@ Docker 상태: API + Frontend 모두 health 200, 새 코드 반영 완료 (마�
 | **G-1 member_joined** | 새 게스트 join → 캘린더 X/N 자동 갱신 | `f2c2cde` | ✅ "4/4" → "5/5" reload 없이 즉시 |
 | **AsyncSessionLocal import** | F-1 v2 root cause 수정 | `493f48e` | ✅ silent NameError 차단, 라이프사이클 정상 |
 | **A3-3 manual path** | TimeBar 2-버튼 + HostTimeAdjustModal + manual host pick | `ad63b1b`+`333a935`+`3fe6b7e` | ✅ banner 2-버튼 노출 / `[TRIGGER] manual host pick: 2026-05-11 18:00~18:30` / TOTAL 0.02s / partial 영역도 호스트 권한 진행 OK / [확정] auto path 회귀 0건 |
+| **A3 confirmed_time** | `slot_context["confirmed_time"] = consensus_label` 주입 | `c786ebb` | ✅ room 48 매듭 카드 `시간 2026-05-11 18:00~19:00` 정확 (이전 1h 회귀 해소) |
+| **F-8 v2 거짓 라벨** | preference 슬롯 빌더에 GCal busy 반영 (호스트 unavailable 정확) | `d3323d4` | ⚠️ preference path만 — function_calling 진입 시 busy_by_user empty로 실효 0 |
+| **F-8 v2 #1** | function_calling preference-based path busy_by_user 채움 | `b56aa4b` | ⚠️ preference path만 fix — multi-date path 안 닿음 |
+| **F-8 v2 #2** | multi-date 빌더(stalemate path)도 GCal busy 반영 | `17eba08` | ✅ room 54 ACT 2 — 호스트 5/11 18:00 busy → 5/12 자동 이동 + "(전원 가능)" 라벨 정확 |
+| **maedeup time 회귀** | partial maedeup 발행 시 DB `scheduled_at`/`end_at` 동기화 | `fb0a6ab` | ✅ room 56 — TimeBar 19:00~21:00 → 장소 [확정] 후에도 `시간 19:00 - 21:00` 유지 (이전 1h 단축 회귀 해소) |
 
 ---
 
 ## 진행 중 / Pending (다른 터미널)
 
-A3-3 통합 검증 — 핵심 7건 통과. 단 신규 3건 발견:
-
 | ID | 우선 | 작업 | 상태 |
 |---|---|---|---|
-| **F-5 v2** | 🔥 P1 | F-5 v1 (`43bb1b2`) fix 회귀 — `isMeetingConfirmed` 판정이 partial maedeup 미포함. 조건 보강 필요 | 미시작 |
+| **F-5 v2** | ✅ 검증 | partial maedeup 포함 → 시간 라벨 영역 individualBtn 사라짐 | room 48/56 통과 |
 | **F-6** | ⚠️ P1 | AI 패널 카드/채팅 시간순 정렬 (카드 항상 상단 누적) | 미시작 |
-| **F-7** | 🔥 P1 | 캘린더 멤버 현황 창 "AI 추천 날짜" 라벨이 vote_card 추천과 불일치 — SoT 통합 | 미시작 |
-| **F-8** | 🔥 P1 | TimeBar 추천 9-13 fallback (busy_periods가 18-21 점령) — preferred 범위 우선 보강 | 미시작 |
-| **F-9** | ⚠️ P1 | PlaceDetailPane 확정 버튼 동기화 — confirmedPlaceId state 추가 | 미시작 |
+| **F-7** | 🔥 P1 | 캘린더 멤버 현황 "AI 추천: 09:00~13:00" — `aiRecommendedTimeRange` context 발행되어도 MiniTimeBar가 9-13 fallback 유지 | 미시작 |
+| **F-8 v2** | ✅ 적용 | preference + multi-date 빌더 GCal busy 정확 반영 | `b56aa4b` + `17eba08` 통과 |
+| **F-8 (TimeBar)** | ⚠️ P1 | TimeBar 추천 9-13 fallback (busy_periods 18-21 점령 시 preferred 범위 우선) — TimeBarSelector `recommendedRange` 알고리즘 별개 | 미시작 |
+| **F-9** | ✅ 검증 | PlaceDetailPane 확정 후 [이 장소로 확정] hidden + "이 장소가 확정되었습니다" 안내 | room 50 통과 |
+| **시간 라벨 회귀** | ✅ 해소 | 장소 확정 후 maedeup 시간 1h 단축 회귀 | `fb0a6ab` room 56 통과 |
 | **AI 응답 variance** | ⚠️ 외부 | place_recommendation Gemini scoring 22~53s 변동 | 시연 후 |
 | **F-2 console.info** | 🟢 cleanup | 진단 로그 제거 | 시연 후 |
+| **호스트 GCal 시드** | ⚠️ 시연 D-day | 호스트 (지민) GCal 5/11~5/14 18:00 일정 정리 — 안 정리하면 vote_card가 5/15 까지 밀림 | 시연 직전 |
 
 ---
 
@@ -84,9 +100,9 @@ A3-3 통합 검증 — 핵심 7건 통과. 단 신규 3건 발견:
 
 | ID | 시나리오 박힌 값 | 실제 |
 |---|---|---|
-| D-A2-1 | 추천 카드 5/12 (다음주 N-확장 가정) | 5/11 (이번 주 안에서 가능) — 시나리오 5번째 메시지 추가 또는 멘트 정정 |
+| D-A2-1 | 추천 카드 5/11 18:00 (다음주 N-확장 가정) | 호스트 GCal 5/11 18:00 busy 시 5/12+ 로 자동 이동 (`17eba08` 정상 작동). 시연 시드에서 호스트 일정 정리하든가 멘트 정정 |
 | D-A2-3 | "5/12 (월)" | 5/12는 화요일 |
-| D-A3-1 | "19:00~20:30이 겹쳐요" | 산수상 19:00~21:00 — 백엔드 출력 정상 |
+| D-A3-1 | "19:00~20:30이 겹쳐요" | 실제 19:00~21:00 — 백엔드 출력 정상 |
 
 각 항목 단순 docs 수정. 시연 D-day 가까울 때 일괄 정리.
 
@@ -100,3 +116,34 @@ A3-3 통합 검증 — 핵심 7건 통과. 단 신규 3건 발견:
 - 다른 터미널 작업 진행 인지 시 → "Pending" 표 상태 갱신
 
 다른 터미널 commit 들어오면 머지/검증 후 본 문서도 같은 commit에 묶음.
+
+---
+
+## 2026-05-08 세션 마감 — 라이브 검증 표
+
+| 검증 round | 룸 | path | 결과 |
+|---|---|---|---|
+| **c786ebb confirmed_time** | 48 | `_build_entities_from_timebar` → `slot_context["confirmed_time"]` | 매듭 카드 `시간 2026-05-11 18:00~19:00` ✅ |
+| **풀 시나리오 ACT 1~5+F-9** | 50 | UI 호스트 + WS 게스트 / vote_card → TimeBar UI → consensus → place card → PlaceDetailPane disabled | 모두 통과 ✅ |
+| **`d3323d4`+`b56aa4b` (preference path)** | — | preference 슬롯 빌더만 fix | path 안 닿음 — 추가 commit 필요 ⚠️ |
+| **17eba08 (multi-date path)** | 53/54 | stalemate path `_build_multi_date_slots` 호스트 busy 반영 | 5/11 호스트 busy → 5/12+ 자동 이동, "(전원 가능)" 라벨 정확 ✅ |
+| **fb0a6ab partial DB sync** | 56 | partial maedeup 발행 시 `MeetingSchedule.scheduled_at`/`end_at` 동기화 | TimeBar 19:00~21:00 → 장소 확정 후에도 시간 유지 ✅ |
+
+## 시연 준비 마지막 체크
+
+🔥 **D-day 호스트 GCal 정리 필수**:
+- 현재 호스트(지민) GCal에 5/11~5/14 18:00 시간대 일정 박혀있음
+- ACT 2 vote_card 추천이 5/13 → 5/14 → 5/15 순으로 밀림
+- 시연 시 5/11 추천 받으려면: 5/11 18:00 일정 임시 삭제 또는 시연 시나리오 문구 정정
+
+🟢 **검증 완료**:
+- ACT 3 host UI 슬롯 클릭 (slot 18, 23 두 번 클릭) — TimeBarSelector handleSlotClick 작동 OK
+- consensus_label "19:00~21:00" → 매듭 카드 partial → place 완성 진화 라이프사이클 정확
+- PlaceDetailPane confirm 후 버튼 hidden + 안내 노출
+
+🟡 **시연 후 보완**:
+- F-7 (MiniTimeBar 9-13 fallback)
+- F-6 (AI 카드/채팅 단일 timeline)
+- F-8 TimeBar `recommendedRange` 알고리즘 (별개 path)
+- F-2 console.info cleanup
+- AI 응답 variance (Gemini scoring 22~53s)

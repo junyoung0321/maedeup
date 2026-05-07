@@ -28,6 +28,7 @@
 .gstack.bak.*/
 .next/
 .venv/
+.venv-*/
 Thumbs.db
 __pycache__/
 aovenv/

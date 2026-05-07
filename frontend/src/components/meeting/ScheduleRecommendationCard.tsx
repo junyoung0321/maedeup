@@ -6,13 +6,14 @@ import { apiFetch } from "@/lib/api";
 import { useMeeting } from "@/contexts/MeetingContext";
 import type { VoteCardPayload } from "@/hooks/useAgentWebSocket";
 
-function splitLabelParts(label: string): { date: string; time: string | null } {
-  const match = label.match(/^(.*?)(\d{1,2}:\d{2}\s*(?:~|-)\s*\d{1,2}:\d{2})\s*$/);
-  if (!match) return { date: label, time: null };
-  const date = match[1]?.trim();
+function splitLabelParts(label: string): { date: string; time: string | null; trail: string | null } {
+  const match = label.match(/^(.*?)\s*((?:오전|오후)?\s*\d{1,2}:\d{2}(?:\s*[~\-]\s*(?:오전|오후)?\s*\d{1,2}:\d{2})?)(\s*\([^)]*\))?\s*$/);
+  if (!match) return { date: label, time: null, trail: null };
+  const date = match[1]?.trim() ?? "";
   const time = match[2]?.trim() ?? null;
-  if (!date || !time) return { date: label, time: null };
-  return { date, time };
+  const trail = match[3]?.trim() ?? null;
+  if (!date || !time) return { date: label, time: null, trail: null };
+  return { date, time, trail };
 }
 
 function getCurrentUserIdFromToken(): number | null {
@@ -237,6 +238,11 @@ export default function ScheduleRecommendationCard({
                   {parts.time && (
                     <span style={{ marginLeft: 6, color: "#9ca3af", fontSize: 12, fontWeight: 500 }}>
                       {parts.time}
+                    </span>
+                  )}
+                  {parts.trail && (
+                    <span style={{ marginLeft: 6, color: "#9ca3af", fontSize: 12, fontWeight: 500 }}>
+                      {parts.trail}
                     </span>
                   )}
                 </>

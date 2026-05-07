@@ -326,7 +326,6 @@ export function MeetingProvider({
       confirmedDate: selectedDate,
       confirmedTimeRange: null,
       voteAwaitingTimeMeetingId: meetingId,
-      confirmedMeetingId: prev.confirmedMeetingId === meetingId ? null : prev.confirmedMeetingId,
     }));
   }, []);
 
@@ -339,9 +338,11 @@ export function MeetingProvider({
       if (phase === "idle") {
         updates.confirmedDate = null;
         updates.confirmedTimeRange = null;
+        updates.voteAwaitingTimeMeetingId = null;
       } else if (phase === "dateSelected") {
         updates.confirmedDate = null;
         updates.confirmedTimeRange = null;
+        updates.voteAwaitingTimeMeetingId = null;
       } else if (phase === "dateConfirmed") {
         updates.confirmedTimeRange = null;
       }
@@ -364,6 +365,7 @@ export function MeetingProvider({
       infoPanePhase: "timeConfirmed" as InfoPanePhase,
       confirmedTimeRange: { startAt, endAt },
       confirmedMeetingId: meetingId,
+      voteAwaitingTimeMeetingId: null,
     }));
   }, []);
 

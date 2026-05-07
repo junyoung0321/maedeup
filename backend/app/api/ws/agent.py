@@ -129,11 +129,31 @@ async def _build_entities_from_timebar(room_id: str, db: Any, redis_client: aior
             for date, slot_idx in common_slots[:5]
         ]
 
+        # 첫 날짜에서 가장 긴 연속 슬롯 구간 → "HH:MM~HH:MM" 라벨
+        # 시연 narration용 (해결점 B 동적 메시지).
+        consensus_label: str | None = None
+        slots_for_first_date = sorted(s for d, s in common_slots if d == date_hint)
+        if slots_for_first_date:
+            best_start = best_end = slots_for_first_date[0]
+            cur_start = cur_end = slots_for_first_date[0]
+            for idx in slots_for_first_date[1:]:
+                if idx == cur_end + 1:
+                    cur_end = idx
+                else:
+                    if (cur_end - cur_start) > (best_end - best_start):
+                        best_start, best_end = cur_start, cur_end
+                    cur_start = cur_end = idx
+            if (cur_end - cur_start) > (best_end - best_start):
+                best_start, best_end = cur_start, cur_end
+            end_idx = min(best_end + 1, sr.TIME_SLOT_MAX - 1)
+            consensus_label = f"{sr._slot_idx_to_time(best_start)}~{sr._slot_idx_to_time(end_idx)}"
+
         return {
             "date_hint": date_hint,
             "date_hints": date_hints,
             "parsed_time_hint": parsed_time_hint,
             "time_options": time_options,
+            "consensus_label": consensus_label,
         }
     except Exception:
         logger.warning("TimeBar entity extraction failed room=%s", room_id, exc_info=True)
@@ -307,11 +327,30 @@ async def _run_auto_trigger_pipeline(
     try:
         # 해결점 B: trigger_reason별 분석중 메시지 즉시 발행 (LLM 분석 전)
         # — 5~15초 LLM 대기 동안 사용자에게 "AI가 일하는 중"임을 알림.
-        _GREETING_BY_REASON = {
-            "stalemate_judged": "대화가 길어지네요, AI가 정리해볼게요 🗓️",
-            "all_members_selected": "모두 시간 선택 완료! 일정 확정해드릴게요 📅",
-        }
-        greeting = _GREETING_BY_REASON.get(trigger_reason)
+        # all_members_selected는 TimeBar 합의 구간을 동적으로 박아 시연 임팩트 ↑.
+        greeting: str | None = None
+        if trigger_reason == "stalemate_judged":
+            greeting = "대화가 길어지네요, AI가 정리해볼게요 🗓️"
+        elif trigger_reason == "all_members_selected":
+            consensus_label: str | None = None
+            try:
+                async with AsyncSessionLocal() as session:
+                    timebar_data = await _build_entities_from_timebar(
+                        room_id, session, redis_client
+                    )
+                if isinstance(timebar_data, dict):
+                    label = timebar_data.get("consensus_label")
+                    if isinstance(label, str) and label:
+                        consensus_label = label
+            except Exception:
+                logger.debug(
+                    "consensus_label probe failed for room %s", room_id, exc_info=True
+                )
+            greeting = (
+                f"모두 시간 선택 완료! {consensus_label}이 겹쳐요"
+                if consensus_label
+                else "모두 시간 선택 완료! 일정 확정해드릴게요 📅"
+            )
         if greeting:
             await _emit_auto_trigger_greeting(
                 redis_client,

@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Callable, Optional, Union
 
@@ -50,6 +51,22 @@ CATEGORY_FIELDS: frozenset[str] = frozenset(
 
 # confidence 미만은 drop (디자인 P4 partial response 정책).
 MIN_CONFIDENCE = 0.7
+
+# 해결점 A6-1 (2026-05-07): time_preference에 일회성 이벤트/거부 발화가 잘못 분류되는
+# 사각지대 차단. lifestyle pattern (저녁형/주말형 등)이 아닌 값을 post-process drop.
+# Gemini prompt 강화 + 부정 예시 + 본 정규식 = 3중 안전망.
+# Codex review (2026-05-07) 보강: month-less day-only ("10일") + 상대 날짜 + 휴식 마커 추가.
+_TIME_PREF_INVALID_PATTERN = re.compile(
+    # 구체 날짜 + 일자 단독 — 일회성 이벤트 ("5월 8일", "10일", "8일")
+    r"\d+\s*월\s*\d+\s*일|\d+\s*일|"
+    # 상대 날짜 — 일회성 마커
+    r"내일|모레|오늘|어제|이번\s*주|다음\s*주|지난\s*주|"
+    # 거부/불가능 키워드 — 일회성 거부 발화
+    r"안\s*[돼되]|못\s*가|못\s*해|힘들|어려워|어렵다|어렵겠|"
+    r"패스|불가능|곤란|선약|MT|시험|"
+    # 휴식 의향 — 일회성 컨텍스트 ("좀 쉬고 싶다" 등)
+    r"쉬고\s*싶|좀\s*쉬"
+)
 
 
 class CategoryExtraction(BaseModel):
@@ -98,12 +115,13 @@ async def extract_personal_data(
             force_demo,
             settings.DEMO_FALLBACK_ENABLED,
         )
-        return await _load_canned_extraction(
+        result = await _load_canned_extraction(
             transcript=transcript, member_ids=member_ids, db=db
         )
+        return _filter_invalid_time_preference(result)
 
     try:
-        return await _gemini_extract(
+        result = await _gemini_extract(
             transcript=transcript, member_ids=member_ids, db=db
         )
     except Exception as exc:  # noqa: BLE001 — 외부 호출/parse 실패는 fallback으로 흡수
@@ -111,9 +129,10 @@ async def extract_personal_data(
             "personal_data_extractor: Gemini extraction failed, falling back to canned. error=%s",
             exc,
         )
-        return await _load_canned_extraction(
+        result = await _load_canned_extraction(
             transcript=transcript, member_ids=member_ids, db=db
         )
+    return _filter_invalid_time_preference(result)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -177,6 +196,42 @@ def _build_extraction_object(
     )
 
 
+def _filter_invalid_time_preference(
+    extractions: dict[int, dict[str, CategoryExtraction]],
+) -> dict[int, dict[str, CategoryExtraction]]:
+    """해결점 A6-1: time_preference에 일회성 이벤트/거부 발화가 잘못 분류된 항목 제거.
+
+    Personal data의 time_preference는 lifestyle pattern (저녁형/주말형 등)이지
+    "5월 8일 동아리 MT라 안 돼" 같은 일회성 이벤트 컨텍스트가 아님. Gemini prompt
+    강화에도 불구하고 sneak-through할 수 있어 정규식으로 최종 차단.
+
+    Codex review (2026-05-07): VALUE만 검사 (source_quote 제외). Gemini가 혼합 발화
+    ("내일 안 되고 평일 저녁 7시 이후가 좋아")에서 클린한 value만 뽑은 정상 케이스의
+    false negative 방지. 잘못된 추출은 value 자체에 패턴 남으니 거기서 잡힘.
+    """
+    for member_id, categories in list(extractions.items()):
+        ext = categories.get("time_preference")
+        if ext is None:
+            continue
+        value = ext.value
+        # time_preference는 단일 str. list로 오면 보수적으로 join해서 검사.
+        check_text = value if isinstance(value, str) else (
+            " ".join(str(v) for v in value) if isinstance(value, list) else ""
+        )
+        if not check_text:
+            continue
+        if _TIME_PREF_INVALID_PATTERN.search(check_text):
+            logger.info(
+                "personal_data_extractor: drop time_preference for member %s — "
+                "matched invalid pattern (value=%r, quote=%r)",
+                member_id,
+                value,
+                ext.source_quote,
+            )
+            del categories["time_preference"]
+    return extractions
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Real Gemini extraction
 # ─────────────────────────────────────────────────────────────────────────────
@@ -194,7 +249,13 @@ _PROMPT_TEMPLATE = """\
 - food_preferences: 좋아하는 음식 카테고리 (list[str], 예: 한식/양식/일식/중식/카페/술집)
 - liked_areas: 자주 가고 싶은 동네/지역 (list[str])
 - disliked_areas: 멀어서/안 가고 싶은 지역 (list[str])
-- time_preference: 선호 시간대 자유 텍스트 (str, 예: "주말 오후", "평일 저녁 7시 이후")
+- time_preference: **반복적 lifestyle 시간 패턴만** (str, 예: "주말 오후", "평일 저녁 7시 이후", "저녁형").
+  ⚠️ **일회성 이벤트나 거부 표현은 절대 value에 포함하지 말 것.**
+  - "5월 8일 안 돼", "이번 주 토요일 동아리 MT" 같은 특정 날짜/일회 일정은 value에 절대 X.
+  - 한 발화에 거부와 lifestyle이 **섞여있으면** lifestyle 부분만 깨끗하게 추출.
+    예: "내일은 못 가고 평일 저녁 7시 이후가 좋아" → value="평일 저녁 7시 이후"
+  - 발화가 전적으로 일회성 거부/이벤트면 → 추출 X.
+  - 여기는 PERSONALITY 또는 반복 패턴만 (예: "저녁형", "주말 활동 선호", "평일 7시 이후").
 - transport_mode: 이동수단 (str, 예: "대중교통", "자차", "도보")
 
 # 규칙
@@ -214,6 +275,20 @@ _PROMPT_TEMPLATE = """\
     }}
   ]
 }}
+
+# 부정 예시 (절대 추출 금지 — 발화 전체가 일회성 이벤트/거부)
+- "5월 8일 동아리 MT라 안 돼" → time_preference 추출 X
+- "9일은 본가 내려가야 해서 패스" → 추출 X
+- "10일 토요일은 좀 쉬고 싶다" → 추출 X
+- "내일 시험이라 못 가" → 추출 X
+- "그 날은 어려워" → 추출 X
+- 위 발화들은 모임-스코프 rejected_dates로 별도 처리됨. personal data 카테고리에 넣지 마.
+
+# 긍정 예시 (혼합 발화 — lifestyle 부분만 골라서 추출)
+- "내일은 못 가고 평일 저녁 7시 이후가 좋아" → time_preference value="평일 저녁 7시 이후"
+- "이번 주말 어려운데 보통 주말 오후가 편해" → time_preference value="주말 오후"
+- "5월 8일은 안 되지만 평소엔 저녁형이야" → time_preference value="저녁형"
+  (혼합 케이스에서는 일회성/거부 부분 버리고 반복 패턴만 깨끗한 value로)
 
 # 채팅 transcript
 {transcript_text}

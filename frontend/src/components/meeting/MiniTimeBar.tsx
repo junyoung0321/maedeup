@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { useMeetingOptional } from "@/contexts/MeetingContext";
 
 const BAR_START = 9;
 const BAR_END = 22;
@@ -47,6 +48,9 @@ function fmtHour(h: number): string {
 export default function MiniTimeBar({ date, roomId, aiSlots }: Props) {
   const [memberData, setMemberData] = useState<Record<string, MemberBusyPeriod[]> | null>(null);
   const [loading, setLoading] = useState(true);
+  // F-7: TimeBarSelector가 publish한 AI 추천 범위. 같은 date면 자체 계산 대신 이 값 사용.
+  const meeting = useMeetingOptional();
+  const aiRecommendedRange = meeting?.aiRecommendedTimeRange ?? null;
 
   useEffect(() => {
     let cancelled = false;
@@ -190,9 +194,16 @@ export default function MiniTimeBar({ date, roomId, aiSlots }: Props) {
           </span>
         )}
       </div>
-      {/* Summary */}
+      {/* Summary — F-7: TimeBarSelector aiRecommendedTimeRange 우선, 없으면 자체 계산 fallback */}
       <div style={{ marginTop: 3, fontSize: 11, color: "#475569" }}>
-        {freeSlotCount > 0 ? (
+        {aiRecommendedRange && aiRecommendedRange.date === date ? (
+          <span>
+            AI 추천: <span style={{ fontWeight: 600, color: "#166534" }}>
+              {fmtTime(aiRecommendedRange.start)} ~ {fmtTime(aiRecommendedRange.end + 1)}
+            </span>
+            {memberCount > 0 && <span style={{ color: "#94a3b8" }}> ({memberCount}명 기준)</span>}
+          </span>
+        ) : freeSlotCount > 0 ? (
           bestLen >= 2 ? (
             <span>
               전원 가능: <span style={{ fontWeight: 600, color: "#166534" }}>{fmtTime(bestStart)} ~ {fmtTime(bestStart + bestLen)}</span>

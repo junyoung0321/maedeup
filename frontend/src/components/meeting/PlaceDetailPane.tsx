@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { MapPin, Phone, ExternalLink, Navigation } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import type { PlaceResult } from "@/types";
+import { useMeetingOptional } from "@/contexts/MeetingContext";
 
 /* ── Kakao Maps type shim ──────────────────────────────── */
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -26,6 +27,10 @@ export default function PlaceDetailPane({ place, roomId, meetingId, onConfirmed 
   const markerRef = useRef<any>(null);
   const relayoutTimerRef = useRef<number | null>(null);
   const [confirmed, setConfirmed] = useState(false);
+  // F-9: maedeup_card.selected_place 도출한 confirmedPlaceId와 매치되면 이미 확정된 장소.
+  const meetingCtx = useMeetingOptional();
+  const confirmedPlaceId = meetingCtx?.confirmedPlaceId ?? null;
+  const isAlreadyConfirmed = confirmedPlaceId !== null && place?.id === confirmedPlaceId;
 
   /* ── Kakao Map ───────────────────────────────────────── */
   useEffect(() => {
@@ -395,7 +400,7 @@ export default function PlaceDetailPane({ place, roomId, meetingId, onConfirmed 
 
       {/* Bottom button */}
       <div style={{ padding: "16px 20px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
-        {confirmed ? (
+        {confirmed || isAlreadyConfirmed ? (
           <div
             style={{
               width: "100%",

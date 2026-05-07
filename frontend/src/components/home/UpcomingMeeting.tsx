@@ -37,14 +37,36 @@ export default function UpcomingMeeting() {
   const [loading, setLoading] = useState(true);
   const [timeLeft, setTimeLeft] = useState<{ h: number; m: number; s: number } | null>(null);
 
+  // F-(upcoming refresh): mount 시 fetch + window focus / visibility change 시 재fetch.
+  // explore page로 돌아올 때 (다른 페이지에서 모임 confirm 후) 최신 maedeup이 노출되도록.
   useEffect(() => {
-    apiFetch<UpcomingMeetingData | null>("/api/v1/meetings/upcoming")
-      .then((data) => {
-        setMeeting(data);
-        if (data) setTimeLeft(getTimeLeft(data.scheduled_at));
-      })
-      .catch(() => setMeeting(null))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    const fetchMeeting = () => {
+      apiFetch<UpcomingMeetingData | null>("/api/v1/meetings/upcoming")
+        .then((data) => {
+          if (cancelled) return;
+          setMeeting(data);
+          if (data) setTimeLeft(getTimeLeft(data.scheduled_at));
+        })
+        .catch(() => {
+          if (!cancelled) setMeeting(null);
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    };
+    fetchMeeting();
+    const onFocus = () => fetchMeeting();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") fetchMeeting();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, []);
 
   useEffect(() => {

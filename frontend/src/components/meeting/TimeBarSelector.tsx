@@ -6,6 +6,9 @@ import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { useMeetingOptional } from "@/contexts/MeetingContext";
 
+// C7 contract (2026-05-08): backend `scheduling_round.py:36-38` 미러 — 변경 시 양쪽 동시 수정.
+// HOUR_START ↔ TIME_SLOT_FIRST_HOUR, SLOT_MINUTES ↔ TIME_SLOT_MINUTES, TOTAL_SLOTS ↔ TIME_SLOT_MAX.
+// 슬롯 인덱스 → 시각 매핑 권위 helper: backend `scheduling_round.slot_idx_to_time(idx)` ↔ 본 파일 `slotToTime(idx)`.
 const HOUR_START = 9;
 const HOUR_END = 22;
 const SLOT_MINUTES = 30;
@@ -103,6 +106,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
   const peerTimeSelections = meeting?.peerTimeSelections ?? {};
   const sendTimeSelection = meeting?.sendTimeSelection ?? null;
   const myTimeSelection = meeting?.myTimeSelection ?? null;
+  const setAiRecommendedTimeRange = meeting?.setAiRecommendedTimeRange ?? null;
   // F-5: 그룹 일정 확정 후 individual confirm 버튼 비활성화 (어색함 제거).
   const lastConfirmedMeeting = meeting?.lastConfirmedMeeting ?? null;
   const infoPanePhase = meeting?.infoPanePhase ?? "idle";
@@ -212,18 +216,13 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
     setSelectionEnd(null);
   }, [date]);
 
-  // F-2 진단: TimeBar가 받은 prop 추적용. 시연 후 제거.
-  useEffect(() => {
-    console.info("[TimeBar] preferredTimeRange prop:", preferredTimeRange, "members:", members.length);
-  }, [preferredTimeRange, members.length]);
-
   // AI recommended range: 선호 시간대(평일저녁 등) 내 longest streak 우선,
   // 없으면 전체 longest streak fallback. 최대 4시간 (8슬롯) 캡.
   const recommendedRange = useMemo(() => {
     if (members.length === 0) return null;
     const MAX_RECOMMEND_SLOTS = 8;
 
-    function longestStreakInRange(startSlot: number, endSlot: number): { start: number; len: number } | null {
+    function longestStreakInRange(startSlot: number, endSlot: number, minLen = 2): { start: number; len: number } | null {
       const lo = Math.max(0, startSlot);
       const hi = Math.min(TOTAL_SLOTS - 1, endSlot);
       if (lo > hi) return null;
@@ -237,15 +236,16 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
           curStart = -1; curLen = 0;
         }
       }
-      return bestLen >= 2 ? { start: bestStart, len: bestLen } : null;
+      return bestLen >= minLen ? { start: bestStart, len: bestLen } : null;
     }
 
     // 1차 시도 — 선호 시간대 내. preferredTimeRange.end는 exclusive.
+    // F-8 P1: ≥2 streak (1시간 이상)만 추천. 단일 슬롯(30분) 추천은 UX 결함 → fallback으로.
     if (preferredTimeRange) {
       const slotsPerHour = 60 / SLOT_MINUTES;
       const prefStartSlot = (preferredTimeRange.start - HOUR_START) * slotsPerHour;
       const prefEndSlot = (preferredTimeRange.end - HOUR_START) * slotsPerHour - 1;
-      const inPref = longestStreakInRange(prefStartSlot, prefEndSlot);
+      const inPref = longestStreakInRange(prefStartSlot, prefEndSlot, 2);
       if (inPref) {
         const cappedLen = Math.min(inPref.len, MAX_RECOMMEND_SLOTS);
         return { start: inPref.start, end: inPref.start + cappedLen - 1 };
@@ -253,11 +253,25 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
     }
 
     // Fallback — 전체 범위.
-    const overall = longestStreakInRange(0, TOTAL_SLOTS - 1);
+    const overall = longestStreakInRange(0, TOTAL_SLOTS - 1, 2);
     if (!overall) return null;
     const cappedLen = Math.min(overall.len, MAX_RECOMMEND_SLOTS);
     return { start: overall.start, end: overall.start + cappedLen - 1 };
   }, [aggregateAvailability, preferredTimeRange]);
+
+  // F-7: 계산된 추천 범위를 MeetingContext에 publish — MiniTimeBar 등 다른 위치 SoT 단일화.
+  useEffect(() => {
+    if (!setAiRecommendedTimeRange) return;
+    if (recommendedRange) {
+      setAiRecommendedTimeRange({
+        date,
+        start: recommendedRange.start,
+        end: recommendedRange.end,
+      });
+    } else {
+      setAiRecommendedTimeRange(null);
+    }
+  }, [recommendedRange, date, setAiRecommendedTimeRange]);
 
   const handleSlotClick = useCallback((slotIndex: number) => {
     if (selectionStart === null) {

@@ -81,6 +81,29 @@ export default function AiAssistantPane() {
     [cardsByMeetingId],
   );
 
+  // F-5 v2 + F-9: maedeup_card 발행 시 phase 자동 timeConfirmed 전환 (TimeBar individual
+  // confirm 버튼 자동 비활성) + selected_place 있으면 confirmedPlaceId set (PlaceDetailPane
+  // 확정 버튼 비활성).
+  const activeMaedeupCard = useMemo(
+    () => [...activeCards].reverse().find((card) => card.type === "maedeup_card")?.payload ?? null,
+    [activeCards],
+  );
+  const setInfoPanePhaseCtx = meetingContext?.setInfoPanePhase;
+  const setConfirmedPlaceIdCtx = meetingContext?.setConfirmedPlaceId;
+  const currentPhaseCtx = meetingContext?.infoPanePhase;
+  useEffect(() => {
+    if (!activeMaedeupCard) return;
+    // forward-only — 이미 timeConfirmed/placeConfirmed/done이면 noop (setInfoPanePhase는
+    // 같은 phase 호출을 무시함)
+    if (currentPhaseCtx === "idle" || currentPhaseCtx === "dateSelected" || currentPhaseCtx === "dateConfirmed") {
+      setInfoPanePhaseCtx?.("timeConfirmed");
+    }
+    const placeId = (activeMaedeupCard.selected_place as { place_id?: string; id?: string } | undefined)?.place_id
+      ?? (activeMaedeupCard.selected_place as { place_id?: string; id?: string } | undefined)?.id
+      ?? null;
+    if (placeId) setConfirmedPlaceIdCtx?.(placeId);
+  }, [activeMaedeupCard, currentPhaseCtx, setInfoPanePhaseCtx, setConfirmedPlaceIdCtx]);
+
   const activeVoteCard = useMemo(
     () => [...activeCards].reverse().find((card) => card.type === "vote_card")?.payload ?? null,
     [activeCards],

@@ -77,6 +77,10 @@ interface MeetingState {
   calendarMemberCount: number;
   // A3-2: TimeBar 합의 완료 노티 (호스트만 "확정하기" 버튼 노출용)
   scheduleConsensus: ScheduleConsensusReadyPayload | null;
+  // F-9: 장소 확정 시 PlaceDetailPane "이 장소로 확정" 버튼 비활성화용.
+  confirmedPlaceId: string | null;
+  // F-7: TimeBarSelector가 계산한 AI 추천 범위 — MiniTimeBar 등 다른 위치 SoT 단일화.
+  aiRecommendedTimeRange: { date: string; start: number; end: number } | null;
 }
 
 interface MeetingContextValue extends MeetingState {
@@ -122,6 +126,8 @@ interface MeetingContextValue extends MeetingState {
   setLastConfirmedMeeting: (payload: MeetingConfirmedPayload | null) => void;
   setCalendarSyncStatus: (forSelf: boolean | null, memberCount: number) => void;
   setScheduleConsensus: (payload: ScheduleConsensusReadyPayload | null) => void;
+  setConfirmedPlaceId: (id: string | null) => void;
+  setAiRecommendedTimeRange: (range: { date: string; start: number; end: number } | null) => void;
 }
 
 export const MeetingContext = createContext<MeetingContextValue | null>(null);
@@ -164,6 +170,8 @@ export function MeetingProvider({
     calendarEventForSelf: null,
     calendarMemberCount: 0,
     scheduleConsensus: null,
+    confirmedPlaceId: null,
+    aiRecommendedTimeRange: null,
   });
 
   const [sendMessageToAi, setSendMessageToAiRaw] = useState<((msg: string) => void) | null>(null);
@@ -246,6 +254,27 @@ export function MeetingProvider({
   const setScheduleConsensus = useCallback(
     (payload: ScheduleConsensusReadyPayload | null) => {
       setState((prev) => ({ ...prev, scheduleConsensus: payload }));
+    },
+    [],
+  );
+
+  const setConfirmedPlaceId = useCallback((id: string | null) => {
+    setState((prev) => ({ ...prev, confirmedPlaceId: id }));
+  }, []);
+
+  const setAiRecommendedTimeRange = useCallback(
+    (range: { date: string; start: number; end: number } | null) => {
+      setState((prev) => {
+        // Skip if same value (avoid unnecessary re-render loops in publisher)
+        const cur = prev.aiRecommendedTimeRange;
+        if (
+          (cur === null && range === null) ||
+          (cur && range && cur.date === range.date && cur.start === range.start && cur.end === range.end)
+        ) {
+          return prev;
+        }
+        return { ...prev, aiRecommendedTimeRange: range };
+      });
     },
     [],
   );
@@ -456,11 +485,15 @@ export function MeetingProvider({
       calendarEventForSelf: state.calendarEventForSelf,
       calendarMemberCount: state.calendarMemberCount,
       scheduleConsensus: state.scheduleConsensus,
+      confirmedPlaceId: state.confirmedPlaceId,
+      aiRecommendedTimeRange: state.aiRecommendedTimeRange,
       setFinalizationProposal,
       setFinalizationPending,
       setLastConfirmedMeeting,
       setCalendarSyncStatus,
       setScheduleConsensus,
+      setConfirmedPlaceId,
+      setAiRecommendedTimeRange,
       setContextMode,
       setSelectedPlace,
       setRoom,
@@ -519,11 +552,15 @@ export function MeetingProvider({
       state.calendarEventForSelf,
       state.calendarMemberCount,
       state.scheduleConsensus,
+      state.confirmedPlaceId,
+      state.aiRecommendedTimeRange,
       setFinalizationProposal,
       setFinalizationPending,
       setLastConfirmedMeeting,
       setCalendarSyncStatus,
       setScheduleConsensus,
+      setConfirmedPlaceId,
+      setAiRecommendedTimeRange,
       setAiTriggerIntent,
       setContextMode,
       refreshCalendar,

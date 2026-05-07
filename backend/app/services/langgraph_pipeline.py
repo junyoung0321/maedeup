@@ -986,7 +986,11 @@ _CUISINE_CATEGORY_KEYWORDS: dict[str, list[str]] = {
 }
 
 # Place 의도 키워드 (cuisine 없어도 fast-path 진입 허용).
-_PLACE_INTENT_PATTERN = re.compile(r"맛집|추천|식당|음식점|예약|있는데|어디|놀러|가볼")
+# 해결점 A5-1 보강 (2026-05-07): "갈만한", "어딘가", "알려" 등 자연어 표현 추가.
+_PLACE_INTENT_PATTERN = re.compile(
+    r"맛집|추천|식당|음식점|예약|있는데|어디|놀러|가볼|"
+    r"갈\s*만|갈만|먹을|먹기|어디서|어딘가|알려"
+)
 
 # Place fast-path gate: 날짜/인원/시간 등 다른 entity 신호가 있으면 Gemini 추출에 위임.
 # 시연 단순 케이스("강남 한식 맛집 추천")만 fast-path, 복합 케이스는 정상 흐름.
@@ -3303,11 +3307,17 @@ def _build_multi_date_slots(state: GraphState) -> list[dict[str, Any]]:
             start_hour, end_hour = pref_range
             break
 
-        start_at = target_date.replace(hour=start_hour, minute=0, second=0, microsecond=0)
-        end_at = min(
-            start_at + timedelta(minutes=SLOT_MINUTES),
-            target_date.replace(hour=end_hour, minute=0, second=0, microsecond=0),
-        )
+        end_of_pref = target_date.replace(hour=end_hour, minute=0, second=0, microsecond=0)
+        # 오늘 + 현재 시각이 선호 시간대 시작 이후면 now+1h로 시작 (즉시 약속 UX).
+        # 1시간짜리 슬롯이 선호 시간대 안에 못 들어가면 오늘 후보 스킵.
+        if target_date.date() == now_kst.date() and now_kst.hour >= start_hour:
+            bumped = (now_kst + timedelta(hours=1)).replace(second=0, microsecond=0)
+            if bumped + timedelta(minutes=SLOT_MINUTES) > end_of_pref:
+                continue
+            start_at = bumped
+        else:
+            start_at = target_date.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+        end_at = min(start_at + timedelta(minutes=SLOT_MINUTES), end_of_pref)
         holiday = _get_korean_holiday(target_date)
 
         slots.append({
@@ -3339,8 +3349,8 @@ def _build_preference_time_slots(
     _blocked = blocked_dates or set()
     normalized_pref_times = _normalize_preferred_times(pref_times)
 
-    # 이번 주 + 다음 주 날짜 중 선호 시간대에 맞는 슬롯 생성
-    for day_offset in range(1, 29):  # 향후 4주 (불가능 날짜 많아도 여유 확보)
+    # 오늘 포함 향후 4주 — 오늘은 현재 시각 + 1h 룰로 즉시 약속 가능.
+    for day_offset in range(0, 29):
         target = now_kst + timedelta(days=day_offset)
         weekday = target.weekday()  # 0=월 6=일
         is_weekend = weekday >= 5
@@ -3359,13 +3369,18 @@ def _build_preference_time_slots(
                 continue
 
             start_h, end_h = hours
-            start_at = target.replace(hour=start_h, minute=0, second=0, microsecond=0)
-            end_at = min(
-                start_at + timedelta(minutes=SLOT_MINUTES),
-                target.replace(hour=end_h, minute=0, second=0, microsecond=0),
-            )
+            end_of_pref = target.replace(hour=end_h, minute=0, second=0, microsecond=0)
+            # 오늘 + 현재 시각이 선호 시간대 시작 이후면 now+1h로 시작.
+            if target.date() == now_kst.date() and now_kst.hour >= start_h:
+                bumped = (now_kst + timedelta(hours=1)).replace(second=0, microsecond=0)
+                if bumped + timedelta(minutes=SLOT_MINUTES) > end_of_pref:
+                    continue
+                start_at = bumped
+            else:
+                start_at = target.replace(hour=start_h, minute=0, second=0, microsecond=0)
+            end_at = min(start_at + timedelta(minutes=SLOT_MINUTES), end_of_pref)
 
-            # 과거 시간 건너뛰기
+            # 과거 시간 건너뛰기 (안전망 — 위 로직이 보통 차단)
             if start_at <= now_kst:
                 continue
 

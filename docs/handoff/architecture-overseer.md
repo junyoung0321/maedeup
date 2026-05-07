@@ -318,6 +318,11 @@ USER AI 패널 입력 ──► assistant.py route → quick_classify → run_sh
 - ~~🟡 A3-3 slider default~~ ✅ 완료 (2026-05-08, F #1 — `findLongestFullCoverageSegment` helper, 단일 슬롯 edge case 안전)
 - ~~🔴 F-5 TimeBar individual confirm 라이프사이클~~ ✅ 완료 (2026-05-08, F #2 — `lastConfirmedMeeting` + `infoPanePhase` 체크 시 "✓ 일정이 확정되었습니다" 안내 박스로 교체)
 - 🔴 **F-6 카드/채팅 시간순 정렬** — 시연 D-7 + 검증 9건 통과 직후 회귀 누적 risk → **시연 후 정교화 1순위**로 박음. 시연 시 멘트로 우회 ("AI 카드 위에, 대화 아래에 — 모임 진행 단계 보존").
+- 🟢 **F-5 v2** — partial maedeup 케이스 `isMeetingConfirmed` 미포함. F #2 fix가 confirmed/done phase만 체크해서 partial 단계엔 confirm 버튼 살아있음. 조건에 maedeup_card_payload 존재 + partial_mode 조합 추가 필요. **즉시 fix 권장**.
+- 🟢 **F-7 (5/8 풀 사이클)** — 캘린더 일자 상세 패널 "AI 추천 날짜" 라벨이 vote_card의 모든 dates에 동등 적용. SoT는 정상이지만 첫 추천(5/11 18:00) 강조 X → 시각적 신뢰도 ↓. fix: vote_card.time_options[0] 또는 첫 element 데이터를 별도 highlight ("🔥 AI 첫 추천") + 나머지는 "AI 후보".
+- 🟡 **F-8 (5/8 풀 사이클)** — TimeBar 추천 9-13 fallback. 호스트 GCal busy 18-21 영역이 점령해서 preferred 범위 안 ≥2 streak 0 → 2-pass 알고리즘이 전체 fallback. fix: 1차 threshold ≥1 슬롯으로 완화 또는 preferred 범위 안에 가능 슬롯 1개라도 있으면 visual marker로 표시. **알고리즘 회귀 신중**.
+- 🟢 **F-9 (5/8 풀 사이클)** — `MeetingContext`에 `confirmedPlaceId` state 없음 → PlaceDetailPane이 confirm 상태 모름 → AI 패널 [이 장소로 확정] 클릭 후에도 PlaceDetailPane 버튼 활성. 중복 confirm 가능. fix: maedeup_card_payload.selected_place에서 도출 또는 새 state 추가.
+- 🟡 **UpcomingMeeting 위젯 우선순위** — 메인 explore page 복귀 시 새 룸 maedeup(5/11 19:00) 아닌 이전 룸 vote_card(5/10 18:00) 표시. fix: refresh 정책 + 우선순위 (maedeup confirmed > vote_card pending).
 - AI 응답 variance — Gemini scoring 캐싱 또는 모델 변경 (시연 후)
 - console.info cleanup (F-2 진단 로그 — 시연 후)
 - `_slot_idx_to_time` private → public + frontend export (C7 contract 단일 source 정교화 — 시연 후)

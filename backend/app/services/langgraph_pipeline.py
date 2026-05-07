@@ -3737,23 +3737,74 @@ async def _ensure_pending_meeting_id(state: GraphState, title: str) -> int:
     if room_pk is None:
         raise ValueError(f"room_id is invalid for pending meeting creation: {state['room_id']!r}")
 
-    # F-1 fix: Reuse the room's most recent pending meeting (from a prior
-    # vote_card_creation run) instead of creating a fresh one. Without this,
-    # all_members_selected fast-path would emit a maedeup_card with a new
-    # meeting_id while frontend's cardsByMeetingId still holds the old
-    # vote_card under the previous id → both cards remain visible.
-    existing_pending = (
-        await db.execute(
-            select(MeetingSchedule)
-            .where(MeetingSchedule.room_id == room_pk)
-            .where(MeetingSchedule.status == "pending")
-            .order_by(MeetingSchedule.created_at.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    # F-1 fix (2026-05-07) + Codex P2 강화 (2026-05-07):
+    # 같은 흐름 (vote_card → place → maedeup)에서 발행된 pending meeting을 재사용해
+    # frontend cardsByMeetingId가 단일 meeting_id로 라이프사이클 유지하도록 함. 단,
+    # "룸의 최신 pending"을 무조건 재사용하면 무관한 stale pending(예: 어제 vote에서 남은 것)에
+    # 새 카드가 잘못 붙는 사각지대가 있어, 가드 2단계:
+    #   1) date_hint와 scheduled_at이 일치하는 pending 우선 (강한 증거 — 시간 제한 X,
+    #      장시간 합의 흐름도 정상 처리)
+    #   2) date_hint 없음/매칭 실패 → 최근 30분 내 생성된 pending만 (약한 증거,
+    #      stale flow 차단용 단일 세션 보장)
+    # 둘 다 매칭 실패 시 새로 생성.
+    existing_pending: MeetingSchedule | None = None
+
+    date_hint = state.get("date_hint")
+    date_iso = date_hint[:10] if isinstance(date_hint, str) and re.match(r"^\d{4}-\d{2}-\d{2}", date_hint) else None
+
+    if date_iso:
+        # Codex P2 review v2 (2026-05-07): vote_options에 multi-date 슬롯이 있을 때
+        # MeetingSchedule.scheduled_at은 첫 옵션만 반영하므로 SQL where절만으론 부분 매칭.
+        # 따라서 룸 최근 pending 10건을 가져와 Python에서 scheduled_at OR vote_options 매칭.
+        try:
+            target_date = datetime.fromisoformat(f"{date_iso}T00:00:00")
+            next_day = target_date + timedelta(days=1)
+            candidates = (
+                await db.execute(
+                    select(MeetingSchedule)
+                    .where(MeetingSchedule.room_id == room_pk)
+                    .where(MeetingSchedule.status == "pending")
+                    .order_by(MeetingSchedule.created_at.desc())
+                    .limit(10)
+                )
+            ).scalars().all()
+            for cand in candidates:
+                # 1) scheduled_at primary date 매칭
+                sched_at = cand.scheduled_at
+                if sched_at is not None and target_date <= sched_at < next_day:
+                    existing_pending = cand
+                    break
+                # 2) vote_options 슬롯 중 어느 하나라도 같은 날짜면 매칭 (multi-date vote 케이스)
+                for opt in (cand.vote_options or []):
+                    if not isinstance(opt, dict):
+                        continue
+                    opt_start = opt.get("start_at")
+                    if isinstance(opt_start, str) and opt_start.startswith(date_iso):
+                        existing_pending = cand
+                        break
+                if existing_pending is not None:
+                    break
+        except (ValueError, TypeError):
+            existing_pending = None
+
+    if existing_pending is None:
+        # date_hint 매칭 실패 또는 없음 → 최근 30분 내 pending만 fallback (stale flow 차단).
+        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        recent_threshold = now_naive - timedelta(minutes=30)
+        existing_pending = (
+            await db.execute(
+                select(MeetingSchedule)
+                .where(MeetingSchedule.room_id == room_pk)
+                .where(MeetingSchedule.status == "pending")
+                .where(MeetingSchedule.created_at > recent_threshold)
+                .order_by(MeetingSchedule.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
     if existing_pending is not None and existing_pending.id is not None:
         logger.info(
-            "Reusing existing pending meeting id=%s for room=%s (F-1: avoid stranded vote_card)",
+            "Reusing existing pending meeting id=%s for room=%s (F-1: same-flow continuation)",
             existing_pending.id, room_pk,
         )
         return existing_pending.id

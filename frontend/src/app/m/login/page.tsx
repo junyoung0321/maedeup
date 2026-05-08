@@ -76,7 +76,11 @@ export default function MobileLoginPage() {
             padding: "14px 0",
             gap: 10,
           }}
-          onClick={() => router.push("/m/consent")}
+          onClick={() => {
+            const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+            localStorage.setItem("mobile_flow", "true");
+            window.location.href = `${apiBase}/auth/google`;
+          }}
         >
           <span
             style={{

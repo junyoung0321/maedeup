@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -10,29 +10,84 @@ import {
   Check,
   ImageIcon,
 } from "lucide-react";
+import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 
 const categories = ["스터디", "식사", "운동", "여행", "회의", "기타"] as const;
 
-const people = [
-  { name: "김민수", email: "minsu@email.com", color: "#818cf8", checked: true },
-  { name: "이서연", email: "seoyeon@email.com", color: "#f472b6", checked: false },
-  { name: "박준혁", email: "junhyuk@email.com", color: "#fb923c", checked: true },
+interface FriendInfo {
+  id: number;
+  name: string;
+  email: string;
+  picture?: string | null;
+}
+
+const AVATAR_COLORS = [
+  "#818cf8",
+  "#f472b6",
+  "#fb923c",
+  "#34d399",
+  "#60a5fa",
+  "#a78bfa",
 ];
 
 export default function MeetingNewPage() {
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
   const [selectedCategory, setSelectedCategory] = useState<string>("스터디");
-  const [checkedPeople, setCheckedPeople] = useState<Record<string, boolean>>(
-    Object.fromEntries(people.map((p) => [p.email, p.checked]))
-  );
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const [count, setCount] = useState(10);
+  const [friends, setFriends] = useState<FriendInfo[]>([]);
+  const [checkedPeople, setCheckedPeople] = useState<Record<string, boolean>>({});
+  const [creating, setCreating] = useState(false);
 
-  const togglePerson = (email: string) => {
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      router.push("/m/login");
+      return;
+    }
+    apiFetch<FriendInfo[]>("/api/v1/users/friends")
+      .then((data) => {
+        setFriends(data);
+        setCheckedPeople(Object.fromEntries(data.map((f) => [f.email, false])));
+      })
+      .catch(() => {});
+  }, [authLoading, user, router]);
+
+  const togglePerson = (email: string) =>
     setCheckedPeople((prev) => ({ ...prev, [email]: !prev[email] }));
-  };
 
   const decrement = () => setCount((c) => Math.max(2, c - 1));
   const increment = () => setCount((c) => Math.min(50, c + 1));
+
+  const handleCreate = async () => {
+    if (!name.trim()) {
+      alert("모임 이름을 입력하세요");
+      return;
+    }
+    setCreating(true);
+    try {
+      const selectedEmails = friends
+        .filter((f) => checkedPeople[f.email])
+        .map((f) => f.email);
+      const data = await apiFetch<{ id: number }>("/api/v1/rooms/", {
+        method: "POST",
+        body: JSON.stringify({
+          name: name.trim(),
+          description: description.trim() || null,
+          category: selectedCategory,
+          member_emails: selectedEmails,
+        }),
+      });
+      router.push(`/m/chat/schedule?roomId=${data.id}`);
+    } catch (e) {
+      alert(`모임 생성 실패: ${e instanceof Error ? e.message : "오류 발생"}`);
+    } finally {
+      setCreating(false);
+    }
+  };
 
   return (
     <div
@@ -77,56 +132,51 @@ export default function MeetingNewPage() {
       >
         {/* Section 1 - 모임 기본 정보 */}
         <div className="flex flex-col" style={{ gap: 14 }}>
-          <span
-            style={{
-              fontSize: 16,
-              fontWeight: 700,
-              color: "#1e293b",
-            }}
-          >
+          <span style={{ fontSize: 16, fontWeight: 700, color: "#1e293b" }}>
             모임 기본 정보
           </span>
 
           {/* Name input */}
-          <div
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="스터디 모임, 점심 약속 등"
             style={{
               borderRadius: 10,
               backgroundColor: "#f8fafc",
               border: "1px solid #e2e8f0",
               padding: "14px 16px",
+              fontSize: 14,
+              fontWeight: 400,
+              color: "#1e293b",
+              fontFamily: "Pretendard, sans-serif",
+              outline: "none",
+              width: "100%",
+              boxSizing: "border-box",
             }}
-          >
-            <span
-              style={{
-                fontSize: 14,
-                fontWeight: 400,
-                color: "#94a3b8",
-              }}
-            >
-              스터디 모임, 점심 약속 등
-            </span>
-          </div>
+          />
 
           {/* Description input */}
-          <div
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="모임 설명을 입력하세요"
+            rows={3}
             style={{
               borderRadius: 10,
               backgroundColor: "#f8fafc",
               border: "1px solid #e2e8f0",
               padding: "14px 16px",
-              height: 72,
+              fontSize: 14,
+              fontWeight: 400,
+              color: "#1e293b",
+              fontFamily: "Pretendard, sans-serif",
+              outline: "none",
+              width: "100%",
+              boxSizing: "border-box",
+              resize: "none",
             }}
-          >
-            <span
-              style={{
-                fontSize: 14,
-                fontWeight: 400,
-                color: "#94a3b8",
-              }}
-            >
-              모임 설명을 입력하세요
-            </span>
-          </div>
+          />
 
           {/* Category chips */}
           <div className="flex flex-wrap" style={{ gap: 8 }}>
@@ -157,13 +207,7 @@ export default function MeetingNewPage() {
 
         {/* Section 2 - 참여자 초대 */}
         <div className="flex flex-col" style={{ gap: 12 }}>
-          <span
-            style={{
-              fontSize: 16,
-              fontWeight: 700,
-              color: "#1e293b",
-            }}
-          >
+          <span style={{ fontSize: 16, fontWeight: 700, color: "#1e293b" }}>
             참여자 초대
           </span>
 
@@ -179,96 +223,97 @@ export default function MeetingNewPage() {
             }}
           >
             <Search size={16} color="#94a3b8" />
-            <span
-              style={{
-                fontSize: 13,
-                fontWeight: 400,
-                color: "#94a3b8",
-              }}
-            >
+            <span style={{ fontSize: 13, fontWeight: 400, color: "#94a3b8" }}>
               이름 또는 이메일로 검색
             </span>
           </div>
 
           {/* People list */}
           <div className="flex flex-col">
-            {people.map((person) => {
-              const isChecked = checkedPeople[person.email];
-              return (
-                <div
-                  key={person.email}
-                  className="flex items-center"
-                  style={{ padding: "10px 0", gap: 12 }}
-                  onClick={() => togglePerson(person.email)}
-                >
-                  {/* Avatar */}
+            {friends.length === 0 ? (
+              <span style={{ fontSize: 13, color: "#94a3b8", padding: "8px 0" }}>
+                친구 목록이 없습니다
+              </span>
+            ) : (
+              friends.map((friend, i) => {
+                const isChecked = !!checkedPeople[friend.email];
+                return (
                   <div
-                    className="shrink-0"
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: "50%",
-                      backgroundColor: person.color,
-                    }}
-                  />
-
-                  {/* Info */}
-                  <div className="flex flex-col flex-1" style={{ gap: 2 }}>
-                    <span
+                    key={friend.email}
+                    className="flex items-center"
+                    style={{ padding: "10px 0", gap: 12 }}
+                    onClick={() => togglePerson(friend.email)}
+                  >
+                    {/* Avatar */}
+                    <div
+                      className="shrink-0"
                       style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: "50%",
+                        backgroundColor: AVATAR_COLORS[i % AVATAR_COLORS.length],
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: "#ffffff",
                         fontSize: 14,
                         fontWeight: 600,
-                        color: "#1e293b",
                       }}
                     >
-                      {person.name}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 11,
-                        fontWeight: 400,
-                        color: "#94a3b8",
-                      }}
-                    >
-                      {person.email}
-                    </span>
-                  </div>
+                      {friend.name.charAt(0)}
+                    </div>
 
-                  {/* Checkbox */}
-                  <div
-                    className="flex items-center justify-center shrink-0"
-                    style={{
-                      width: 22,
-                      height: 22,
-                      borderRadius: 6,
-                      backgroundColor: isChecked ? "#4f46e5" : "#ffffff",
-                      border: isChecked ? "none" : "1.5px solid #d1d5db",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {isChecked && <Check size={14} color="white" />}
+                    {/* Info */}
+                    <div className="flex flex-col flex-1" style={{ gap: 2 }}>
+                      <span
+                        style={{
+                          fontSize: 14,
+                          fontWeight: 600,
+                          color: "#1e293b",
+                        }}
+                      >
+                        {friend.name}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 400,
+                          color: "#94a3b8",
+                        }}
+                      >
+                        {friend.email}
+                      </span>
+                    </div>
+
+                    {/* Checkbox */}
+                    <div
+                      className="flex items-center justify-center shrink-0"
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: 6,
+                        backgroundColor: isChecked ? "#4f46e5" : "#ffffff",
+                        border: isChecked ? "none" : "1.5px solid #d1d5db",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {isChecked && <Check size={14} color="white" />}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </div>
 
         {/* Section 3 - 최대 인원 설정 */}
         <div className="flex flex-col" style={{ gap: 14 }}>
-          <span
-            style={{
-              fontSize: 16,
-              fontWeight: 700,
-              color: "#1e293b",
-            }}
-          >
+          <span style={{ fontSize: 16, fontWeight: 700, color: "#1e293b" }}>
             최대 인원 설정
           </span>
 
           {/* Counter row */}
           <div className="flex items-center" style={{ gap: 12 }}>
-            {/* Minus */}
             <button
               onClick={decrement}
               className="flex items-center justify-center shrink-0"
@@ -284,7 +329,6 @@ export default function MeetingNewPage() {
               <Minus size={18} color="#64748b" />
             </button>
 
-            {/* Count display */}
             <div
               className="flex items-center justify-center flex-1"
               style={{
@@ -294,18 +338,11 @@ export default function MeetingNewPage() {
                 height: 48,
               }}
             >
-              <span
-                style={{
-                  fontSize: 20,
-                  fontWeight: 700,
-                  color: "#1e293b",
-                }}
-              >
+              <span style={{ fontSize: 20, fontWeight: 700, color: "#1e293b" }}>
                 {count}명
               </span>
             </div>
 
-            {/* Plus */}
             <button
               onClick={increment}
               className="flex items-center justify-center shrink-0"
@@ -322,30 +359,17 @@ export default function MeetingNewPage() {
             </button>
           </div>
 
-          <span
-            style={{
-              fontSize: 11,
-              fontWeight: 400,
-              color: "#94a3b8",
-            }}
-          >
+          <span style={{ fontSize: 11, fontWeight: 400, color: "#94a3b8" }}>
             최소 2명 ~ 최대 50명까지 설정할 수 있습니다
           </span>
         </div>
 
         {/* Section 4 - 커버 이미지 */}
         <div className="flex flex-col" style={{ gap: 14 }}>
-          <span
-            style={{
-              fontSize: 16,
-              fontWeight: 700,
-              color: "#1e293b",
-            }}
-          >
+          <span style={{ fontSize: 16, fontWeight: 700, color: "#1e293b" }}>
             커버 이미지
           </span>
 
-          {/* Upload area */}
           <div
             className="flex flex-col items-center justify-center"
             style={{
@@ -357,22 +381,10 @@ export default function MeetingNewPage() {
             }}
           >
             <ImageIcon size={32} color="#cbd5e1" />
-            <span
-              style={{
-                fontSize: 13,
-                fontWeight: 400,
-                color: "#94a3b8",
-              }}
-            >
+            <span style={{ fontSize: 13, fontWeight: 400, color: "#94a3b8" }}>
               이미지를 업로드하세요
             </span>
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 400,
-                color: "#cbd5e1",
-              }}
-            >
+            <span style={{ fontSize: 11, fontWeight: 400, color: "#cbd5e1" }}>
               권장 크기: 390 x 200px
             </span>
           </div>
@@ -390,20 +402,23 @@ export default function MeetingNewPage() {
       >
         <button
           className="w-full"
+          disabled={creating}
           style={{
             borderRadius: 14,
-            background: "linear-gradient(90deg, #4f46e5, #6366f1)",
+            background: creating
+              ? "#a5b4fc"
+              : "linear-gradient(90deg, #4f46e5, #6366f1)",
             padding: "16px 0",
             fontSize: 16,
             fontWeight: 700,
             color: "#ffffff",
             border: "none",
-            cursor: "pointer",
+            cursor: creating ? "not-allowed" : "pointer",
             fontFamily: "Pretendard, sans-serif",
           }}
-          onClick={() => router.push("/m/chat/schedule")}
+          onClick={handleCreate}
         >
-          모임 생성
+          {creating ? "생성 중…" : "모임 생성"}
         </button>
       </div>
     </div>

@@ -1,6 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   Menu,
@@ -9,104 +10,106 @@ import {
   MapPin,
   Send,
 } from "lucide-react";
+import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
+import { useSocialWebSocket } from "@/hooks/useSocialWebSocket";
+import type { Room } from "@/types";
 
-export default function PlaceChatPage() {
+const AVATAR_COLORS = ["#818cf8", "#f472b6", "#34d399", "#fb923c", "#60a5fa", "#a78bfa"];
+
+function avatarColor(name: string) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+
+function PlaceChatPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const roomId = searchParams.get("roomId") ?? "";
+  const { user, loading: authLoading } = useAuth();
+  const [room, setRoom] = useState<Room | null>(null);
+  const [inputText, setInputText] = useState("");
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  const { messages, sendMessage, status } =
+    useSocialWebSocket(roomId, user?.name ?? "익명");
+
+  useEffect(() => {
+    if (authLoading || !user || !roomId) return;
+    apiFetch<Room>(`/api/v1/rooms/${roomId}`)
+      .then(setRoom)
+      .catch(() => null);
+  }, [authLoading, user, roomId]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  function handleSend() {
+    const text = inputText.trim();
+    if (!text) return;
+    sendMessage(text);
+    setInputText("");
+  }
+
+  const roomName = room?.name ?? "모임";
+
   return (
     <div
       className="relative mx-auto flex flex-col bg-white"
       style={{ width: 390, height: 844, overflow: "clip" }}
     >
-      {/* 1. Chat Header */}
+      {/* 1. Header */}
       <div
         className="flex items-center shrink-0"
-        style={{
-          height: 56,
-          padding: "0 16px",
-          borderBottom: "1px solid #e2e8f0",
-          backgroundColor: "#ffffff",
-        }}
+        style={{ height: 56, padding: "0 16px", borderBottom: "1px solid #e2e8f0", backgroundColor: "#ffffff" }}
       >
-        <ArrowLeft size={24} color="#1e293b" className="shrink-0 cursor-pointer" onClick={() => router.push("/m/explore")} />
+        <ArrowLeft size={24} color="#1e293b" className="shrink-0 cursor-pointer" onClick={() => router.push("/m/chat")} />
         <div className="flex-1 flex flex-col items-center gap-[2px]">
-          <span
-            style={{
-              fontFamily: "Pretendard, sans-serif",
-              fontSize: 17,
-              fontWeight: 600,
-              color: "#1e293b",
-            }}
-          >
-            졸업 프로젝트 회의
+          <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 17, fontWeight: 600, color: "#1e293b" }}>
+            {roomName}
           </span>
-          <span
-            style={{
-              fontFamily: "Pretendard, sans-serif",
-              fontSize: 12,
-              fontWeight: 400,
-              color: "#94a3b8",
-            }}
-          >
-            5명 참여 중
+          <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 12, fontWeight: 400, color: "#94a3b8" }}>
+            {room?.category ?? "모임"}
           </span>
         </div>
-        <Menu size={24} color="#64748b" className="shrink-0 cursor-pointer" onClick={() => router.push("/m/meeting/detail")} />
+        <Menu
+          size={24}
+          color="#64748b"
+          className="shrink-0 cursor-pointer"
+          onClick={() => router.push(`/m/meeting/detail?roomId=${roomId}`)}
+        />
       </div>
 
       {/* 2. Tab Bar */}
       <div
         className="flex shrink-0"
-        style={{
-          height: 44,
-          backgroundColor: "#ffffff",
-          borderBottom: "1px solid #e2e8f0",
-        }}
+        style={{ height: 44, backgroundColor: "#ffffff", borderBottom: "1px solid #e2e8f0" }}
       >
-        <button
+        <div
           className="flex-1 flex items-center justify-center"
-          style={{
-            fontFamily: "Pretendard, sans-serif",
-            fontSize: 14,
-            fontWeight: 600,
-            color: "#4f46e5",
-            borderBottom: "2px solid #4f46e5",
-          }}
+          style={{ fontFamily: "Pretendard, sans-serif", fontSize: 14, fontWeight: 600, color: "#4f46e5", borderBottom: "2px solid #4f46e5" }}
         >
           채팅방
-        </button>
-        <button
-          className="flex-1 flex items-center justify-center"
-          onClick={() => router.push("/m/place")}
-          style={{
-            fontFamily: "Pretendard, sans-serif",
-            fontSize: 14,
-            fontWeight: 500,
-            color: "#94a3b8",
-          }}
+        </div>
+        <div
+          className="flex-1 flex items-center justify-center cursor-pointer"
+          onClick={() => router.push(`/m/place?roomId=${roomId}`)}
+          style={{ fontFamily: "Pretendard, sans-serif", fontSize: 14, fontWeight: 500, color: "#94a3b8" }}
         >
           장소 선택
-        </button>
+        </div>
       </div>
 
       {/* 3. AI Banner */}
       <div
-        className="flex items-center justify-center shrink-0"
-        style={{
-          height: 40,
-          backgroundColor: "#eef2ff",
-          borderBottom: "1px solid #e0e7ff",
-          gap: 6,
-        }}
+        className="flex items-center justify-center shrink-0 cursor-pointer"
+        style={{ height: 40, backgroundColor: "#eef2ff", borderBottom: "1px solid #e0e7ff", gap: 6 }}
+        onClick={() => router.push(`/m/place?roomId=${roomId}`)}
       >
         <Sparkles size={14} color="#4f46e5" />
-        <span
-          style={{
-            fontFamily: "Pretendard, sans-serif",
-            fontSize: 12,
-            fontWeight: 600,
-            color: "#4f46e5",
-          }}
-        >
+        <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 12, fontWeight: 600, color: "#4f46e5" }}>
           AI가 장소 추천을 시작했습니다
         </span>
         <ChevronRight size={14} color="#4f46e5" />
@@ -115,200 +118,66 @@ export default function PlaceChatPage() {
       {/* 4. Message Area */}
       <div
         className="flex-1 flex flex-col overflow-y-auto"
-        style={{
-          backgroundColor: "#f8fafc",
-          padding: "12px 16px",
-          gap: 16,
-        }}
+        style={{ backgroundColor: "#f8fafc", padding: "12px 16px", gap: 12 }}
       >
-        {/* Msg 1 - 정우진 */}
-        <div className="flex items-end" style={{ gap: 8 }}>
-          <div
-            className="shrink-0 flex items-center justify-center"
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 16,
-              backgroundColor: "#818cf8",
-            }}
-          >
-            <span
-              style={{
-                fontFamily: "Inter, sans-serif",
-                fontSize: 13,
-                fontWeight: 700,
-                color: "#ffffff",
-              }}
-            >
-              J
-            </span>
+        {status === "connecting" && messages.length === 0 && (
+          <div style={{ textAlign: "center", paddingTop: 40 }}>
+            <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 13, color: "#94a3b8" }}>연결 중...</span>
           </div>
-          <div className="flex flex-col" style={{ gap: 4 }}>
-            <span
-              style={{
-                fontFamily: "Pretendard, sans-serif",
-                fontSize: 11,
-                fontWeight: 400,
-                color: "#94a3b8",
-              }}
-            >
-              정우진
-            </span>
-            <div
-              style={{
-                borderRadius: "16px 16px 16px 6px",
-                backgroundColor: "#ffffff",
-                border: "1px solid #e2e8f0",
-                padding: "10px 14px",
-              }}
-            >
-              <span
-                style={{
-                  fontFamily: "Pretendard, sans-serif",
-                  fontSize: 13,
-                  fontWeight: 400,
-                  color: "#1e293b",
-                }}
+        )}
+
+        {messages.map((msg) => {
+          if (msg.role === "system") {
+            return (
+              <div key={msg.id} style={{ textAlign: "center" }}>
+                <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 11, color: "#94a3b8", lineHeight: 1.5 }}>
+                  {msg.content}
+                </span>
+              </div>
+            );
+          }
+
+          const isMe = msg.user_id != null && msg.user_id === user?.id;
+          const senderName = msg.sender ?? "?";
+          const initial = senderName.charAt(0).toUpperCase();
+
+          if (isMe) {
+            return (
+              <div key={msg.id} className="flex justify-end">
+                <div style={{ borderRadius: "16px 16px 6px 16px", backgroundColor: "#4f46e5", padding: "10px 14px", maxWidth: 240 }}>
+                  <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 13, fontWeight: 400, color: "#ffffff" }}>
+                    {msg.content}
+                  </span>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div key={msg.id} className="flex items-end" style={{ gap: 8 }}>
+              <div
+                className="shrink-0 flex items-center justify-center"
+                style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: avatarColor(senderName) }}
               >
-                회의 장소 어디로 할까요?
-              </span>
+                <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 12, fontWeight: 500, color: "#ffffff" }}>
+                  {initial}
+                </span>
+              </div>
+              <div className="flex flex-col" style={{ gap: 4, maxWidth: 240 }}>
+                <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 11, fontWeight: 400, color: "#94a3b8" }}>
+                  {senderName}
+                </span>
+                <div style={{ borderRadius: "16px 16px 16px 6px", backgroundColor: "#ffffff", border: "1px solid #e2e8f0", padding: "10px 14px" }}>
+                  <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 13, fontWeight: 400, color: "#1e293b" }}>
+                    {msg.content}
+                  </span>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+          );
+        })}
 
-        {/* Msg 2 - 이서연 */}
-        <div className="flex items-end" style={{ gap: 8 }}>
-          <div
-            className="shrink-0 flex items-center justify-center"
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 16,
-              backgroundColor: "#f472b6",
-            }}
-          >
-            <span
-              style={{
-                fontFamily: "Inter, sans-serif",
-                fontSize: 13,
-                fontWeight: 700,
-                color: "#ffffff",
-              }}
-            >
-              S
-            </span>
-          </div>
-          <div className="flex flex-col" style={{ gap: 4 }}>
-            <span
-              style={{
-                fontFamily: "Pretendard, sans-serif",
-                fontSize: 11,
-                fontWeight: 400,
-                color: "#94a3b8",
-              }}
-            >
-              이서연
-            </span>
-            <div
-              style={{
-                borderRadius: "16px 16px 16px 6px",
-                backgroundColor: "#ffffff",
-                border: "1px solid #e2e8f0",
-                padding: "10px 14px",
-              }}
-            >
-              <span
-                style={{
-                  fontFamily: "Pretendard, sans-serif",
-                  fontSize: 13,
-                  fontWeight: 400,
-                  color: "#1e293b",
-                }}
-              >
-                강남역 근처가 좋을 것 같아요
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Msg 3 - Right (Me) */}
-        <div className="flex justify-end">
-          <div
-            style={{
-              borderRadius: "16px 16px 6px 16px",
-              backgroundColor: "#4f46e5",
-              padding: "10px 14px",
-            }}
-          >
-            <span
-              style={{
-                fontFamily: "Pretendard, sans-serif",
-                fontSize: 13,
-                fontWeight: 400,
-                color: "#ffffff",
-              }}
-            >
-              저도 강남이 편해요
-            </span>
-          </div>
-        </div>
-
-        {/* Msg 4 - 김민준 */}
-        <div className="flex items-end" style={{ gap: 8 }}>
-          <div
-            className="shrink-0 flex items-center justify-center"
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 16,
-              backgroundColor: "#fb923c",
-            }}
-          >
-            <span
-              style={{
-                fontFamily: "Inter, sans-serif",
-                fontSize: 13,
-                fontWeight: 700,
-                color: "#ffffff",
-              }}
-            >
-              M
-            </span>
-          </div>
-          <div className="flex flex-col" style={{ gap: 4 }}>
-            <span
-              style={{
-                fontFamily: "Pretendard, sans-serif",
-                fontSize: 11,
-                fontWeight: 400,
-                color: "#94a3b8",
-              }}
-            >
-              김민준
-            </span>
-            <div
-              style={{
-                borderRadius: "16px 16px 16px 6px",
-                backgroundColor: "#ffffff",
-                border: "1px solid #e2e8f0",
-                padding: "10px 14px",
-              }}
-            >
-              <span
-                style={{
-                  fontFamily: "Pretendard, sans-serif",
-                  fontSize: 13,
-                  fontWeight: 400,
-                  color: "#1e293b",
-                }}
-              >
-                카페나 스터디룸이면 좋겠어요
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* AI Card */}
+        {/* AI place recommendation card */}
         <div
           style={{
             borderRadius: 16,
@@ -322,116 +191,83 @@ export default function PlaceChatPage() {
         >
           <div className="flex items-center" style={{ gap: 6 }}>
             <Sparkles size={16} color="#ffffff" />
-            <span
-              style={{
-                fontFamily: "Pretendard, sans-serif",
-                fontSize: 13,
-                fontWeight: 600,
-                color: "#ffffff",
-              }}
-            >
-              AI 어시스턴트
-            </span>
+            <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 11, fontWeight: 600, color: "#ffffff" }}>AI 어시스턴트</span>
           </div>
-          <span
-            style={{
-              fontFamily: "Pretendard, sans-serif",
-              fontSize: 16,
-              fontWeight: 700,
-              color: "#ffffff",
-            }}
-          >
+          <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 16, fontWeight: 700, color: "#ffffff" }}>
             장소 추천을 시작하겠습니다
           </span>
-          <span
-            style={{
-              fontFamily: "Pretendard, sans-serif",
-              fontSize: 12,
-              fontWeight: 400,
-              color: "#ffffffcc",
-              lineHeight: 1.5,
-              whiteSpace: "pre-line",
-            }}
-          >
-            {"채팅 내용을 분석하여 강남역 근처\n카페와 스터디룸을 찾고 있어요."}
+          <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 12, fontWeight: 400, color: "#ffffffcc", lineHeight: 1.5 }}>
+            채팅 내용을 분석하여 모임원들의 선호 지역과 카테고리를 파악하고 있어요.
           </span>
-          <div style={{ height: 1, backgroundColor: "#ffffff30" }} />
-          <div className="flex items-center" style={{ gap: 6 }}>
-            <MapPin size={14} color="#ffffff" />
-            <span
-              style={{
-                fontFamily: "Pretendard, sans-serif",
-                fontSize: 12,
-                fontWeight: 400,
-                color: "#ffffff",
-              }}
-            >
-              장소 검색 중...
+          <div style={{ height: 1, background: "#ffffff30" }} />
+          <div
+            className="flex items-center justify-center cursor-pointer"
+            style={{ gap: 6, padding: "8px 0", borderRadius: 8, background: "rgba(255,255,255,0.15)" }}
+            onClick={() => router.push(`/m/place?roomId=${roomId}`)}
+          >
+            <MapPin size={12} color="#ffffff" />
+            <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 11, fontWeight: 600, color: "#ffffff" }}>
+              장소 선택 탭에서 추천 장소 보기 →
             </span>
           </div>
         </div>
+
+        <div ref={bottomRef} />
       </div>
 
       {/* 5. Input Bar */}
       <div
         className="flex items-center shrink-0"
-        style={{
-          height: 60,
-          backgroundColor: "#ffffff",
-          borderTop: "1px solid #e2e8f0",
-          padding: "0 12px",
-          gap: 8,
-        }}
+        style={{ height: 60, backgroundColor: "#ffffff", borderTop: "1px solid #e2e8f0", padding: "0 12px", gap: 8 }}
       >
-        <div
-          className="flex-1 flex items-center"
+        <input
+          className="flex-1"
+          value={inputText}
+          onChange={(e) => setInputText(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+          placeholder="메세지를 입력하세요"
           style={{
             height: 40,
             borderRadius: 20,
             backgroundColor: "#ffffff",
             border: "1px solid #e2e8f0",
             padding: "0 16px",
-            boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+            boxShadow: "0 2px 4px #0000001a",
+            fontFamily: "Pretendard, sans-serif",
+            fontSize: 14,
+            color: "#1e293b",
+            outline: "none",
           }}
-        >
-          <span
-            style={{
-              fontFamily: "Pretendard, sans-serif",
-              fontSize: 14,
-              fontWeight: 400,
-              color: "#94a3b8",
-            }}
-          >
-            메세지를 입력하세요
-          </span>
-        </div>
+        />
         <button
-          className="shrink-0 flex items-center justify-center"
+          onClick={handleSend}
+          disabled={!inputText.trim()}
+          className="flex items-center justify-center shrink-0 cursor-pointer"
           style={{
             width: 40,
             height: 40,
             borderRadius: 20,
-            backgroundColor: "#4f46e5",
+            backgroundColor: inputText.trim() ? "#4f46e5" : "#c7d2fe",
+            border: "none",
+            transition: "background 0.15s",
           }}
         >
           <Send size={16} color="#ffffff" />
         </button>
       </div>
 
-      {/* 6. Home Bar */}
-      <div
-        className="flex items-center justify-center shrink-0"
-        style={{ height: 20, backgroundColor: "#ffffff" }}
-      >
-        <div
-          style={{
-            width: 134,
-            height: 5,
-            borderRadius: 3,
-            backgroundColor: "#000000",
-          }}
-        />
+      {/* 6. Home Indicator */}
+      <div className="flex items-center justify-center shrink-0" style={{ height: 20, backgroundColor: "#ffffff" }}>
+        <div style={{ width: 134, height: 5, borderRadius: 3, backgroundColor: "#000000" }} />
       </div>
     </div>
+  );
+}
+
+export default function PlaceChatPage() {
+  return (
+    <Suspense fallback={null}>
+      <PlaceChatPageContent />
+    </Suspense>
   );
 }

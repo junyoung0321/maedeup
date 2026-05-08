@@ -1,49 +1,63 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bell, User, Search, Calendar, MapPin, Users, Sparkles, MessageCircle } from "lucide-react";
+import {
+  Bell,
+  User,
+  Search,
+  Calendar,
+  MapPin,
+  Users,
+  Sparkles,
+  MessageCircle,
+} from "lucide-react";
 import MobileTabBar from "@/components/ui/MobileTabBar";
+import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
+import type { Room } from "@/types";
 
-const chatRooms = [
-  {
-    name: "졸업 프로젝트 회의",
-    message: "김민준: 다음 주 회의 언제 할까요?",
-    time: "오후 2:30",
-    unread: 3,
-    color: "#818cf8",
-  },
-  {
-    name: "주말 등산 모임",
-    message: "AI: 등산 장소를 추천해드릴게요",
-    time: "어제",
-    unread: 1,
-    color: "#22c55e",
-  },
-  {
-    name: "영어 회화 모임",
-    message: "박지호: 이번 주 주제는 여행이에요",
-    time: "어제",
-    unread: 0,
-    color: "#f59e0b",
-  },
-  {
-    name: "기획 스터디",
-    message: "이서연: 자료 공유합니다",
-    time: "월요일",
-    unread: 0,
-    color: "#f472b6",
-  },
-  {
-    name: "런닝 크루",
-    message: "최수아: 다음 런닝 코스 정했어요!",
-    time: "3/28",
-    unread: 0,
-    color: "#60a5fa",
-  },
-];
+const CATEGORY_COLORS: Record<string, string> = {
+  스터디: "#818cf8",
+  식사: "#fb923c",
+  운동: "#22c55e",
+  여행: "#f472b6",
+  회의: "#60a5fa",
+  기타: "#94a3b8",
+};
+
+function roomColor(category: string | null): string {
+  return CATEGORY_COLORS[category ?? ""] ?? "#818cf8";
+}
+
+function formatRelativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 60) return `${minutes}분 전`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}시간 전`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}일 전`;
+  return new Date(iso).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" });
+}
 
 export default function ChatListPage() {
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      router.push("/m/login");
+      return;
+    }
+    apiFetch<Room[]>("/api/v1/rooms/")
+      .then(setRooms)
+      .catch(() => setRooms([]))
+      .finally(() => setLoading(false));
+  }, [authLoading, user, router]);
 
   return (
     <div
@@ -69,10 +83,22 @@ export default function ChatListPage() {
           alignItems: "center",
         }}
       >
-        <span style={{ fontSize: 20, fontWeight: 700, color: "#ffffff" }}>매듭</span>
+        <span style={{ fontSize: 20, fontWeight: 700, color: "#ffffff" }}>
+          매듭
+        </span>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <Bell size={22} color="#ffffff" style={{ cursor: "pointer" }} onClick={() => router.push("/m/notifications")} />
-          <User size={22} color="#ffffff" style={{ cursor: "pointer" }} onClick={() => router.push("/m/profile")} />
+          <Bell
+            size={22}
+            color="#ffffff"
+            style={{ cursor: "pointer" }}
+            onClick={() => router.push("/m/notifications")}
+          />
+          <User
+            size={22}
+            color="#ffffff"
+            style={{ cursor: "pointer" }}
+            onClick={() => router.push("/m/profile")}
+          />
         </div>
       </div>
 
@@ -120,10 +146,18 @@ export default function ChatListPage() {
               cursor: "pointer",
             }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <Sparkles size={20} color="#ffffff" />
-                <span style={{ fontSize: 16, fontWeight: 700, color: "#ffffff" }}>AI 비서</span>
+                <span style={{ fontSize: 16, fontWeight: 700, color: "#ffffff" }}>
+                  AI 비서
+                </span>
                 <span
                   style={{
                     fontSize: 10,
@@ -159,7 +193,9 @@ export default function ChatListPage() {
                   }}
                 >
                   <chip.icon size={12} color="#ffffff" />
-                  <span style={{ fontSize: 11, color: "#ffffff" }}>{chip.label}</span>
+                  <span style={{ fontSize: 11, color: "#ffffff" }}>
+                    {chip.label}
+                  </span>
                 </div>
               ))}
             </div>
@@ -183,63 +219,104 @@ export default function ChatListPage() {
         </div>
 
         {/* Section Label */}
-        <div style={{ padding: "4px 20px", display: "flex", alignItems: "center" }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "#94a3b8" }}>모임 채팅</span>
+        <div
+          style={{
+            padding: "4px 20px",
+            display: "flex",
+            alignItems: "center",
+          }}
+        >
+          <span style={{ fontSize: 13, fontWeight: 600, color: "#94a3b8" }}>
+            모임 채팅
+          </span>
         </div>
 
         {/* Chat List */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-          {chatRooms.map((room) => (
+          {loading ? (
             <div
-              key={room.name}
-              onClick={() => router.push("/m/chat/schedule")}
               style={{
+                padding: 32,
                 display: "flex",
-                alignItems: "center",
-                gap: 12,
-                padding: "14px 20px",
-                borderBottom: "1px solid #f1f5f9",
-                cursor: "pointer",
+                justifyContent: "center",
               }}
             >
+              <span style={{ fontSize: 14, color: "#94a3b8" }}>
+                불러오는 중…
+              </span>
+            </div>
+          ) : rooms.length === 0 ? (
+            <div
+              style={{
+                padding: 32,
+                display: "flex",
+                justifyContent: "center",
+              }}
+            >
+              <span style={{ fontSize: 14, color: "#94a3b8" }}>
+                참여 중인 모임이 없습니다
+              </span>
+            </div>
+          ) : (
+            rooms.map((room) => (
               <div
+                key={room.id}
+                onClick={() => router.push(`/m/chat/schedule?roomId=${room.id}`)}
                 style={{
-                  width: 48,
-                  height: 48,
-                  borderRadius: "50%",
-                  background: room.color,
-                  flexShrink: 0,
-                }}
-              />
-              <div
-                style={{
-                  flex: 1,
                   display: "flex",
-                  flexDirection: "column",
-                  gap: 4,
-                  minWidth: 0,
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "14px 20px",
+                  borderBottom: "1px solid #f1f5f9",
+                  cursor: "pointer",
                 }}
               >
                 <div
                   style={{
+                    width: 48,
+                    height: 48,
+                    borderRadius: "50%",
+                    background: roomColor(room.category),
+                    flexShrink: 0,
                     display: "flex",
-                    justifyContent: "space-between",
                     alignItems: "center",
+                    justifyContent: "center",
+                    color: "#ffffff",
+                    fontSize: 18,
+                    fontWeight: 700,
                   }}
                 >
-                  <span style={{ fontSize: 15, fontWeight: 600, color: "#1e293b" }}>
-                    {room.name}
-                  </span>
-                  <span style={{ fontSize: 11, color: "#94a3b8" }}>{room.time}</span>
+                  {room.name.charAt(0)}
                 </div>
                 <div
                   style={{
+                    flex: 1,
                     display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 8,
+                    flexDirection: "column",
+                    gap: 4,
+                    minWidth: 0,
                   }}
                 >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 15,
+                        fontWeight: 600,
+                        color: "#1e293b",
+                      }}
+                    >
+                      {room.name}
+                    </span>
+                    <span style={{ fontSize: 11, color: "#94a3b8" }}>
+                      {formatRelativeTime(room.created_at)}
+                    </span>
+                  </div>
                   <span
                     style={{
                       fontSize: 13,
@@ -247,35 +324,14 @@ export default function ChatListPage() {
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
-                      flex: 1,
                     }}
                   >
-                    {room.message}
+                    {room.description ?? room.category ?? "모임"}
                   </span>
-                  {room.unread > 0 && (
-                    <div
-                      style={{
-                        width: 20,
-                        height: 20,
-                        borderRadius: 10,
-                        background: "#4f46e5",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        flexShrink: 0,
-                      }}
-                    >
-                      <span
-                        style={{ fontSize: 10, fontWeight: 600, color: "#ffffff" }}
-                      >
-                        {room.unread}
-                      </span>
-                    </div>
-                  )}
                 </div>
               </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </div>
 

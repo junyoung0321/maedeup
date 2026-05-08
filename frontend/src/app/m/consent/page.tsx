@@ -1,10 +1,46 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bell, User, ShieldCheck, Check, CircleCheck } from "lucide-react";
+import { apiFetch } from "@/lib/api";
+
+function decodeJwt(token: string): { calendar_consent?: boolean; exp: number } {
+  const payload = token.split(".")[1];
+  return JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+}
 
 export default function ConsentPage() {
   const router = useRouter();
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const token = localStorage.getItem("auth_token");
+    if (!token) { router.replace("/m/login"); return; }
+    try {
+      const decoded = decodeJwt(token);
+      if (decoded.calendar_consent) router.replace("/m/explore");
+    } catch {
+      router.replace("/m/login");
+    }
+  }, [router]);
+
+  const handleConsent = async (consent: boolean) => {
+    setLoading(true);
+    if (consent) {
+      try {
+        const data = await apiFetch<{ token: string }>("/api/v1/users/me/consent", {
+          method: "PATCH",
+          body: JSON.stringify({ calendar_consent: true }),
+        });
+        localStorage.setItem("auth_token", data.token);
+      } catch {
+        // 동의 저장 실패해도 진행
+      }
+    }
+    router.replace("/m/explore");
+  };
+
   return (
     <div
       className="flex flex-col overflow-hidden"
@@ -209,8 +245,10 @@ export default function ConsentPage() {
             gap: 8,
             border: "none",
             cursor: "pointer",
+            opacity: loading ? 0.7 : 1,
           }}
-          onClick={() => router.push("/m/explore")}
+          disabled={loading}
+          onClick={() => handleConsent(true)}
         >
           <CircleCheck size={18} color="#ffffff" strokeWidth={2} />
           <span
@@ -220,7 +258,7 @@ export default function ConsentPage() {
               color: "#ffffff",
             }}
           >
-            동의하고 시작하기
+            {loading ? "처리 중…" : "동의하고 시작하기"}
           </span>
         </button>
 
@@ -232,9 +270,10 @@ export default function ConsentPage() {
             backgroundColor: "#ffffff",
             border: "1px solid #e2e8f0",
             height: 44,
-            cursor: "pointer",
+            cursor: loading ? "not-allowed" : "pointer",
           }}
-          onClick={() => router.push("/m/explore")}
+          disabled={loading}
+          onClick={() => handleConsent(false)}
         >
           <span
             style={{

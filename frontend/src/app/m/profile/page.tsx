@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Bell,
@@ -11,9 +12,73 @@ import {
   ChevronRight,
 } from "lucide-react";
 import MobileTabBar from "@/components/ui/MobileTabBar";
+import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
+import type { UserProfile } from "@/types";
+
+interface FriendInfo {
+  id: number;
+  name: string;
+  email: string;
+  picture?: string | null;
+}
 
 export default function ProfilePage() {
   const router = useRouter();
+  const { user, loading: authLoading, logout } = useAuth();
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [friendCount, setFriendCount] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      router.push("/m/login");
+      return;
+    }
+    let active = true;
+    (async () => {
+      try {
+        const [me, friends] = await Promise.all([
+          apiFetch<UserProfile>("/api/v1/users/me"),
+          apiFetch<FriendInfo[]>("/api/v1/users/friends").catch(() => [] as FriendInfo[]),
+        ]);
+        if (!active) return;
+        setProfile(me);
+        setFriendCount(friends.length);
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [authLoading, user, router]);
+
+  if (authLoading || loading) {
+    return (
+      <div
+        style={{
+          width: 390,
+          height: 844,
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          background: "#ffffff",
+          fontFamily: "Pretendard, sans-serif",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <span style={{ fontSize: 14, color: "#94a3b8" }}>불러오는 중…</span>
+      </div>
+    );
+  }
+
+  const displayName = profile?.name ?? user?.name ?? "사용자";
+  const displayEmail = profile?.email ?? user?.email ?? "";
+  const displayPicture = profile?.picture ?? user?.picture ?? null;
+
   return (
     <div
       style={{
@@ -49,8 +114,18 @@ export default function ProfilePage() {
           매듭
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <Bell size={22} color="#ffffff" style={{ cursor: "pointer" }} onClick={() => router.push("/m/notifications")} />
-          <User size={22} color="#ffffff" style={{ cursor: "pointer" }} onClick={() => router.push("/m/profile")} />
+          <Bell
+            size={22}
+            color="#ffffff"
+            style={{ cursor: "pointer" }}
+            onClick={() => router.push("/m/notifications")}
+          />
+          <User
+            size={22}
+            color="#ffffff"
+            style={{ cursor: "pointer" }}
+            onClick={() => router.push("/m/profile")}
+          />
         </div>
       </div>
 
@@ -87,11 +162,33 @@ export default function ProfilePage() {
               height: 72,
               borderRadius: "50%",
               background: "#818cf8",
+              overflow: "hidden",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
             }}
-          />
+          >
+            {displayPicture ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={displayPicture}
+                alt=""
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              />
+            ) : (
+              <User size={32} color="#ffffff" />
+            )}
+          </div>
 
-          {/* Name */}
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+          {/* Name + Email */}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
             <span
               style={{
                 fontFamily: "Pretendard, sans-serif",
@@ -100,7 +197,7 @@ export default function ProfilePage() {
                 color: "#1e293b",
               }}
             >
-              홍길동
+              {displayName}
             </span>
             <span
               style={{
@@ -110,7 +207,7 @@ export default function ProfilePage() {
                 color: "#94a3b8",
               }}
             >
-              hong@gmail.com
+              {displayEmail}
             </span>
           </div>
 
@@ -123,9 +220,12 @@ export default function ProfilePage() {
             }}
           >
             {[
-              { value: "12", label: "참여 모임" },
-              { value: "28", label: "친구" },
-              { value: "45", label: "일정 완료" },
+              { value: "-", label: "참여 모임" },
+              {
+                value: friendCount !== null ? `${friendCount}` : "-",
+                label: "친구",
+              },
+              { value: "-", label: "일정 완료" },
             ].map((stat) => (
               <div
                 key={stat.label}
@@ -213,8 +313,7 @@ export default function ProfilePage() {
                 display: "flex",
                 alignItems: "center",
                 gap: 12,
-                borderBottom:
-                  index < 4 ? "1px solid #f1f5f9" : "none",
+                borderBottom: index < 4 ? "1px solid #f1f5f9" : "none",
                 cursor: "pointer",
               }}
             >
@@ -237,7 +336,7 @@ export default function ProfilePage() {
 
         {/* Logout Button */}
         <button
-          onClick={() => router.push("/m/login")}
+          onClick={logout}
           style={{
             borderRadius: 12,
             background: "#ffffff",

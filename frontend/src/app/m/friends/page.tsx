@@ -1,25 +1,47 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  Bell,
-  User,
-  UserPlus,
-  Search,
-} from "lucide-react";
+import { Bell, User, UserPlus, Search } from "lucide-react";
 import MobileTabBar from "@/components/ui/MobileTabBar";
+import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 
-const friends = [
-  { name: "김민준", avatar: "#818cf8", status: "오늘 저녁 가능", dot: "#22c55e" },
-  { name: "이서연", avatar: "#f472b6", status: "이번 주 바빠요", dot: "#94a3b8" },
-  { name: "박지호", avatar: "#fb923c", status: "언제든 연락주세요", dot: "#22c55e" },
-  { name: "최수아", avatar: "#34d399", status: "주말에 만나요!", dot: "#22c55e" },
-  { name: "정우진", avatar: "#60a5fa", status: "다음 주 시간 있어요", dot: "#94a3b8" },
+interface FriendInfo {
+  id: number;
+  name: string;
+  email: string;
+  picture?: string | null;
+}
+
+const AVATAR_COLORS = [
+  "#818cf8",
+  "#f472b6",
+  "#fb923c",
+  "#34d399",
+  "#60a5fa",
+  "#a78bfa",
+  "#fbbf24",
 ];
-
 
 export default function FriendsPage() {
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
+  const [friends, setFriends] = useState<FriendInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      router.push("/m/login");
+      return;
+    }
+    apiFetch<FriendInfo[]>("/api/v1/users/friends")
+      .then(setFriends)
+      .catch(() => setFriends([]))
+      .finally(() => setLoading(false));
+  }, [authLoading, user, router]);
+
   return (
     <div
       style={{
@@ -55,8 +77,18 @@ export default function FriendsPage() {
           매듭
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <Bell size={22} color="#ffffffcc" style={{ cursor: "pointer" }} onClick={() => router.push("/m/notifications")} />
-          <User size={22} color="#ffffffcc" style={{ cursor: "pointer" }} onClick={() => router.push("/m/profile")} />
+          <Bell
+            size={22}
+            color="#ffffffcc"
+            style={{ cursor: "pointer" }}
+            onClick={() => router.push("/m/notifications")}
+          />
+          <User
+            size={22}
+            color="#ffffffcc"
+            style={{ cursor: "pointer" }}
+            onClick={() => router.push("/m/profile")}
+          />
         </div>
       </div>
 
@@ -145,88 +177,120 @@ export default function FriendsPage() {
         </div>
 
         {/* Friend list */}
-        <div style={{ padding: "8px 20px 0 20px" }}>
-          {friends.map((friend, i) => (
-            <div key={friend.name}>
-              <div
-                style={{
-                  height: 64,
-                  padding: "0 4px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 12,
-                }}
-              >
-                {/* Avatar */}
+        {loading ? (
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <span style={{ fontSize: 14, color: "#94a3b8" }}>
+              불러오는 중…
+            </span>
+          </div>
+        ) : friends.length === 0 ? (
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <span style={{ fontSize: 14, color: "#94a3b8" }}>
+              아직 친구가 없습니다
+            </span>
+          </div>
+        ) : (
+          <div style={{ padding: "8px 20px 0 20px", overflowY: "auto" }}>
+            {friends.map((friend, i) => (
+              <div key={friend.id}>
                 <div
                   style={{
-                    width: 42,
-                    height: 42,
-                    minWidth: 42,
-                    borderRadius: "50%",
-                    background: friend.avatar,
+                    height: 64,
+                    padding: "0 4px",
                     display: "flex",
                     alignItems: "center",
-                    justifyContent: "center",
-                    color: "#ffffff",
-                    fontFamily: "Pretendard, sans-serif",
-                    fontSize: 16,
-                    fontWeight: 600,
+                    gap: 12,
                   }}
                 >
-                  {friend.name.charAt(0)}
-                </div>
-
-                {/* Name + status */}
-                <div
-                  style={{
-                    flex: 1,
-                    display: "flex",
-                    flexDirection: "column",
-                    justifyContent: "center",
-                    gap: 2,
-                  }}
-                >
-                  <span
+                  {/* Avatar */}
+                  <div
                     style={{
-                      fontFamily: "Inter, sans-serif",
-                      fontSize: 15,
+                      width: 42,
+                      height: 42,
+                      minWidth: 42,
+                      borderRadius: "50%",
+                      background: AVATAR_COLORS[i % AVATAR_COLORS.length],
+                      overflow: "hidden",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: "#ffffff",
+                      fontFamily: "Pretendard, sans-serif",
+                      fontSize: 16,
                       fontWeight: 600,
-                      color: "#111827",
                     }}
                   >
-                    {friend.name}
-                  </span>
-                  <span
+                    {friend.picture ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={friend.picture}
+                        alt=""
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                        }}
+                      />
+                    ) : (
+                      friend.name.charAt(0)
+                    )}
+                  </div>
+
+                  {/* Name + email */}
+                  <div
                     style={{
-                      fontFamily: "Inter, sans-serif",
-                      fontSize: 12,
-                      fontWeight: 400,
-                      color: "#94a3b8",
+                      flex: 1,
+                      display: "flex",
+                      flexDirection: "column",
+                      justifyContent: "center",
+                      gap: 2,
                     }}
                   >
-                    {friend.status}
-                  </span>
+                    <span
+                      style={{
+                        fontFamily: "Inter, sans-serif",
+                        fontSize: 15,
+                        fontWeight: 600,
+                        color: "#111827",
+                      }}
+                    >
+                      {friend.name}
+                    </span>
+                    <span
+                      style={{
+                        fontFamily: "Inter, sans-serif",
+                        fontSize: 12,
+                        fontWeight: 400,
+                        color: "#94a3b8",
+                      }}
+                    >
+                      {friend.email}
+                    </span>
+                  </div>
                 </div>
 
-                {/* Online dot */}
-                <div
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: "50%",
-                    background: friend.dot,
-                  }}
-                />
+                {/* Divider */}
+                {i < friends.length - 1 && (
+                  <div style={{ height: 1, background: "#f1f5f9" }} />
+                )}
               </div>
-
-              {/* Divider */}
-              {i < friends.length - 1 && (
-                <div style={{ height: 1, background: "#f1f5f9" }} />
-              )}
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Tab bar */}

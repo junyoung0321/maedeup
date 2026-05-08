@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Bell,
@@ -13,11 +13,35 @@ import {
 import MobileTabBar from "@/components/ui/MobileTabBar";
 import QuickMatchPopup from "@/components/home/QuickMatchPopup";
 import AiPlacePopup from "@/components/home/AiPlacePopup";
+import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
+import type { Room } from "@/types";
+
+const CATEGORY_COLORS: Record<string, string> = {
+  스터디: "#4f46e5",
+  식사: "#fb923c",
+  운동: "#22c55e",
+  여행: "#f472b6",
+  회의: "#60a5fa",
+  기타: "#94a3b8",
+};
 
 export default function ExplorePage() {
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [roomsLoading, setRoomsLoading] = useState(false);
   const [quickMatchOpen, setQuickMatchOpen] = useState(false);
   const [aiPlaceOpen, setAiPlaceOpen] = useState(false);
+
+  useEffect(() => {
+    if (authLoading || !user) return;
+    setRoomsLoading(true);
+    apiFetch<Room[]>("/api/v1/rooms/")
+      .then(setRooms)
+      .catch(() => setRooms([]))
+      .finally(() => setRoomsLoading(false));
+  }, [authLoading, user]);
   return (
     <div
       style={{
@@ -351,123 +375,81 @@ export default function ExplorePage() {
           </div>
 
           {/* Meeting Items */}
-          {[
-            {
-              name: "기획 스터디",
-              chipText: "진행중",
-              chipColor: "#4f46e5",
-              chipBg: "#eef2ff",
-              desc: "매주 화요일 20:00 · 온라인",
-              members: "3 / 6명 참여",
-              dday: "D-3",
-              ddayColor: "#ef4444",
-            },
-            {
-              name: "주말 등산 모임",
-              chipText: "참여예정",
-              chipColor: "#059669",
-              chipBg: "#ecfdf5",
-              desc: "매달 둘째 토요일 · 남한산",
-              members: "5 / 10명 참여",
-              dday: "D-10",
-              ddayColor: "#3b82f6",
-            },
-            {
-              name: "영어 회화 모임",
-              chipText: "모집중",
-              chipColor: "#ea580c",
-              chipBg: "#fff7ed",
-              desc: "매주 수요일 19:00 · 강남",
-              members: "7 / 12명 참여",
-              dday: "D-7",
-              ddayColor: "#ea580c",
-            },
-          ].map((item, i) => (
-            <div
-              key={i}
-              onClick={() => router.push("/m/chat/schedule")}
-              style={{
-                borderRadius: 12,
-                background: "#f9fafb",
-                border: "1px solid #e5e7eb",
-                padding: 12,
-                gap: 8,
-                display: "flex",
-                flexDirection: "column",
-                cursor: "pointer",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <span
+          {roomsLoading ? (
+            <span style={{ fontSize: 13, color: "#94a3b8", padding: "8px 0" }}>
+              불러오는 중…
+            </span>
+          ) : rooms.length === 0 ? (
+            <span style={{ fontSize: 13, color: "#94a3b8", padding: "8px 0" }}>
+              {user ? "참여 중인 모임이 없습니다" : "로그인 후 모임을 확인하세요"}
+            </span>
+          ) : (
+            rooms.slice(0, 3).map((room) => {
+              const color = CATEGORY_COLORS[room.category ?? ""] ?? "#94a3b8";
+              return (
+                <div
+                  key={room.id}
+                  onClick={() => router.push(`/m/chat/schedule?roomId=${room.id}`)}
                   style={{
-                    fontFamily: "Pretendard, sans-serif",
-                    fontSize: 15,
-                    fontWeight: 600,
-                    color: "#111827",
+                    borderRadius: 12,
+                    background: "#f9fafb",
+                    border: "1px solid #e5e7eb",
+                    padding: 12,
+                    gap: 8,
+                    display: "flex",
+                    flexDirection: "column",
+                    cursor: "pointer",
                   }}
                 >
-                  {item.name}
-                </span>
-                <span
-                  style={{
-                    fontFamily: "Pretendard, sans-serif",
-                    fontSize: 11,
-                    fontWeight: 500,
-                    color: item.chipColor,
-                    background: item.chipBg,
-                    borderRadius: 999,
-                    padding: "3px 8px",
-                  }}
-                >
-                  {item.chipText}
-                </span>
-              </div>
-              <span
-                style={{
-                  fontFamily: "Pretendard, sans-serif",
-                  fontSize: 11,
-                  fontWeight: 400,
-                  color: "#6b7280",
-                }}
-              >
-                {item.desc}
-              </span>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <span
-                  style={{
-                    fontFamily: "Pretendard, sans-serif",
-                    fontSize: 11,
-                    fontWeight: 400,
-                    color: "#6b7280",
-                  }}
-                >
-                  {item.members}
-                </span>
-                <span
-                  style={{
-                    fontFamily: "Inter, sans-serif",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    color: item.ddayColor,
-                  }}
-                >
-                  {item.dday}
-                </span>
-              </div>
-            </div>
-          ))}
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontFamily: "Pretendard, sans-serif",
+                        fontSize: 15,
+                        fontWeight: 600,
+                        color: "#111827",
+                      }}
+                    >
+                      {room.name}
+                    </span>
+                    {room.category && (
+                      <span
+                        style={{
+                          fontFamily: "Pretendard, sans-serif",
+                          fontSize: 11,
+                          fontWeight: 500,
+                          color,
+                          background: `${color}20`,
+                          borderRadius: 999,
+                          padding: "3px 8px",
+                        }}
+                      >
+                        {room.category}
+                      </span>
+                    )}
+                  </div>
+                  {room.description && (
+                    <span
+                      style={{
+                        fontFamily: "Pretendard, sans-serif",
+                        fontSize: 11,
+                        fontWeight: 400,
+                        color: "#6b7280",
+                      }}
+                    >
+                      {room.description}
+                    </span>
+                  )}
+                </div>
+              );
+            })
+          )}
 
           {/* Create Button */}
           <button

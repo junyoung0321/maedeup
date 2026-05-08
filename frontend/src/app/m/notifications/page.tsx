@@ -1,55 +1,85 @@
 "use client";
 
+import { Suspense, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Settings, Calendar, Users, Sparkles, Vote } from "lucide-react";
+import { ArrowLeft, Settings, Calendar, Users, Sparkles, Vote, Bell } from "lucide-react";
+import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
+import type { LucideIcon } from "lucide-react";
 
-const notifications = [
-  {
-    section: "오늘",
-    items: [
-      {
-        icon: Calendar,
-        iconBg: "#4f46e5",
-        title: "팀 프로젝트 회의 일정이 확정되었습니다",
-        sub: "4월 10일 (금) 오후 3:00 · 강남역 스터디룸",
-        time: "30분 전",
-        unread: true,
-      },
-      {
-        icon: Users,
-        iconBg: "#22c55e",
-        title: "이서연님이 주말 등산 모임에 참여했습니다",
-        sub: null,
-        time: "2시간 전",
-        unread: true,
-      },
-      {
-        icon: Sparkles,
-        iconBg: "#7c3aed",
-        title: "AI가 졸업 프로젝트 회의 장소를 추천했습니다",
-        sub: "을지로 골목식당 외 2곳",
-        time: "5시간 전",
-        unread: false,
-      },
-    ],
-  },
-  {
-    section: "이번 주",
-    items: [
-      {
-        icon: Vote,
-        iconBg: "#f59e0b",
-        title: "영어 회화 모임 일정 투표가 시작되었습니다",
-        sub: null,
-        time: "어제",
-        unread: false,
-      },
-    ],
-  },
-];
+interface NotificationResponse {
+  id: number;
+  type: string;
+  title: string;
+  body?: string | null;
+  room_id?: number | null;
+  payload?: Record<string, unknown> | null;
+  read_at?: string | null;
+  created_at: string;
+}
 
-export default function NotificationsPage() {
+interface NotificationSection {
+  label: string;
+  items: NotificationResponse[];
+}
+
+function getIconAndColor(type: string): { Icon: LucideIcon; bg: string } {
+  if (type.includes("schedule") || type.includes("meeting")) return { Icon: Calendar, bg: "#4f46e5" };
+  if (type.includes("join") || type.includes("member")) return { Icon: Users, bg: "#22c55e" };
+  if (type.includes("ai") || type.includes("place") || type.includes("recommend")) return { Icon: Sparkles, bg: "#7c3aed" };
+  if (type.includes("vote") || type.includes("finali")) return { Icon: Vote, bg: "#f59e0b" };
+  return { Icon: Bell, bg: "#64748b" };
+}
+
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "방금";
+  if (mins < 60) return `${mins}분 전`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}시간 전`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "어제";
+  if (days < 7) return `${days}일 전`;
+  return new Date(iso).toLocaleDateString("ko-KR", { month: "long", day: "numeric" });
+}
+
+function groupNotifications(items: NotificationResponse[]): NotificationSection[] {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const weekStart = todayStart - 6 * 86400000;
+
+  const today: NotificationResponse[] = [];
+  const thisWeek: NotificationResponse[] = [];
+  const older: NotificationResponse[] = [];
+
+  for (const n of items) {
+    const t = new Date(n.created_at).getTime();
+    if (t >= todayStart) today.push(n);
+    else if (t >= weekStart) thisWeek.push(n);
+    else older.push(n);
+  }
+
+  const sections: NotificationSection[] = [];
+  if (today.length > 0) sections.push({ label: "오늘", items: today });
+  if (thisWeek.length > 0) sections.push({ label: "이번 주", items: thisWeek });
+  if (older.length > 0) sections.push({ label: "이전", items: older });
+  return sections;
+}
+
+function NotificationsPageContent() {
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
+  const [sections, setSections] = useState<NotificationSection[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (authLoading || !user) return;
+    apiFetch<NotificationResponse[]>("/api/v1/notifications")
+      .then((data) => setSections(groupNotifications(data)))
+      .catch(() => null)
+      .finally(() => setLoading(false));
+  }, [authLoading, user]);
 
   return (
     <div
@@ -75,12 +105,7 @@ export default function NotificationsPage() {
           borderBottom: "1px solid #e2e8f0",
         }}
       >
-        <ArrowLeft
-          size={24}
-          color="#1e293b"
-          style={{ cursor: "pointer" }}
-          onClick={() => router.back()}
-        />
+        <ArrowLeft size={24} color="#1e293b" style={{ cursor: "pointer" }} onClick={() => router.back()} />
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center" }}>
           <span style={{ fontSize: 17, fontWeight: 600, color: "#1e293b" }}>알림</span>
         </div>
@@ -88,83 +113,75 @@ export default function NotificationsPage() {
       </div>
 
       {/* Content */}
-      <div
-        style={{
-          flex: 1,
-          background: "#f8fafc",
-          display: "flex",
-          flexDirection: "column",
-          overflowY: "auto",
-        }}
-      >
-        {notifications.map((section) => (
-          <div key={section.section}>
-            {/* Section Label */}
-            <div style={{ padding: "12px 20px" }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: "#94a3b8" }}>
-                {section.section}
-              </span>
-            </div>
-
-            {/* Items */}
-            {section.items.map((item, i) => {
-              const Icon = item.icon;
-              return (
-                <div
-                  key={i}
-                  onClick={() => router.push("/m/meeting/detail")}
-                  style={{
-                    display: "flex",
-                    gap: 12,
-                    padding: "14px 20px",
-                    background: item.unread ? "#eef2ff" : "#ffffff",
-                    borderBottom: "1px solid #f1f5f9",
-                    cursor: "pointer",
-                  }}
-                >
+      <div style={{ flex: 1, background: "#f8fafc", display: "flex", flexDirection: "column", overflowY: "auto" }}>
+        {loading ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", paddingTop: 60 }}>
+            <span style={{ fontSize: 13, color: "#94a3b8" }}>불러오는 중...</span>
+          </div>
+        ) : sections.length === 0 ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", paddingTop: 60 }}>
+            <span style={{ fontSize: 14, color: "#94a3b8" }}>새로운 알림이 없습니다</span>
+          </div>
+        ) : (
+          sections.map((section) => (
+            <div key={section.label}>
+              <div style={{ padding: "12px 20px" }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "#94a3b8" }}>{section.label}</span>
+              </div>
+              {section.items.map((item) => {
+                const { Icon, bg } = getIconAndColor(item.type);
+                const isUnread = !item.read_at;
+                return (
                   <div
+                    key={item.id}
+                    onClick={() => item.room_id ? router.push(`/m/meeting/detail?roomId=${item.room_id}`) : undefined}
                     style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 18,
-                      background: item.iconBg,
                       display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
+                      gap: 12,
+                      padding: "14px 20px",
+                      background: isUnread ? "#eef2ff" : "#ffffff",
+                      borderBottom: "1px solid #f1f5f9",
+                      cursor: item.room_id ? "pointer" : "default",
                     }}
                   >
-                    <Icon size={18} color="#ffffff" />
-                  </div>
-                  <div
-                    style={{
-                      flex: 1,
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 4,
-                    }}
-                  >
-                    <span
+                    <div
                       style={{
-                        fontSize: 14,
-                        fontWeight: item.unread ? 600 : 500,
-                        color: "#1e293b",
-                        lineHeight: 1.4,
+                        width: 36,
+                        height: 36,
+                        borderRadius: 18,
+                        background: bg,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexShrink: 0,
                       }}
                     >
-                      {item.title}
-                    </span>
-                    {item.sub && (
-                      <span style={{ fontSize: 12, color: "#64748b" }}>{item.sub}</span>
-                    )}
-                    <span style={{ fontSize: 11, color: "#94a3b8" }}>{item.time}</span>
+                      <Icon size={18} color="#ffffff" />
+                    </div>
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span style={{ fontSize: 14, fontWeight: isUnread ? 600 : 500, color: "#1e293b", lineHeight: 1.4 }}>
+                        {item.title}
+                      </span>
+                      {item.body && (
+                        <span style={{ fontSize: 12, color: "#64748b" }}>{item.body}</span>
+                      )}
+                      <span style={{ fontSize: 11, color: "#94a3b8" }}>{relativeTime(item.created_at)}</span>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        ))}
+                );
+              })}
+            </div>
+          ))
+        )}
       </div>
     </div>
+  );
+}
+
+export default function NotificationsPage() {
+  return (
+    <Suspense fallback={null}>
+      <NotificationsPageContent />
+    </Suspense>
   );
 }

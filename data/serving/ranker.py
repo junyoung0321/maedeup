@@ -1,11 +1,10 @@
-"""ML 서빙 모듈 — LGBMRanker(model_v2.pkl) 기반 장소 추천
+"""ML 서빙 모듈 — LGBMRanker(model_v2_no_sentiment.pkl) 기반 장소 추천
 
 사용법:
     from serving.ranker import rank
 
     candidates = [
         {
-            "naver_place_id": "123",
             "place_name": "카페베네 홍대점",
             "lat": 37.556,
             "lng": 126.923,
@@ -25,7 +24,7 @@
     }
 
     results = rank(candidates, scenario, top_k=5)
-    # [{"naver_place_id": ..., "place_name": ..., "score": 0.87, "rank": 1}, ...]
+    # [{"place_name": ..., "score": 0.87, "rank": 1}, ...]
 """
 
 import os
@@ -41,7 +40,7 @@ from simulation.simulate import compute_scenario_features
 
 logger = logging.getLogger(__name__)
 
-# 학습에 사용된 feature 순서 (train.py의 FEATURE_COLS와 동일해야 함)
+# 학습에 사용된 feature 순서 (retrain_no_sentiment.py의 FEATURE_COLS와 동일해야 함)
 FEATURE_COLS = [
     # 정량 3개
     "rating_norm", "review_count_log", "blog_count_log",
@@ -53,11 +52,9 @@ FEATURE_COLS = [
     "avg_distance_km", "max_distance_km", "fairness_score",
     # 시나리오 매칭 4개
     "category_match", "mood_match_count", "hour_suitability", "near_station",
-    # 감성 4개
-    "food_sentiment", "mood_sentiment", "svc_sentiment", "price_sentiment",
 ]
 
-# 고정 feature 기본값 (place_features 미등록 장소 fallback)
+# 고정 feature 기본값 (카카오 API 장소 fallback)
 # mood_group/vibe/budget은 FEATURE_COLS 제외지만 compute_scenario_features(mood_match_count)에 필요
 # category_depth1은 FEATURE_COLS 제외지만 compute_scenario_features(category_match, hour_suitability)에 필요
 _FIXED_DEFAULTS = {
@@ -71,15 +68,11 @@ _FIXED_DEFAULTS = {
     "mood_private": 0,
     "category_depth1": 0,
     "category_depth2": -1,
-    "food_sentiment": 0.5,
-    "mood_sentiment": 0.5,
-    "svc_sentiment": 0.5,
-    "price_sentiment": 0.5,
 }
 
 _MODEL_PATH = os.path.join(
     os.path.dirname(__file__),
-    "..", "output", "training", "models", "model_v2.pkl",
+    "..", "output", "training", "models", "model_v2_no_sentiment.pkl",
 )
 _FEATURES_PATH = os.path.join(
     os.path.dirname(__file__),
@@ -113,7 +106,6 @@ def _get_fixed_features(naver_place_id: Optional[str], place_row: Optional[pd.Se
         "rating_norm", "review_count_log", "blog_count_log",
         "mood_quiet", "mood_group", "mood_vibe", "mood_budget", "mood_private",
         "category_depth1", "category_depth2",
-        "food_sentiment", "mood_sentiment", "svc_sentiment", "price_sentiment",
     ]
 
     if place_row is not None:
@@ -276,55 +268,3 @@ def build_scenario_from_state(state: dict) -> dict:
     }
 
 
-@lru_cache(maxsize=1)
-def _load_place_coords() -> tuple:
-    """place_features의 naver_place_id, lat, lng 배열 반환 (좌표 매핑용)."""
-    df = _load_place_features().reset_index()[["naver_place_id", "lat", "lng"]]
-    ids = df["naver_place_id"].values
-    lats = df["lat"].values.astype(float)
-    lngs = df["lng"].values.astype(float)
-    return ids, lats, lngs
-
-
-def find_naver_id_by_coords(
-    lat: float,
-    lng: float,
-    max_dist_km: float = 0.1,
-) -> str | None:
-    """(lat, lng)에서 가장 가까운 place_features 장소의 naver_place_id 반환.
-
-    max_dist_km 이내에 없으면 None 반환.
-    """
-    ids, lats, lngs = _load_place_coords()
-
-    # 간단한 유클리드 근사 (작은 범위에서 충분)
-    dlat = lats - lat
-    dlng = (lngs - lng) * np.cos(np.radians(lat))
-    dist_deg = np.sqrt(dlat**2 + dlng**2)
-    dist_km = dist_deg * 111.0  # 1도 ≈ 111km
-
-    idx = int(np.argmin(dist_km))
-    if dist_km[idx] <= max_dist_km:
-        return str(ids[idx])
-    return None
-
-
-def enrich_candidates_with_naver_id(
-    kakao_places: list[dict],
-    max_dist_km: float = 0.15,
-) -> list[dict]:
-    """Kakao 검색 결과에 naver_place_id를 좌표 기반으로 매핑.
-
-    매핑 성공 시 naver_place_id 필드 추가. 실패 시 그대로 반환 (ML fallback은 기본값 사용).
-    """
-    enriched = []
-    for place in kakao_places:
-        p = dict(place)
-        if p.get("lat") and p.get("lng") and not p.get("naver_place_id"):
-            matched = find_naver_id_by_coords(
-                float(p["lat"]), float(p["lng"]), max_dist_km
-            )
-            if matched:
-                p["naver_place_id"] = matched
-        enriched.append(p)
-    return enriched

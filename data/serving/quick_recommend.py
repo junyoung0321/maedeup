@@ -1,6 +1,6 @@
 """Quick Recommend 파이프라인
 
-폼 입력 → 장소 추천 보고서 (parser → place_features 반경 필터 → ranker.rank() → report)
+폼 입력 → 장소 추천 보고서 (parser → Kakao 실시간 검색 → ranker.rank() → report)
 
 사용법:
     from serving.quick_recommend import quick_recommend
@@ -23,44 +23,32 @@
 from __future__ import annotations
 
 import logging
+import os
+from functools import lru_cache
 
-import numpy as np
+import pandas as pd
 
+from serving.kakao_search import search_places
 from serving.parser import parse_form
-from serving.ranker import _load_place_features, rank
+from serving.ranker import rank
 from serving.report import generate_report
 
 logger = logging.getLogger(__name__)
 
+_IMAGES_PATH = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "output", "features", "place_images.csv")
+)
 
-def _filter_candidates(
-    features_df,
-    center_lat: float,
-    center_lng: float,
-    lat_r: float,
-    lng_r: float,
-    max_candidates: int = 60,
-) -> list[dict]:
-    """place_features DataFrame에서 반경 내 후보 필터링. 부족 시 반경 2배 확장."""
-    mask = (
-        features_df["lat"].between(center_lat - lat_r, center_lat + lat_r)
-        & features_df["lng"].between(center_lng - lng_r, center_lng + lng_r)
-    )
-    nearby = features_df[mask]
 
-    if len(nearby) < 10:
-        mask2 = (
-            features_df["lat"].between(center_lat - lat_r * 2, center_lat + lat_r * 2)
-            & features_df["lng"].between(center_lng - lng_r * 2, center_lng + lng_r * 2)
-        )
-        nearby = features_df[mask2]
-        if len(nearby) > 0:
-            logger.info(f"반경 확장 적용: {len(nearby)}곳")
+@lru_cache(maxsize=1)
+def _load_image_map() -> dict[str, str]:
+    if not os.path.exists(_IMAGES_PATH):
+        logger.warning(f"place_images.csv 없음: {_IMAGES_PATH}")
+        return {}
+    df = pd.read_csv(_IMAGES_PATH, dtype={"naver_place_id": str})
+    df = df[df["image_url"].notna() & (df["image_url"] != "")]
+    return dict(zip(df["naver_place_id"], df["image_url"]))
 
-    if len(nearby) > max_candidates:
-        nearby = nearby.sample(n=max_candidates, random_state=42)
-
-    return nearby.reset_index().to_dict("records")
 
 
 def quick_recommend(
@@ -103,22 +91,25 @@ def quick_recommend(
         f"moods={scenario['moods']}, center=({scenario['center_lat']:.4f},{scenario['center_lng']:.4f})"
     )
 
-    # 2. place_features 반경 필터 → 후보 list[dict]
-    features_df = _load_place_features().reset_index()
+    # 2. Kakao API 실시간 검색 → 후보 list[dict]
     eff_lat = scenario["effective_center_lat"]
     eff_lng = scenario["effective_center_lng"]
+    radius_m = int(radius_km * 1000)
 
-    lat_r = radius_km / 111.0
-    lng_r = radius_km / (111.0 * np.cos(np.radians(eff_lat)))
-
-    candidates = _filter_candidates(features_df, eff_lat, eff_lng, lat_r, lng_r)
+    candidates = search_places(
+        lat=eff_lat,
+        lng=eff_lng,
+        purpose_cat=scenario["purpose_cat"],
+        radius_m=radius_m,
+        max_results=45,
+    )
     logger.info(f"후보 장소: {len(candidates)}곳")
 
     if not candidates:
         return {
             "scenario": _scenario_summary(scenario, headcount),
             "recommendations": [],
-            "meta": {"candidates_found": 0, "ml_model": "model_v2", "error": "no_candidates"},
+            "meta": {"candidates_found": 0, "ml_model": "model_v2_no_sentiment", "error": "no_candidates"},
         }
 
     # 3. LGBMRanker 스코어링
@@ -128,10 +119,16 @@ def quick_recommend(
     # 4. 규칙 기반 보고서 생성
     report = generate_report(ranked, scenario)
 
+    # 5. image_url 조인
+    image_map = _load_image_map()
+    for item in report:
+        pid = str(item.get("naver_place_id", ""))
+        item["image_url"] = image_map.get(pid)
+
     return {
         "scenario": _scenario_summary(scenario, headcount),
         "recommendations": report,
-        "meta": {"candidates_found": len(candidates), "ml_model": "model_v2"},
+        "meta": {"candidates_found": len(candidates), "ml_model": "model_v2_no_sentiment"},
     }
 
 

@@ -190,7 +190,14 @@ function MeetingDonePageContent() {
             <div className="flex flex-col w-full" style={{ gap: 12 }}>
               <button
                 className="flex items-center justify-center w-full"
-                onClick={() => alert("모임 링크가 복사되었습니다!")}
+                onClick={() => {
+                  const roomId = meeting?.room_id;
+                  const link = roomId
+                    ? `${window.location.origin}/m/chat/schedule?roomId=${roomId}`
+                    : window.location.href;
+                  navigator.clipboard?.writeText(link).catch(() => {});
+                  alert("모임 링크가 복사되었습니다!");
+                }}
                 style={{ borderRadius: 12, backgroundColor: "#4f46e5", height: 48, gap: 8, border: "none", cursor: "pointer" }}
               >
                 <Share2 style={{ width: 18, height: 18 }} color="#ffffff" strokeWidth={2} />

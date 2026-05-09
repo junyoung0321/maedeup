@@ -1,18 +1,32 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 
 interface Props {
   open: boolean;
   onClose: () => void;
 }
 
-const friends = [
-  { name: "민지", status: "지금 가능", color: "#818cf8", active: true },
-  { name: "준호", status: "30분 후 가능", color: "#fb923c", active: false },
-  { name: "서연", status: "지금 가능", color: "#34d399", active: true },
-  { name: "현우", status: "1시간 후 가능", color: "#f472b6", active: false },
-];
+interface AvailableFriend {
+  user: { id: number; name: string; email: string; picture?: string | null };
+  state: "free" | "busy_now" | "free_in" | "unknown";
+  available_at?: string | null;
+}
+
+const AVATAR_COLORS = ["#818cf8", "#fb923c", "#34d399", "#f472b6", "#60a5fa", "#a78bfa"];
+
+function stateLabel(f: AvailableFriend): string {
+  if (f.state === "free") return "지금 가능";
+  if (f.state === "free_in" && f.available_at) {
+    const mins = Math.round((new Date(f.available_at).getTime() - Date.now()) / 60000);
+    return mins > 0 ? `${mins}분 후 가능` : "곧 가능";
+  }
+  if (f.state === "busy_now") return "지금 바쁨";
+  return "캘린더 미연동";
+}
 
 const times = [
   { icon: "🕐", label: "오늘 오후 3:00", selected: true },
@@ -21,6 +35,18 @@ const times = [
 
 export default function QuickMatchPopup({ open, onClose }: Props) {
   const router = useRouter();
+  const [friends, setFriends] = useState<AvailableFriend[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    apiFetch<{ friends: AvailableFriend[] }>("/api/v1/recommendations/available-friends?window_minutes=120")
+      .then((data) => setFriends(data.friends.slice(0, 4)))
+      .catch(() => setFriends([]))
+      .finally(() => setLoading(false));
+  }, [open]);
+
   if (!open) return null;
 
   return (
@@ -78,59 +104,83 @@ export default function QuickMatchPopup({ open, onClose }: Props) {
         {/* Friends */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingTop: 20 }}>
           <span style={{ fontSize: 15, fontWeight: 600, color: "#1e293b" }}>지금 가능한 친구</span>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            {friends.map((f) => (
-              <div
-                key={f.name}
-                style={{
-                  width: 76,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                <div style={{ position: "relative" }}>
+          {loading ? (
+            <div style={{ display: "flex", justifyContent: "center", padding: "16px 0" }}>
+              <Loader2 size={24} color="#4f46e5" className="animate-spin" />
+            </div>
+          ) : friends.length === 0 ? (
+            <span style={{ fontSize: 13, color: "#94a3b8", textAlign: "center", padding: "12px 0" }}>
+              친구 가용성 정보를 불러올 수 없습니다
+            </span>
+          ) : (
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              {friends.map((f, i) => {
+                const active = f.state === "free";
+                return (
                   <div
+                    key={f.user.id}
                     style={{
-                      width: 48,
-                      height: 48,
-                      borderRadius: "50%",
-                      background: f.color,
-                      border: f.active ? "2.5px solid #4f46e5" : "none",
+                      width: 76,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: 6,
                     }}
-                  />
-                  {f.active && (
-                    <div
+                  >
+                    <div style={{ position: "relative" }}>
+                      <div
+                        style={{
+                          width: 48,
+                          height: 48,
+                          borderRadius: "50%",
+                          background: AVATAR_COLORS[i % AVATAR_COLORS.length],
+                          border: active ? "2.5px solid #4f46e5" : "none",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          color: "#fff",
+                          fontSize: 18,
+                          fontWeight: 600,
+                        }}
+                      >
+                        {f.user.name.charAt(0)}
+                      </div>
+                      {active && (
+                        <div
+                          style={{
+                            position: "absolute",
+                            top: 0,
+                            right: -6,
+                            width: 16,
+                            height: 16,
+                            borderRadius: "50%",
+                            background: "#4f46e5",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <span style={{ fontSize: 9, fontWeight: 700, color: "#fff" }}>✓</span>
+                        </div>
+                      )}
+                    </div>
+                    <span style={{ fontSize: 13, fontWeight: 500, color: "#1e293b" }}>
+                      {f.user.name}
+                    </span>
+                    <span
                       style={{
-                        position: "absolute",
-                        top: 0,
-                        right: -6,
-                        width: 16,
-                        height: 16,
-                        borderRadius: "50%",
-                        background: "#4f46e5",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
+                        fontSize: 11,
+                        color: active ? "#4f46e5" : "#64748b",
+                        textAlign: "center",
                       }}
                     >
-                      <span style={{ fontSize: 9, fontWeight: 700, color: "#fff" }}>✓</span>
-                    </div>
-                  )}
-                </div>
-                <span style={{ fontSize: 13, fontWeight: 500, color: "#1e293b" }}>{f.name}</span>
-                <span
-                  style={{
-                    fontSize: 11,
-                    color: f.active ? "#4f46e5" : "#64748b",
-                  }}
-                >
-                  {f.status}
-                </span>
-              </div>
-            ))}
-          </div>
+                      {stateLabel(f)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Times */}
@@ -167,8 +217,8 @@ export default function QuickMatchPopup({ open, onClose }: Props) {
           </div>
         </div>
 
-        {/* Spacer + CTA */}
         <div style={{ flex: 1 }} />
+
         <button
           onClick={() => {
             onClose();

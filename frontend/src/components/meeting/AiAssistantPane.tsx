@@ -81,6 +81,29 @@ export default function AiAssistantPane() {
     [cardsByMeetingId],
   );
 
+  // F-6: 카드 도착 시각 추적 (WS 수신 또는 복구 시점)
+  const cardReceivedAtRef = useRef<Record<number, number>>({});
+  useEffect(() => {
+    const now = Date.now();
+    for (const card of activeCards) {
+      if (!(card.meeting_id in cardReceivedAtRef.current)) {
+        cardReceivedAtRef.current[card.meeting_id] = now;
+      }
+    }
+  }, [activeCards]);
+
+  // F-6: 메시지 + 카드 시간순 통합 타임라인
+  const timeline = useMemo(() => {
+    type MsgItem = { kind: "msg"; data: typeof messages[0]; ts: number };
+    type CardItem = { kind: "card"; data: CardPayload; ts: number };
+    const items: (MsgItem | CardItem)[] = [
+      ...messages.map((m) => ({ kind: "msg" as const, data: m, ts: new Date(m.created_at).getTime() })),
+      ...activeCards.map((c) => ({ kind: "card" as const, data: c, ts: cardReceivedAtRef.current[c.meeting_id] ?? Date.now() })),
+    ];
+    items.sort((a, b) => a.ts - b.ts);
+    return items;
+  }, [messages, activeCards]);
+
   // F-5 v2 + F-9: maedeup_card 발행 시 phase 자동 timeConfirmed 전환 (TimeBar individual
   // confirm 버튼 자동 비활성) + selected_place 있으면 confirmedPlaceId set (PlaceDetailPane
   // 확정 버튼 비활성).
@@ -109,12 +132,11 @@ export default function AiAssistantPane() {
     [activeCards],
   );
 
-  const activePlaceRecommendation = useMemo(
-    () =>
-      [...activeCards].reverse().find((card) => card.type === "place_recommendation")
-        ?.payload ?? null,
+  const activePlaceRecommendationCard = useMemo(
+    () => [...activeCards].reverse().find((card) => card.type === "place_recommendation") ?? null,
     [activeCards],
   );
+  const activePlaceRecommendation = activePlaceRecommendationCard?.payload ?? null;
 
   const [autoTriggerBanner, setAutoTriggerBanner] = useState<string | null>(null);
 
@@ -159,8 +181,8 @@ export default function AiAssistantPane() {
   }, [voteUpdate, setVoteUpdateCtx]);
 
   useEffect(() => {
-    setPlaceRecommendationCtx?.(activePlaceRecommendation);
-  }, [activePlaceRecommendation, setPlaceRecommendationCtx]);
+    setPlaceRecommendationCtx?.(activePlaceRecommendation, activePlaceRecommendationCard?.meeting_id ?? null);
+  }, [activePlaceRecommendation, activePlaceRecommendationCard, setPlaceRecommendationCtx]);
 
   // Register sendMessage callback so CalendarPane can send messages to AI
   useEffect(() => {
@@ -497,152 +519,153 @@ export default function AiAssistantPane() {
           </div>
         )}
 
-        {activeCards.map((card: CardPayload) => {
-          if (card.type === "vote_card") {
+        {timeline.map((item, index) => {
+          if (item.kind === "card") {
+            const card = item.data;
+            if (card.type === "vote_card") {
+              return (
+                <ScheduleRecommendationCard
+                  key={`card-${card.type}-${card.meeting_id}`}
+                  voteCard={card.payload}
+                  onMeetingResolved={removeCardByMeetingId}
+                />
+              );
+            }
+
+            if (card.type === "place_recommendation") {
+              return (
+                <PlaceRecommendationCard
+                  key={`card-${card.type}-${card.meeting_id}`}
+                  placeRecommendation={card.payload}
+                  meetingId={card.meeting_id}
+                  roomId={roomId}
+                  onPlaceClick={(place) => {
+                    setSelectedPlace?.(place);
+                    setContextMode?.("place");
+                  }}
+                />
+              );
+            }
+
+            const maedeupCard = card.payload;
+            const partialCard = maedeupCard as NonNullable<typeof maedeupCard> & {
+              place_pending?: boolean;
+              place_pending_message?: string;
+              calendar_registered?: boolean;
+              time?: string | { label?: string } | null;
+            };
+            const isPlacePending = partialCard.place_pending === true;
+            const displayTime = maedeupCard.selected_time;
+            const displayPlace = maedeupCard.selected_place;
+            const displayPlaceName =
+              "name" in displayPlace && typeof displayPlace.name === "string"
+                ? displayPlace.name
+                : null;
+            const displayPlaceAddress =
+              "address" in displayPlace && typeof displayPlace.address === "string"
+                ? displayPlace.address
+                : "";
+            const title = maedeupCard.title ?? `${maedeupCard.meeting_type ?? "모임"} 매듭 카드`;
+            const timeLabel =
+              displayTime?.label ??
+              (typeof partialCard.time === "string" ? partialCard.time : partialCard.time?.label);
+
             return (
-              <ScheduleRecommendationCard
-                key={`${card.type}-${card.meeting_id}`}
-                voteCard={card.payload}
-                onMeetingResolved={removeCardByMeetingId}
-              />
-            );
-          }
-
-          if (card.type === "place_recommendation") {
-            return (
-              <PlaceRecommendationCard
-                key={`${card.type}-${card.meeting_id}`}
-                placeRecommendation={card.payload}
-                meetingId={card.meeting_id}
-                roomId={roomId}
-                onPlaceClick={(place) => {
-                  // 장소명 클릭 → 캘린더 패널(InfoPane)에 PlaceDetailPane 표시
-                  setSelectedPlace?.(place);
-                  setContextMode?.("place");
-                }}
-              />
-            );
-          }
-
-          const maedeupCard = card.payload;
-          const partialCard = maedeupCard as NonNullable<typeof maedeupCard> & {
-            place_pending?: boolean;
-            place_pending_message?: string;
-            calendar_registered?: boolean;
-            time?: string | { label?: string } | null;
-          };
-          const isPlacePending = partialCard.place_pending === true;
-          const displayTime = maedeupCard.selected_time;
-          const displayPlace = maedeupCard.selected_place;
-          const displayPlaceName =
-            "name" in displayPlace && typeof displayPlace.name === "string"
-              ? displayPlace.name
-              : null;
-          const displayPlaceAddress =
-            "address" in displayPlace && typeof displayPlace.address === "string"
-              ? displayPlace.address
-              : "";
-          const title = maedeupCard.title ?? `${maedeupCard.meeting_type ?? "모임"} 매듭 카드`;
-          const timeLabel =
-            displayTime?.label ??
-            (typeof partialCard.time === "string" ? partialCard.time : partialCard.time?.label);
-
-          return (
-            <div
-              key={`${card.type}-${card.meeting_id}`}
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 16,
-                padding: 20,
-                borderRadius: 20,
-                background: "linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)",
-                color: "#ffffff",
-                fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                boxShadow: "0 10px 24px rgba(79, 70, 229, 0.22)",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <CheckCircle2 style={{ width: 24, height: 24, color: "#ffffff" }} />
-                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  <span style={{ fontSize: fs(12, 10.5), fontWeight: 700, color: "rgba(255,255,255,0.82)" }}>
-                    최종 확정
-                  </span>
-                  <span style={{ fontSize: fs(21, 15), fontWeight: 700, color: "#ffffff" }}>
-                    {title}
-                  </span>
-                </div>
-              </div>
               <div
+                key={`card-${card.type}-${card.meeting_id}`}
                 style={{
-                  display: "grid",
-                  gap: 10,
-                  padding: 16,
-                  borderRadius: 16,
-                  background: "rgba(255,255,255,0.14)",
-                  border: "1px solid rgba(255,255,255,0.18)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 16,
+                  padding: 20,
+                  borderRadius: 20,
+                  background: "linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)",
+                  color: "#ffffff",
+                  fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                  boxShadow: "0 10px 24px rgba(79, 70, 229, 0.22)",
                 }}
               >
-                <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
-                  {maedeupCard.meeting_type} · {maedeupCard.date_hint}
-                </span>
-                <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
-                  참석 인원 {maedeupCard.headcount ?? "-"}명
-                </span>
-                {timeLabel && (
-                  <span style={{ fontSize: 15, lineHeight: 1.5 }}>
-                    시간 {timeLabel}
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <CheckCircle2 style={{ width: 24, height: 24, color: "#ffffff" }} />
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontSize: fs(12, 10.5), fontWeight: 700, color: "rgba(255,255,255,0.82)" }}>
+                      최종 확정
+                    </span>
+                    <span style={{ fontSize: fs(21, 15), fontWeight: 700, color: "#ffffff" }}>
+                      {title}
+                    </span>
+                  </div>
+                </div>
+                <div
+                  style={{
+                    display: "grid",
+                    gap: 10,
+                    padding: 16,
+                    borderRadius: 16,
+                    background: "rgba(255,255,255,0.14)",
+                    border: "1px solid rgba(255,255,255,0.18)",
+                  }}
+                >
+                  <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
+                    {maedeupCard.meeting_type} · {maedeupCard.date_hint}
                   </span>
-                )}
-                {isPlacePending ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setPlaceInputMeetingId(card.meeting_id)}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        width: "100%",
-                        minHeight: 42,
-                        padding: "9px 12px",
-                        borderRadius: 12,
-                        border: "1px solid rgba(255,255,255,0.28)",
-                        background: "rgba(255,255,255,0.16)",
-                        color: "#ffffff",
-                        fontSize: fs(15, 12),
-                        fontWeight: 700,
-                        lineHeight: 1.4,
-                        textAlign: "left",
-                        cursor: "pointer",
-                        fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                      }}
-                    >
-                      <Search size={16} style={{ flexShrink: 0 }} />
-                      <span style={{ overflowWrap: "anywhere" }}>
-                        {partialCard.place_pending_message ?? "장소를 정해주세요"}
+                  <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
+                    참석 인원 {maedeupCard.headcount ?? "-"}명
+                  </span>
+                  {timeLabel && (
+                    <span style={{ fontSize: 15, lineHeight: 1.5 }}>
+                      시간 {timeLabel}
+                    </span>
+                  )}
+                  {isPlacePending ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setPlaceInputMeetingId(card.meeting_id)}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          width: "100%",
+                          minHeight: 42,
+                          padding: "9px 12px",
+                          borderRadius: 12,
+                          border: "1px solid rgba(255,255,255,0.28)",
+                          background: "rgba(255,255,255,0.16)",
+                          color: "#ffffff",
+                          fontSize: fs(15, 12),
+                          fontWeight: 700,
+                          lineHeight: 1.4,
+                          textAlign: "left",
+                          cursor: "pointer",
+                          fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                        }}
+                      >
+                        <Search size={16} style={{ flexShrink: 0 }} />
+                        <span style={{ overflowWrap: "anywhere" }}>
+                          {partialCard.place_pending_message ?? "장소를 정해주세요"}
+                        </span>
+                      </button>
+                      <span style={{ fontSize: fs(14, 12), lineHeight: 1.5, color: "rgba(255,255,255,0.84)" }}>
+                        캘린더 추후 등록
                       </span>
-                    </button>
-                    <span style={{ fontSize: fs(14, 12), lineHeight: 1.5, color: "rgba(255,255,255,0.84)" }}>
-                      캘린더 추후 등록
-                    </span>
-                  </>
-                ) : displayPlaceName && (
-                  <>
-                    <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
-                      장소 {displayPlaceName}
-                    </span>
-                    <span style={{ fontSize: fs(14, 12), lineHeight: 1.5, color: "rgba(255,255,255,0.84)" }}>
-                      {displayPlaceAddress}
-                    </span>
-                  </>
-                )}
+                    </>
+                  ) : displayPlaceName && (
+                    <>
+                      <span style={{ fontSize: fs(15, 12), lineHeight: 1.5 }}>
+                        장소 {displayPlaceName}
+                      </span>
+                      <span style={{ fontSize: fs(14, 12), lineHeight: 1.5, color: "rgba(255,255,255,0.84)" }}>
+                        {displayPlaceAddress}
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          }
 
-        {messages.map((msg, index) => {
+          const msg = item.data;
           const isMe = msg.role === "user";
           const rawSender = isMe ? (msg.sender ?? user?.name ?? "나") : (msg.sender ?? "AI 어시스턴트");
           const senderLabel = rawSender === "LangGraph" ? "매듭 AI" : rawSender;
@@ -652,7 +675,6 @@ export default function AiAssistantPane() {
           const isPrivate = visibility === "private";
           const isSharedByUser = visibility === "shared" && msg.shared_by_user_id != null;
           const isSharedByMe = isSharedByUser && msg.shared_by_user_id === currentUserId;
-          // Share button visibility: only on MY private AI responses
           const canShare =
             !isMe &&
             isPrivate &&
@@ -663,12 +685,11 @@ export default function AiAssistantPane() {
           const isSharing = sharingId === msg.id;
           const hasShareError = shareError?.id === msg.id;
 
-          // Accent rail color — different hues so "내가 공유" vs "OO님 공유" is distinguishable at a glance
           const accentColor = isSharedByMe ? "#10b981" : isSharedByUser ? "#f59e0b" : null;
 
           return (
             <div
-              key={msg.id ?? index}
+              key={`msg-${msg.id ?? index}`}
               style={{
                 display: "flex",
                 flexDirection: isMe ? "row-reverse" : "row",
@@ -731,7 +752,7 @@ export default function AiAssistantPane() {
                   style={{
                     padding: "10px 16px",
                     borderRadius: 16,
-                    // Triple-code for shared-by-user: accent rail via left border (docs §2.3)
+                    // docs §2.3 — accent rail via left border for shared messages
                     ...(accentColor
                       ? { borderLeft: `3px solid ${accentColor}` }
                       : {}),

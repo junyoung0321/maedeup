@@ -22,16 +22,18 @@ export default function AuthCallbackPage() {
 
     localStorage.setItem("auth_token", token);
 
+    const isMobile = localStorage.getItem("mobile_flow") === "true";
+    localStorage.removeItem("mobile_flow");
+
     try {
       const decoded = decodeJwt(token);
-      // 이미 캘린더 동의를 한 유저는 동의 화면 스킵
       if (decoded.calendar_consent) {
-        router.replace("/");
+        router.replace(isMobile ? "/m/" : "/");
       } else {
-        router.replace("/consent");
+        router.replace(isMobile ? "/m/consent" : "/consent");
       }
     } catch {
-      router.replace("/");
+      router.replace(isMobile ? "/m/" : "/");
     }
   }, [router]);
 

@@ -26,21 +26,60 @@ const CATEGORY_COLORS: Record<string, string> = {
   기타: "#94a3b8",
 };
 
+interface MeetingListItem {
+  id: number;
+  room_id: number;
+  title: string;
+  scheduled_at: string;
+  end_at?: string | null;
+  location_name?: string | null;
+}
+
+function formatUpcomingDate(iso: string) {
+  const d = new Date(iso);
+  const days = ["일", "월", "화", "수", "목", "금", "토"];
+  const month = d.getMonth() + 1;
+  const day = d.getDate();
+  const dow = days[d.getDay()];
+  const h = d.getHours();
+  const m = d.getMinutes();
+  const period = h < 12 ? "오전" : "오후";
+  const hh = h % 12 || 12;
+  return `${month}월 ${day}일 (${dow}) ${period} ${hh}:${String(m).padStart(2, "0")}`;
+}
+
+function calcDDay(iso: string): string {
+  const target = new Date(iso);
+  const now = new Date();
+  const diffDays = Math.ceil((target.setHours(0, 0, 0, 0) - now.setHours(0, 0, 0, 0)) / 86400000);
+  if (diffDays === 0) return "D-DAY";
+  if (diffDays > 0) return `D-${diffDays}`;
+  return `D+${Math.abs(diffDays)}`;
+}
+
 export default function ExplorePage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [roomsLoading, setRoomsLoading] = useState(false);
+  const [upcomingMeeting, setUpcomingMeeting] = useState<MeetingListItem | null>(null);
   const [quickMatchOpen, setQuickMatchOpen] = useState(false);
   const [aiPlaceOpen, setAiPlaceOpen] = useState(false);
 
   useEffect(() => {
     if (authLoading || !user) return;
     setRoomsLoading(true);
-    apiFetch<Room[]>("/api/v1/rooms/")
-      .then(setRooms)
-      .catch(() => setRooms([]))
-      .finally(() => setRoomsLoading(false));
+    Promise.all([
+      apiFetch<Room[]>("/api/v1/rooms/").catch(() => [] as Room[]),
+      apiFetch<MeetingListItem[]>("/api/v1/meetings/").catch(() => [] as MeetingListItem[]),
+    ]).then(([roomsData, meetingsData]) => {
+      setRooms(roomsData);
+      const now = new Date();
+      const next = meetingsData
+        .filter((m) => new Date(m.scheduled_at) >= now)
+        .sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime())[0] ?? null;
+      setUpcomingMeeting(next);
+    }).finally(() => setRoomsLoading(false));
   }, [authLoading, user]);
   return (
     <div
@@ -207,7 +246,7 @@ export default function ExplorePage() {
 
         {/* B) Upcoming Card */}
         <div
-          onClick={() => router.push("/m/chat/schedule")}
+          onClick={() => upcomingMeeting && router.push(`/m/chat/schedule?roomId=${upcomingMeeting.room_id}`)}
           style={{
             borderRadius: 16,
             background: "#ffffff",
@@ -216,7 +255,7 @@ export default function ExplorePage() {
             gap: 12,
             display: "flex",
             flexDirection: "column",
-            cursor: "pointer",
+            cursor: upcomingMeeting ? "pointer" : "default",
           }}
         >
           <span
@@ -229,106 +268,78 @@ export default function ExplorePage() {
           >
             가장 임박한 모임
           </span>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
+          {upcomingMeeting ? (
             <div
               style={{
                 display: "flex",
-                flexDirection: "column",
-                gap: 4,
-              }}
-            >
-              <span
-                style={{
-                  fontFamily: "Pretendard, sans-serif",
-                  fontSize: 16,
-                  fontWeight: 700,
-                  color: "#1e293b",
-                }}
-              >
-                팀 프로젝트 회의
-              </span>
-              <span
-                style={{
-                  fontFamily: "Pretendard, sans-serif",
-                  fontSize: 12,
-                  fontWeight: 400,
-                  color: "#64748b",
-                }}
-              >
-                4월 6일 (일) 오후 3:00
-              </span>
-            </div>
-            <div
-              style={{
-                borderRadius: 20,
-                background: "#4f46e5",
-                padding: "6px 12px",
-              }}
-            >
-              <span
-                style={{
-                  fontFamily: "Pretendard, sans-serif",
-                  fontSize: 12,
-                  fontWeight: 700,
-                  color: "#ffffff",
-                }}
-              >
-                D-2
-              </span>
-            </div>
-          </div>
-          {/* Avatar row */}
-          <div style={{ display: "flex", alignItems: "center" }}>
-            {[
-              { bg: "#818cf8" },
-              { bg: "#f472b6" },
-              { bg: "#fb923c" },
-            ].map((avatar, i) => (
-              <div
-                key={i}
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: "50%",
-                  background: avatar.bg,
-                  border: "2px solid #ffffff",
-                  marginLeft: i === 0 ? 0 : -8,
-                  zIndex: 3 - i,
-                }}
-              />
-            ))}
-            <div
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: "50%",
-                background: "#e2e8f0",
-                border: "2px solid #ffffff",
-                marginLeft: -8,
-                display: "flex",
+                justifyContent: "space-between",
                 alignItems: "center",
-                justifyContent: "center",
-                zIndex: 0,
               }}
             >
-              <span
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span
+                  style={{
+                    fontFamily: "Pretendard, sans-serif",
+                    fontSize: 16,
+                    fontWeight: 700,
+                    color: "#1e293b",
+                  }}
+                >
+                  {upcomingMeeting.title}
+                </span>
+                <span
+                  style={{
+                    fontFamily: "Pretendard, sans-serif",
+                    fontSize: 12,
+                    fontWeight: 400,
+                    color: "#64748b",
+                  }}
+                >
+                  {formatUpcomingDate(upcomingMeeting.scheduled_at)}
+                </span>
+                {upcomingMeeting.location_name && (
+                  <span
+                    style={{
+                      fontFamily: "Pretendard, sans-serif",
+                      fontSize: 11,
+                      fontWeight: 400,
+                      color: "#94a3b8",
+                    }}
+                  >
+                    {upcomingMeeting.location_name}
+                  </span>
+                )}
+              </div>
+              <div
                 style={{
-                  fontFamily: "Pretendard, sans-serif",
-                  fontSize: 10,
-                  fontWeight: 600,
-                  color: "#64748b",
+                  borderRadius: 20,
+                  background: "#4f46e5",
+                  padding: "6px 12px",
                 }}
               >
-                +2
-              </span>
+                <span
+                  style={{
+                    fontFamily: "Pretendard, sans-serif",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: "#ffffff",
+                  }}
+                >
+                  {calcDDay(upcomingMeeting.scheduled_at)}
+                </span>
+              </div>
             </div>
-          </div>
+          ) : (
+            <span
+              style={{
+                fontFamily: "Pretendard, sans-serif",
+                fontSize: 13,
+                color: "#94a3b8",
+              }}
+            >
+              예정된 모임이 없습니다
+            </span>
+          )}
         </div>
 
         {/* C) Joined Meetings Section */}

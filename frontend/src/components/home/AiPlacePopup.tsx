@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { MapPin, Star, Sparkles } from "lucide-react";
+import { useEffect, useState } from "react";
+import { MapPin, Sparkles, Loader2 } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 
 interface Props {
   open: boolean;
@@ -9,42 +10,50 @@ interface Props {
 }
 
 const categories = [
-  { label: "카페", icon: "☕", active: true },
-  { label: "식당", icon: "🍽️", active: false },
-  { label: "술집", icon: "🍺", active: false },
-  { label: "활동", icon: "🎯", active: false },
+  { label: "카페", icon: "☕" },
+  { label: "식당", icon: "🍽️" },
+  { label: "술집", icon: "🍺" },
+  { label: "활동", icon: "🎯" },
 ];
 
-const places = [
-  {
-    name: "숲속 카페",
-    badge: "AI 추천",
-    detail: "강남역 3번출구 도보 5분 · 조용한 분위기",
-    rating: "4.7",
-    reviews: "리뷰 234개",
-    highlight: true,
-  },
-  {
-    name: "블루보틀 강남점",
-    badge: null,
-    detail: "강남역 1번출구 도보 3분 · 넓은 좌석",
-    rating: "4.5",
-    reviews: "리뷰 189개",
-    highlight: false,
-  },
-  {
-    name: "토즈 스터디센터",
-    badge: null,
-    detail: "강남역 5번출구 도보 7분 · 프라이빗룸",
-    rating: "4.3",
-    reviews: "리뷰 156개",
-    highlight: false,
-  },
-];
+interface Place {
+  id: string;
+  name: string;
+  address: string;
+  distance_label?: string | null;
+  category: string;
+  url: string;
+}
+
+interface NearbyPlacesResponse {
+  home_base?: string | null;
+  category: string;
+  places: Place[];
+  reason?: string | null;
+}
 
 export default function AiPlacePopup({ open, onClose }: Props) {
   const [selectedCat, setSelectedCat] = useState(0);
+  const [data, setData] = useState<NearbyPlacesResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const cat = categories[selectedCat].label;
+    setLoading(true);
+    apiFetch<NearbyPlacesResponse>(
+      `/api/v1/recommendations/nearby-places?category=${encodeURIComponent(cat)}&limit=3`
+    )
+      .then(setData)
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [open, selectedCat]);
+
   if (!open) return null;
+
+  const places = data?.places ?? [];
+  const homeBase = data?.home_base;
+  const reason = data?.reason;
 
   return (
     <div
@@ -139,63 +148,87 @@ export default function AiPlacePopup({ open, onClose }: Props) {
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontSize: 15, fontWeight: 600, color: "#1e293b" }}>추천 장소</span>
-            <span style={{ fontSize: 12, fontWeight: 500, color: "#0ea5e9" }}>강남역 근처</span>
+            {homeBase && (
+              <span style={{ fontSize: 12, fontWeight: 500, color: "#0ea5e9" }}>
+                {homeBase} 근처
+              </span>
+            )}
           </div>
 
-          {places.map((p) => (
-            <div
-              key={p.name}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 14,
-                padding: 14,
-                borderRadius: 14,
-                background: p.highlight ? "#f0fdf4" : "#ffffff",
-                border: p.highlight ? "1px solid #bbf7d0" : "1px solid #e2e8f0",
-                cursor: "pointer",
-              }}
-            >
+          {loading ? (
+            <div style={{ display: "flex", justifyContent: "center", padding: "24px 0" }}>
+              <Loader2 size={24} color="#0ea5e9" className="animate-spin" />
+            </div>
+          ) : reason ? (
+            <div style={{ padding: "16px 0", textAlign: "center" }}>
+              <span style={{ fontSize: 13, color: "#94a3b8" }}>{reason}</span>
+            </div>
+          ) : places.length === 0 ? (
+            <div style={{ padding: "16px 0", textAlign: "center" }}>
+              <span style={{ fontSize: 13, color: "#94a3b8" }}>추천 장소를 찾을 수 없습니다</span>
+            </div>
+          ) : (
+            places.map((p, idx) => (
               <div
+                key={p.id}
+                onClick={() => p.url && window.open(p.url, "_blank")}
                 style={{
-                  width: 56,
-                  height: 56,
-                  borderRadius: 12,
-                  background: "#e2e8f0",
-                  flexShrink: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 14,
+                  padding: 14,
+                  borderRadius: 14,
+                  background: idx === 0 ? "#f0fdf4" : "#ffffff",
+                  border: idx === 0 ? "1px solid #bbf7d0" : "1px solid #e2e8f0",
+                  cursor: p.url ? "pointer" : "default",
                 }}
-              />
-              <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontSize: 14, fontWeight: 600, color: "#1e293b" }}>{p.name}</span>
-                  {p.badge && (
-                    <span
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 600,
-                        color: "#16a34a",
-                        background: "#dcfce7",
-                        borderRadius: 10,
-                        padding: "0 8px",
-                        height: 20,
-                        display: "flex",
-                        alignItems: "center",
-                      }}
-                    >
-                      {p.badge}
-                    </span>
-                  )}
+              >
+                <div
+                  style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 12,
+                    background: "#e2e8f0",
+                    flexShrink: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 24,
+                  }}
+                >
+                  {categories[selectedCat].icon}
                 </div>
-                <span style={{ fontSize: 11, color: "#64748b" }}>{p.detail}</span>
-                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <Star size={12} color="#f59e0b" fill="#f59e0b" />
-                  <span style={{ fontSize: 11, color: "#94a3b8" }}>
-                    {p.rating} · {p.reviews}
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: "#1e293b" }}>
+                      {p.name}
+                    </span>
+                    {idx === 0 && (
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 600,
+                          color: "#16a34a",
+                          background: "#dcfce7",
+                          borderRadius: 10,
+                          padding: "0 8px",
+                          height: 20,
+                          display: "flex",
+                          alignItems: "center",
+                        }}
+                      >
+                        AI 추천
+                      </span>
+                    )}
+                  </div>
+                  <span style={{ fontSize: 11, color: "#64748b" }}>
+                    {p.address}
+                    {p.distance_label ? ` · 도보 ${p.distance_label}` : ""}
                   </span>
                 </div>
               </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
 
         {/* Button */}
@@ -220,7 +253,7 @@ export default function AiPlacePopup({ open, onClose }: Props) {
             }}
           >
             <Sparkles size={18} color="#ffffff" />
-            장소 추천받기
+            확인
           </button>
         </div>
       </div>

@@ -124,3 +124,38 @@ export interface UpcomingMeetingData {
 // ─── Context Mode ───
 export type ContextMode = "schedule" | "place" | "done" | "agent";
 export type AiTriggerIntent = "meeting_schedule" | "place_suggestion" | "general";
+
+// ─── Finalization ───
+export interface ProposalPayload {
+  proposal_id: string;
+  version: number;
+  status: string;
+  proposed_slot: Record<string, unknown>;
+  alternate_slot: Record<string, unknown> | null;
+  reason: string;
+  host_user_id: number;
+  total_eligible_voters: number;
+  like_count: number;
+  other_count: number;
+  votes: Record<string, string>;
+  my_vote: "like" | "other" | null;
+}
+
+// ─── Nearby Places ───
+export interface NearbyPlace {
+  id: string;
+  name: string;
+  address: string;
+  distance_label?: string | null;
+  category: string;
+  url: string;
+  x: string;
+  y: string;
+}
+
+export interface NearbyPlacesResponse {
+  home_base: string | null;
+  category: string;
+  places: NearbyPlace[];
+  reason?: string | null;
+}

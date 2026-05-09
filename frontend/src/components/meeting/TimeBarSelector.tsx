@@ -260,6 +260,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
   }, [aggregateAvailability, preferredTimeRange]);
 
   // F-7: 계산된 추천 범위를 MeetingContext에 publish — MiniTimeBar 등 다른 위치 SoT 단일화.
+  // loading 중에는 null publish 금지 → MiniTimeBar 한 프레임 fallback 깜박임 방지.
   useEffect(() => {
     if (!setAiRecommendedTimeRange) return;
     if (recommendedRange) {
@@ -268,10 +269,10 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
         start: recommendedRange.start,
         end: recommendedRange.end,
       });
-    } else {
+    } else if (!loading) {
       setAiRecommendedTimeRange(null);
     }
-  }, [recommendedRange, date, setAiRecommendedTimeRange]);
+  }, [recommendedRange, date, loading, setAiRecommendedTimeRange]);
 
   const handleSlotClick = useCallback((slotIndex: number) => {
     if (selectionStart === null) {

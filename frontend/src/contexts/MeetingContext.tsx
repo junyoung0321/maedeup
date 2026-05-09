@@ -93,7 +93,7 @@ interface MeetingContextValue extends MeetingState {
   // Coordination actions
   setVoteCard: (card: VoteCardPayload | null) => void;
   setVoteUpdate: (update: VoteUpdatePayload | null) => void;
-  setPlaceRecommendation: (rec: PlaceRecommendationPayload | null) => void;
+  setPlaceRecommendation: (rec: PlaceRecommendationPayload | null, meetingId?: number | null) => void;
   requestTimeChange: (slot: VoteCardTimeOption, meetingId: number) => void;
   resetCoordination: () => void;
   // InfoPane phase actions
@@ -359,13 +359,13 @@ export function MeetingProvider({
     setState((prev) => ({ ...prev, voteUpdate: update }));
   }, []);
 
-  const setPlaceRecommendation = useCallback((rec: PlaceRecommendationPayload | null) => {
+  const setPlaceRecommendation = useCallback((rec: PlaceRecommendationPayload | null, meetingId?: number | null) => {
     setState((prev) => {
-      // If in phased flow and waiting for place recommendation, auto-transition
-      if (rec && prev.infoPanePhase === "timeConfirmed") {
-        return { ...prev, placeRecommendation: rec };
-      }
-      return { ...prev, placeRecommendation: rec };
+      const meetingIdUpdate =
+        meetingId != null && prev.confirmedMeetingId == null
+          ? { confirmedMeetingId: meetingId }
+          : {};
+      return { ...prev, placeRecommendation: rec, ...meetingIdUpdate };
     });
   }, []);
 

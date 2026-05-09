@@ -28,6 +28,7 @@ export default function FriendsPage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const [friends, setFriends] = useState<FriendInfo[]>([]);
+  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -41,6 +42,14 @@ export default function FriendsPage() {
       .catch(() => setFriends([]))
       .finally(() => setLoading(false));
   }, [authLoading, user, router]);
+
+  const filtered = query.trim()
+    ? friends.filter(
+        (f) =>
+          f.name.toLowerCase().includes(query.toLowerCase()) ||
+          f.email.toLowerCase().includes(query.toLowerCase())
+      )
+    : friends;
 
   return (
     <div
@@ -164,16 +173,21 @@ export default function FriendsPage() {
           }}
         >
           <Search size={16} color="#94a3b8" />
-          <span
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="이름으로 검색"
             style={{
+              flex: 1,
+              border: "none",
+              outline: "none",
+              background: "transparent",
               fontFamily: "Pretendard, sans-serif",
               fontSize: 13,
               fontWeight: 400,
-              color: "#94a3b8",
+              color: "#1e293b",
             }}
-          >
-            이름으로 검색
-          </span>
+          />
         </div>
 
         {/* Friend list */}
@@ -190,7 +204,7 @@ export default function FriendsPage() {
               불러오는 중…
             </span>
           </div>
-        ) : friends.length === 0 ? (
+        ) : filtered.length === 0 ? (
           <div
             style={{
               flex: 1,
@@ -200,12 +214,12 @@ export default function FriendsPage() {
             }}
           >
             <span style={{ fontSize: 14, color: "#94a3b8" }}>
-              아직 친구가 없습니다
+              {friends.length === 0 ? "아직 친구가 없습니다" : "검색 결과가 없습니다"}
             </span>
           </div>
         ) : (
           <div style={{ padding: "8px 20px 0 20px", overflowY: "auto" }}>
-            {friends.map((friend, i) => (
+            {filtered.map((friend, i) => (
               <div key={friend.id}>
                 <div
                   style={{
@@ -284,7 +298,7 @@ export default function FriendsPage() {
                 </div>
 
                 {/* Divider */}
-                {i < friends.length - 1 && (
+                {i < filtered.length - 1 && (
                   <div style={{ height: 1, background: "#f1f5f9" }} />
                 )}
               </div>

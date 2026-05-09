@@ -41,6 +41,7 @@ export default function MeetingNewPage() {
   const [friends, setFriends] = useState<FriendInfo[]>([]);
   const [checkedPeople, setCheckedPeople] = useState<Record<string, boolean>>({});
   const [creating, setCreating] = useState(false);
+  const [inviteQuery, setInviteQuery] = useState("");
 
   useEffect(() => {
     if (authLoading) return;
@@ -58,6 +59,14 @@ export default function MeetingNewPage() {
 
   const togglePerson = (email: string) =>
     setCheckedPeople((prev) => ({ ...prev, [email]: !prev[email] }));
+
+  const filteredFriends = inviteQuery.trim()
+    ? friends.filter(
+        (f) =>
+          f.name.toLowerCase().includes(inviteQuery.toLowerCase()) ||
+          f.email.toLowerCase().includes(inviteQuery.toLowerCase())
+      )
+    : friends;
 
   const decrement = () => setCount((c) => Math.max(2, c - 1));
   const increment = () => setCount((c) => Math.min(50, c + 1));
@@ -223,19 +232,31 @@ export default function MeetingNewPage() {
             }}
           >
             <Search size={16} color="#94a3b8" />
-            <span style={{ fontSize: 13, fontWeight: 400, color: "#94a3b8" }}>
-              이름 또는 이메일로 검색
-            </span>
+            <input
+              value={inviteQuery}
+              onChange={(e) => setInviteQuery(e.target.value)}
+              placeholder="이름 또는 이메일로 검색"
+              style={{
+                flex: 1,
+                border: "none",
+                outline: "none",
+                background: "transparent",
+                fontFamily: "Pretendard, sans-serif",
+                fontSize: 13,
+                fontWeight: 400,
+                color: "#1e293b",
+              }}
+            />
           </div>
 
           {/* People list */}
           <div className="flex flex-col">
-            {friends.length === 0 ? (
+            {filteredFriends.length === 0 ? (
               <span style={{ fontSize: 13, color: "#94a3b8", padding: "8px 0" }}>
-                친구 목록이 없습니다
+                {friends.length === 0 ? "친구 목록이 없습니다" : "검색 결과가 없습니다"}
               </span>
             ) : (
-              friends.map((friend, i) => {
+              filteredFriends.map((friend, i) => {
                 const isChecked = !!checkedPeople[friend.email];
                 return (
                   <div

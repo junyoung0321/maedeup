@@ -23,11 +23,20 @@ interface FriendInfo {
   picture?: string | null;
 }
 
+interface MeetingListItem {
+  id: number;
+  room_id: number;
+  title: string;
+  scheduled_at: string;
+}
+
 export default function ProfilePage() {
   const router = useRouter();
   const { user, loading: authLoading, logout } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [friendCount, setFriendCount] = useState<number | null>(null);
+  const [roomCount, setRoomCount] = useState<number | null>(null);
+  const [completedCount, setCompletedCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -39,13 +48,18 @@ export default function ProfilePage() {
     let active = true;
     (async () => {
       try {
-        const [me, friends] = await Promise.all([
+        const [me, friends, rooms, meetings] = await Promise.all([
           apiFetch<UserProfile>("/api/v1/users/me"),
           apiFetch<FriendInfo[]>("/api/v1/users/friends").catch(() => [] as FriendInfo[]),
+          apiFetch<{ id: number }[]>("/api/v1/rooms/").catch(() => [] as { id: number }[]),
+          apiFetch<MeetingListItem[]>("/api/v1/meetings/").catch(() => [] as MeetingListItem[]),
         ]);
         if (!active) return;
         setProfile(me);
         setFriendCount(friends.length);
+        setRoomCount(rooms.length);
+        const now = new Date();
+        setCompletedCount(meetings.filter((m) => new Date(m.scheduled_at) < now).length);
       } finally {
         if (active) setLoading(false);
       }
@@ -220,12 +234,9 @@ export default function ProfilePage() {
             }}
           >
             {[
-              { value: "-", label: "참여 모임" },
-              {
-                value: friendCount !== null ? `${friendCount}` : "-",
-                label: "친구",
-              },
-              { value: "-", label: "일정 완료" },
+              { value: roomCount !== null ? `${roomCount}` : "-", label: "참여 모임" },
+              { value: friendCount !== null ? `${friendCount}` : "-", label: "친구" },
+              { value: completedCount !== null ? `${completedCount}` : "-", label: "일정 완료" },
             ].map((stat) => (
               <div
                 key={stat.label}

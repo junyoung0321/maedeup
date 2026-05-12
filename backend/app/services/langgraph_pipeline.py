@@ -19,6 +19,13 @@ from app.db.session import AsyncSessionLocal
 
 import holidays
 
+try:
+    from app.services.ml_recommend import ml_place_search as _ml_place_search
+    _ML_AVAILABLE = True
+except Exception as _ml_import_err:
+    _ml_place_search = None  # type: ignore[assignment]
+    _ML_AVAILABLE = False
+
 import redis.asyncio as aioredis
 from sqlalchemy import func as sa_func
 
@@ -4200,14 +4207,31 @@ async def place_recommendation(state: GraphState) -> GraphState:
             or _build_group_constraints_summary(member_constraints)
         )
 
-        if place_results:
+        _ml_ranked = False
+        headcount = state.get("headcount") or 0
+        meeting_type = state.get("meeting_type") or "모임"
+
+        if _ML_AVAILABLE and state.get("place_hint"):
+            try:
+                ml_results = await _ml_place_search(
+                    location=state.get("place_hint"),
+                    meeting_type=meeting_type,
+                    headcount=headcount,
+                    top_k=5,
+                )
+                if ml_results:
+                    ranked_places = ml_results
+                    _ml_ranked = True
+                    logger.info("[ML] ml_place_search 성공: %d개", len(ml_results))
+            except Exception as _ml_err:
+                logger.warning("[ML] ml_place_search 실패, Gemini fallback: %s", _ml_err)
+
+        if not _ml_ranked and place_results:
             # 시연 latency 최적화 (2026-05-08): top 10 → top 5.
             # 측정상 place_recommendation 노드가 ~40s 단일 병목, prompt + output 토큰 절반 줄임.
             # frontend는 어차피 top 5만 노출 (line 아래 ranked_places[:5]).
             # Kakao API 응답이 이미 relevance/distance 정렬이라 top 5도 양질.
             top_candidates = place_results[:5]
-            headcount = state.get("headcount") or 0
-            meeting_type = state.get("meeting_type") or "모임"
 
             # --- OPTIMIZATION: Skip Gemini scoring for small result sets (<=3) ---
             if len(top_candidates) <= 3:
@@ -4321,7 +4345,7 @@ async def place_recommendation(state: GraphState) -> GraphState:
                         place_copy = dict(place)
                         place_copy["score"] = 0.5
                         ranked_places.append(place_copy)
-        else:
+        elif not _ml_ranked:
             ranked_places = []
 
         # --- OPTIMIZATION: Skip self-correction Gemini call when no disliked foods ---

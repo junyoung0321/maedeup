@@ -136,7 +136,7 @@ function ScheduleChatPageContent() {
             );
           }
 
-          const isMe = msg.user_id != null && msg.user_id === user?.id;
+          const isMe = msg.user_id != null && msg.user_id === Number(user?.sub);
           const senderName = msg.sender ?? "?";
           const initial = senderName.charAt(0).toUpperCase();
 

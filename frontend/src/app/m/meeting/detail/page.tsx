@@ -256,7 +256,11 @@ function MeetingDetailPageContent() {
           채팅방 입장
         </button>
         <button
-          onClick={() => { if (confirm("모임에서 나가시겠습니까?")) router.push("/m/explore"); }}
+          onClick={async () => {
+            if (!confirm("모임에서 나가시겠습니까?")) return;
+            try { await apiFetch(`/api/v1/rooms/${roomId}/leave`, { method: "POST" }); } catch { /* ignore */ }
+            router.push("/m/explore");
+          }}
           style={{
             width: 48,
             height: 48,

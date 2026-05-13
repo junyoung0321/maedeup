@@ -71,7 +71,7 @@ function PlaceRecommendPageContent() {
             {room?.category ?? "모임"}
           </span>
         </div>
-        <Menu size={24} color="#64748b" className="shrink-0 cursor-pointer" onClick={() => router.push("/m/meeting/detail")} />
+        <Menu size={24} color="#64748b" className="shrink-0 cursor-pointer" onClick={() => router.push(`/m/meeting/detail?roomId=${roomId}`)} />
       </div>
 
       {/* 2. Tabs */}

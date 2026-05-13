@@ -1,27 +1,35 @@
-"""한국 지명 + cuisine 키워드 + 패턴 매칭 헬퍼.
+"""한국 지명 + cuisine 키워드 + 패턴 매칭 + Kakao 검색 헬퍼.
 
 원본 위치: langgraph_pipeline.py 라인 436~456 (_resolve_place_hint),
   959~1066 (_WELL_KNOWN_PLACES, _KOREAN_PLACE_PATTERN, _CUISINE_TRIGGERS,
   _CUISINE_CATEGORY_KEYWORDS, _PLACE_INTENT_PATTERN, _OTHER_ENTITY_SIGNAL_PATTERN,
   _REJECT_SIGNAL_PATTERN, _detect_cuisine_type, _filter_places_by_cuisine,
   _extract_korean_place_keyword), 1239~1248 (_resolve_place_coord),
-  2320~2326 (_contains_disliked_keyword).
+  2320~2326 (_contains_disliked_keyword), 2363~2439 (search_place).
 
-Phase 2 분할 (2026-05-13). 로직 변경 없음 — 순수 이동.
+Phase 2 + 4.2 분할 (2026-05-13). 로직 변경 없음 — 순수 이동.
+
+조정 메모 (v2 §3.17 대비):
+  - search_place는 v2 계획서에서 nodes/place.py 배정이었으나,
+    function_calling 노드와 place_recommendation 노드 양쪽에서 호출되어
+    helpers/places.py로 이동 (노드 간 import 회피).
 
 의존:
-  - kakao_maps.search_address (좌표 lookup)
+  - kakao_maps.search_address, search_keyword
   - state.GraphState (TYPE_CHECKING only — runtime import 회피 위해)
 """
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, TYPE_CHECKING
 
-from app.services.kakao_maps import search_address
+from app.services.kakao_maps import search_address, search_keyword
 
 if TYPE_CHECKING:
     from app.services.pipeline.state import GraphState
+
+logger = logging.getLogger(__name__)
 
 
 # 한국 지명 추출을 위한 잘 알려진 지역명
@@ -175,3 +183,82 @@ def _contains_disliked_keyword(category: str, disliked_foods: list[str]) -> str 
         if normalized_keyword and normalized_keyword in normalized_category:
             return str(keyword).strip()
     return None
+
+
+async def search_place(state: GraphState) -> list[dict[str, Any]]:
+    """카카오맵 API로 장소 후보를 검색합니다."""
+    place_hint = _resolve_place_hint(state)
+    meeting_type = state.get("meeting_type") or ""
+    # place_suggestion intent에서 meeting_type이 없으면 기본 "맛집" 추가
+    if not meeting_type and state.get("intent") == "place_suggestion":
+        meeting_type = "맛집"
+
+    # 해결점 A5-3: cuisine 의도 식별. meeting_type 우선, 없으면 trigger/latest user msg에서.
+    cuisine = meeting_type if meeting_type in _CUISINE_CATEGORY_KEYWORDS else None
+    if not cuisine:
+        latest_user_msg = (state.get("trigger_message_text") or "").strip()
+        if not latest_user_msg:
+            for msg in reversed(state.get("message_records") or []):
+                if msg.get("role") == "user" and msg.get("content"):
+                    latest_user_msg = str(msg["content"])
+                    break
+        cuisine = _detect_cuisine_type(latest_user_msg)
+
+    # query 강제: cuisine이 있으면 cuisine 단어를 query에 명시.
+    if cuisine:
+        query = f"{place_hint} {cuisine}".strip()
+    else:
+        query = f"{place_hint} {meeting_type}".strip()
+
+    place_coord = state.get("place_coord") or {}
+    documents = await search_keyword(
+        query,
+        x=place_coord.get("x"),
+        y=place_coord.get("y"),
+        radius=2000 if place_coord.get("x") and place_coord.get("y") else None,
+    )
+
+    results = []
+    for doc in documents:
+        distance_m = int(doc.get("distance") or 0)
+        # 거리 기반 기본 점수: 500m 이내 1.0, 2km이면 0.5, 5km+ 이면 0.2
+        if distance_m <= 0:
+            distance_score = 0.7  # 거리 정보 없음
+        elif distance_m <= 500:
+            distance_score = 1.0
+        elif distance_m <= 2000:
+            distance_score = max(0.5, 1.0 - (distance_m - 500) / 3000)
+        else:
+            distance_score = max(0.2, 0.5 - (distance_m - 2000) / 10000)
+
+        results.append({
+            "place_id": doc.get("id", ""),
+            "name": doc.get("place_name", ""),
+            "address": doc.get("road_address_name") or doc.get("address_name", ""),
+            "phone": doc.get("phone", ""),
+            "url": doc.get("place_url", ""),
+            "x": doc.get("x", ""),
+            "y": doc.get("y", ""),
+            "category": doc.get("category_name", ""),
+            "distance_m": distance_m,
+            "max_headcount": 20,  # 카카오 API는 수용인원 미제공 → 기본값
+            "score": round(distance_score, 2),
+        })
+    # 거리 가까운 순으로 정렬 (Gemini 스코어링에서 재정렬됨)
+    results.sort(key=lambda p: p["distance_m"] if p["distance_m"] > 0 else 99999)
+
+    # 해결점 A5-3 후처리: cuisine 카테고리로 필터. 0개면 원본 fallback (UX 빈 카드 방지).
+    if cuisine and results:
+        filtered = _filter_places_by_cuisine(results, cuisine)
+        if filtered:
+            logger.info(
+                "[KAKAO] cuisine filter %s: %d → %d",
+                cuisine, len(results), len(filtered),
+            )
+            return filtered
+        logger.info(
+            "[KAKAO] cuisine filter %s yielded 0, using unfiltered (%d)",
+            cuisine, len(results),
+        )
+
+    return results

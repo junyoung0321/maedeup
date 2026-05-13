@@ -27,12 +27,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from datetime import date as _date
 
 import websockets
 from playwright.async_api import Page, async_playwright
@@ -42,20 +44,21 @@ WS = "ws://localhost:8000"
 CDP = "http://localhost:9222"
 ROOM_NAME = "동아리 종강 회식"
 
-# 시나리오 박힌 거부 날짜 → 다음주 자동확장 후보.
-# 시연일 2026-05-13 기준 미래 날짜로 갱신 (이전 5/8·5/9·5/10은 과거가 됨).
-# - 거부 5/15(금)·5/16(토)·5/17(일) → 다음주 5/18(월) 18:00 (전원 가능)
-# slot 단위는 hour (act3-verify.py 패턴, 30분 인덱스 아님)
-TIMEBAR_DATE = "2026-05-18"
+# 시나리오 박힌 거부 날짜 → 이번주 평일 모두 거부 → 다음주 자동확장.
+# 시연일 2026-05-13(수) 기준: 이번주 평일 = 5/13(수)·5/14(목)·5/15(금).
+# 셋 다 거부하면 5/16~17 주말 제외 → 다음주 5/18(월)부터. 호스트 GCal busy 패턴
+# 에 따라 backend가 5/18·19·20·21·22도 빼고 5/25(공휴일)을 첫 추천으로 잡음.
+# TIMEBAR_DATE는 fallback 값 — ACT 3 진입 직전에 추천 카드 텍스트에서 동적 파싱.
+TIMEBAR_DATE = "2026-05-25"
 TIMEBAR_SLOT_START = 18
 TIMEBAR_SLOT_END = 19
 
-# ACT 2 거부 메시지 (시연일 기준 미래 거부 — 자연어 거부 → 다음주 자동확장)
+# ACT 2 거부 메시지 (이번주 평일 거부 → 다음주 자동확장이 자연스럽게 트리거)
 ACT2_MESSAGES = [
     ("host", "다들 시험 끝나고 한번 보자!"),
-    ("수현", "5월 15일 금요일은 동아리 MT라 안 돼"),
-    ("민수", "16일은 본가 내려가야 해서 패스"),
-    ("예린", "17일 일요일은 좀 쉬고 싶다… 다음주 어때?"),
+    ("수현", "5월 13일 수요일은 동아리 MT라 안 돼"),
+    ("민수", "14일은 본가 내려가야 해서 패스"),
+    ("예린", "15일 금요일은 시험 보강 잡혀서 안 될 것 같아… 다음주 어때?"),
 ]
 
 PACE_FAST = {
@@ -173,26 +176,20 @@ async def send_time_selection(room_id: int, token: str, date: str, start: int, e
 async def host_consensus_listener(
     room_id: int,
     token: str,
-    date: str,
-    start: int,
-    end: int,
     ready_evt: asyncio.Event,
 ) -> dict | None:
-    """호스트 토큰으로 WS 연결 후 time_selection 보내고 schedule_consensus_ready 수신."""
+    """호스트 토큰으로 WS 연결 후 schedule_consensus_ready 수신만 (송신 X).
+    호스트 자신의 time_selection은 chromium UI (TimeBar slot 클릭 + 확인 버튼)로
+    프론트엔드가 발송 — 시연 시각화 살리는 절충안.
+    """
     uri = f"{WS}/ws/social/{room_id}?token={token}"
     async with websockets.connect(uri) as ws:
         try:
             await asyncio.wait_for(ws.recv(), timeout=0.4)
         except asyncio.TimeoutError:
             pass
-        await ws.send(json.dumps({
-            "type": "time_selection",
-            "date": date,
-            "start": start,
-            "end": end,
-        }))
         ready_evt.set()
-        deadline = time.time() + 20.0
+        deadline = time.time() + 30.0
         while time.time() < deadline:
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=1.0)
@@ -455,49 +452,215 @@ async def run_demo(args: argparse.Namespace) -> None:
             else:
                 log("⚠️  카드 없어서 확정 불가, 다음 단계로")
         else:
-            # ─────────────────────────────────────────────────
-            hr(f"ACT 3 — TimeBar 4명 시간 합의 ({TIMEBAR_DATE} 18:00-19:00)")
-            # ─────────────────────────────────────────────────
-            log("4명 동시 time_selection → schedule_consensus_ready 대기")
+            # ACT 2 추천 카드 텍스트에서 날짜 동적 파싱 — ACT 3 합의를 추천 결과와 일치시킴.
+            # 카드 예: "5월 25일 (월) 부처님오신날 대체 휴일 오후 6:00 (전원 가능)로 확정"
+            timebar_date = TIMEBAR_DATE
+            if appeared and cards:
+                m = re.search(r"(\d{1,2})월\s*(\d{1,2})일", cards[0])
+                if m:
+                    mm, dd = int(m.group(1)), int(m.group(2))
+                    today = _date.today()
+                    yr = today.year + (1 if mm < today.month else 0)
+                    timebar_date = f"{yr:04d}-{mm:02d}-{dd:02d}"
+                    log(f"  → ACT 3 TimeBar 날짜를 추천 카드와 동기화: {timebar_date}")
 
+            # ─────────────────────────────────────────────────
+            hr(f"ACT 3 — 추천 카드 '시간대 변경' → TimeBar 입력 ({timebar_date} 18:00-19:00)")
+            # ─────────────────────────────────────────────────
+            await page.screenshot(path=f".rehearsal-shots/{int(time.time())}-act3-0-before.png")
+
+            # 1. 호스트 chromium: 추천 카드의 "시간대 변경" 버튼 클릭
+            log("호스트 chromium: 추천 카드 [시간대 변경] 클릭 → TimeBar 노출")
+            change_clicked = await click_button_by_text(page, "시간대 변경", contains=False)
+            if not change_clicked:
+                log("  ⚠️  [시간대 변경] 버튼 못 찾음")
+            await asyncio.sleep(pace["between_steps"])
+            await page.screenshot(path=f".rehearsal-shots/{int(time.time())}-act3-1-after-change.png")
+
+            # 2. host listener (송신 없음, 수신만)
             ready = asyncio.Event()
             host_task = asyncio.create_task(host_consensus_listener(
-                room_id, host_token, TIMEBAR_DATE, TIMEBAR_SLOT_START, TIMEBAR_SLOT_END, ready,
+                room_id, host_token, ready,
             ))
+            await ready.wait()
+            await asyncio.sleep(0.3)
 
-            async def fire_guests() -> None:
-                await ready.wait()
-                await asyncio.sleep(0.3)
-                await asyncio.gather(
-                    send_time_selection(room_id, suhyun.token, TIMEBAR_DATE, TIMEBAR_SLOT_START, TIMEBAR_SLOT_END),
-                    send_time_selection(room_id, minsu.token, TIMEBAR_DATE, TIMEBAR_SLOT_START, TIMEBAR_SLOT_END),
-                    send_time_selection(room_id, yerin.token, TIMEBAR_DATE, TIMEBAR_SLOT_START, TIMEBAR_SLOT_END),
-                )
+            # 3. 호스트 chromium: TimeBar slot 클릭 (start, end) + 확정 버튼
+            gridId = f"timebar-{timebar_date.replace('-', '')}"
+            log(f"호스트 chromium: TimeBar slot {TIMEBAR_SLOT_START} 클릭 (start, 18:00)")
+            ok_start = await js_eval(
+                page,
+                f"""
+                (() => {{
+                  const cell = document.getElementById('{gridId}-mine-{TIMEBAR_SLOT_START}');
+                  if (!cell) return false;
+                  cell.click();
+                  return true;
+                }})()
+                """,
+            )
+            if not ok_start:
+                log(f"  ⚠️  TimeBar slot {TIMEBAR_SLOT_START} 못 찾음 (gridId={gridId})")
+            await asyncio.sleep(0.6)
+            await page.screenshot(path=f".rehearsal-shots/{int(time.time())}-act3-2-slot-start.png")
 
-            guests_task = asyncio.create_task(fire_guests())
+            log(f"호스트 chromium: TimeBar slot {TIMEBAR_SLOT_END} 클릭 (end)")
+            ok_end = await js_eval(
+                page,
+                f"""
+                (() => {{
+                  const cell = document.getElementById('{gridId}-mine-{TIMEBAR_SLOT_END}');
+                  if (!cell) return false;
+                  cell.click();
+                  return true;
+                }})()
+                """,
+            )
+            if not ok_end:
+                log(f"  ⚠️  TimeBar slot {TIMEBAR_SLOT_END} 못 찾음")
+            await asyncio.sleep(0.8)
+            await page.screenshot(path=f".rehearsal-shots/{int(time.time())}-act3-3-slot-end.png")
+
+            log("호스트 chromium: TimeBar '확정' 버튼 클릭 → frontend WS time_selection 발송")
+            # TimeBar confirm 버튼 텍스트는 보통 '확정' 또는 '이 시간으로 확정'.
+            # disabled 상태 회피를 위해 광범위 매칭.
+            confirm_clicked = await js_eval(
+                page,
+                """
+                (() => {
+                  const btns = Array.from(document.querySelectorAll('button')).filter(b => {
+                    if (!b.offsetParent || b.disabled) return false;
+                    const t = (b.innerText || '').trim();
+                    return t.includes('확정') && !t.includes('추천') && !t.includes('일정으로') && !t.includes('이 장소') && !t.includes('로 확정');
+                  });
+                  if (!btns.length) return null;
+                  const target = btns[0];
+                  target.click();
+                  return target.innerText.trim();
+                })()
+                """,
+            )
+            if confirm_clicked:
+                log(f"  ✓ 클릭: {confirm_clicked}")
+            else:
+                log("  ⚠️  TimeBar 확정 버튼 못 찾음 — WS fallback 송신")
+                await send_time_selection(room_id, host_token, timebar_date, TIMEBAR_SLOT_START, TIMEBAR_SLOT_END)
+            await asyncio.sleep(1.0)
+            await page.screenshot(path=f".rehearsal-shots/{int(time.time())}-act3-4-tb-confirmed.png")
+
+            # 4. 게스트 3명 WS time_selection
+            log("게스트 3명 WS time_selection 발송")
+            await asyncio.gather(
+                send_time_selection(room_id, suhyun.token, timebar_date, TIMEBAR_SLOT_START, TIMEBAR_SLOT_END),
+                send_time_selection(room_id, minsu.token, timebar_date, TIMEBAR_SLOT_START, TIMEBAR_SLOT_END),
+                send_time_selection(room_id, yerin.token, timebar_date, TIMEBAR_SLOT_START, TIMEBAR_SLOT_END),
+            )
+
             consensus = await host_task
-            await guests_task
 
             if consensus and consensus.get("snapshot_hash"):
                 log(f"  ✓ consensus_ready snapshot={(consensus['snapshot_hash'] or '')[:12]}…")
             else:
                 log("  ⚠️  consensus_ready 없음 — UI 버튼 polling으로 진행")
 
-            # 호스트 UI 버튼 클릭 (HTTP /schedule-confirm은 snapshot race로 outdated 위험).
-            # 시연 흐름과 동일하게 chromium에서 [✅ 추천 시간 그대로 확정] 버튼 누름.
-            log("호스트 UI [✅ 추천 시간 그대로 확정] 버튼 대기...")
-            confirm_btn_seen = await wait_for_button(
-                page, "추천 시간 그대로 확정", timeout_s=15.0, poll=0.5,
-            )
-            if confirm_btn_seen:
+            # 호스트 UI 최종 확정 — TimeBar 확정 후 화면 아래 박스의
+            # [✅ 추천 시간 그대로 확정] 버튼이 활성화됨. 추천 카드 자체의
+            # "...로 확정" (ACT 2 단일 버튼)은 매칭에서 제외.
+            log("호스트 UI [✅ 추천 시간 그대로 확정] 버튼 대기 (최대 25s)...")
+            final_seen = False
+            deadline = asyncio.get_event_loop().time() + 25.0
+            while asyncio.get_event_loop().time() < deadline:
+                seen = await js_eval(
+                    page,
+                    """
+                    (() => {
+                      const btns = Array.from(document.querySelectorAll('button')).filter(b => {
+                        if (!b.offsetParent || b.disabled) return false;
+                        const t = (b.innerText || '').trim();
+                        return t.includes('추천 시간 그대로 확정');
+                      });
+                      return btns.length ? btns[0].innerText.trim() : null;
+                    })()
+                    """,
+                )
+                if seen:
+                    final_seen = True
+                    log(f"  → 버튼 발견: {seen}")
+                    break
+                await asyncio.sleep(0.5)
+            if final_seen:
                 await asyncio.sleep(pace["view_pause"])
-                await click_button_by_text(page, "추천 시간 그대로 확정", contains=True)
-                log("  ✓ 클릭 완료 → all_members_selected 트리거")
+                clicked = await js_eval(
+                    page,
+                    """
+                    (() => {
+                      const btns = Array.from(document.querySelectorAll('button')).filter(b => {
+                        if (!b.offsetParent || b.disabled) return false;
+                        const t = (b.innerText || '').trim();
+                        return t.includes('추천 시간 그대로 확정');
+                      });
+                      if (!btns.length) return null;
+                      btns[0].click();
+                      return btns[0].innerText.trim();
+                    })()
+                    """,
+                )
+                log(f"  ✓ 클릭 완료: {clicked} → all_members_selected 트리거")
             else:
                 log("  ⚠️  [✅ 추천 시간 그대로 확정] 버튼 미발견")
+            await asyncio.sleep(1.2)
+            await page.screenshot(path=f".rehearsal-shots/{int(time.time())}-act3-5a-after-rec.png")
+
+            # 후속 모달/팝업: "오후 N:NN ~ 오후 N:NN로 확정" 같은 시간 범위 버튼.
+            # 호스트 [추천 시간 그대로 확정] 누른 직후 등장하는 최종 시간 확정 dialog.
+            log("후속 [시간 범위 ...로 확정] 버튼 대기 (최대 15s)...")
+            range_seen = False
+            deadline2 = asyncio.get_event_loop().time() + 15.0
+            while asyncio.get_event_loop().time() < deadline2:
+                txt = await js_eval(
+                    page,
+                    """
+                    (() => {
+                      const btns = Array.from(document.querySelectorAll('button')).filter(b => {
+                        if (!b.offsetParent || b.disabled) return false;
+                        const t = (b.innerText || '').trim();
+                        // "오후 6:00 ~ 오후 7:00로 확정" / "오전 N:NN ~ ..." 패턴
+                        return /(오전|오후)\\s*\\d/.test(t) && t.includes('~') && t.endsWith('로 확정');
+                      });
+                      return btns.length ? btns[0].innerText.trim() : null;
+                    })()
+                    """,
+                )
+                if txt:
+                    range_seen = True
+                    log(f"  → 범위 버튼 발견: {txt}")
+                    break
+                await asyncio.sleep(0.5)
+            if range_seen:
+                await asyncio.sleep(pace["view_pause"])
+                final_click = await js_eval(
+                    page,
+                    """
+                    (() => {
+                      const btns = Array.from(document.querySelectorAll('button')).filter(b => {
+                        if (!b.offsetParent || b.disabled) return false;
+                        const t = (b.innerText || '').trim();
+                        return /(오전|오후)\\s*\\d/.test(t) && t.includes('~') && t.endsWith('로 확정');
+                      });
+                      if (!btns.length) return null;
+                      btns[0].click();
+                      return btns[0].innerText.trim();
+                    })()
+                    """,
+                )
+                log(f"  ✓ 범위 버튼 클릭: {final_click}")
+            else:
+                log("  ⚠️  시간 범위 확정 버튼 미발견")
+            await page.screenshot(path=f".rehearsal-shots/{int(time.time())}-act3-5b-after-range.png")
 
             log(f"all_members_selected 파이프라인 대기 ({int(pace['after_act3'])}s)")
             await asyncio.sleep(pace["after_act3"])
+            await page.screenshot(path=f".rehearsal-shots/{int(time.time())}-act3-6-after-pipeline.png")
 
             # ─────────────────────────────────────────────────
             hr("ACT 4 — Partial maedeup_card 발행 (선호 장소 없음)")

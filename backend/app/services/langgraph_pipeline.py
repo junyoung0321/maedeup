@@ -64,7 +64,7 @@ PREFERRED_TIME_RANGES = {
     "주말저녁": (18, 21),
 }
 
-_KR_HOLIDAYS = holidays.KR()
+_KR_HOLIDAYS = holidays.KR(language="ko")
 
 
 def _get_korean_holiday(dt: datetime) -> str | None:

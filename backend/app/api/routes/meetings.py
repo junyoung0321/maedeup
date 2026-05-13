@@ -26,8 +26,29 @@ from app.services.google_calendar import (
     sync_events_for_meeting_members,
 )
 from app.services.kakao_maps import search_address, search_keyword
-from app.services.langgraph_pipeline import suggest_alternative_slots
+from app.services.langgraph_pipeline import memory_extraction, suggest_alternative_slots
 from app.services.meeting_history import save_meeting_record
+from app.db.session import AsyncSessionLocal
+import asyncio as _asyncio
+
+
+async def _spawn_personal_data_extraction(room_id: int) -> None:
+    """장소 확정(PATCH /meetings/{id}/place) 직후 transcript에서 personal_data 학습.
+
+    LangGraph maedeup_card_creation 노드가 안 도는 경로(/place patch)에서도
+    ACT 6 '비린 거 → ✨' 학습 임팩트가 살도록 fire-and-forget으로 별도 호출.
+    state dict는 memory_extraction 함수가 요구하는 최소값만 채움.
+    실패는 silent log only — 모임 자체를 깨뜨리지 않음.
+    """
+    try:
+        async with AsyncSessionLocal() as new_session:
+            await memory_extraction({
+                "room_id": room_id,
+                "maedeup_card_payload": {"_": "place_patch_trigger"},
+                "db": new_session,
+            })
+    except Exception:
+        logger.exception("Personal data extraction (place patch) failed room=%s", room_id)
 
 router = APIRouter(tags=["meetings"])
 logger = logging.getLogger(__name__)
@@ -811,6 +832,11 @@ async def patch_meeting_place(
             meeting.id,
             exc_info=True,
         )
+
+    # ACT 6 학습 — fire-and-forget personal_data extraction.
+    # LangGraph maedeup_card_creation 노드가 안 도는 /place patch 경로에서도
+    # 학습 ✨ 임팩트가 살도록 별도 호출. detach 모드 — 응답 latency 영향 X.
+    _asyncio.create_task(_spawn_personal_data_extraction(meeting.room_id))
 
     return PlacePatchResponse(
         meeting_id=meeting.id,

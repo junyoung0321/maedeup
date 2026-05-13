@@ -199,6 +199,38 @@ async def guest_join_room(
     if room is None:
         raise HTTPException(status_code=404, detail="존재하지 않는 방입니다.")
 
+    # 중복 join 방지: 같은 방에 같은 display_name 게스트가 이미 있으면
+    # 새 user 만들지 않고 기존 user에 대한 새 JWT만 발급해 반환.
+    # 이렇게 해야 시연 중 토큰 분실/재가입 사고로 RoomMember가 부풀어
+    # _maybe_emit_proposal의 `len(availability) >= member_count` 영구 실패
+    # → ACT 3 합의 차단되는 사고를 막을 수 있다.
+    existing_q = await session.execute(
+        select(User)
+        .join(RoomMember, RoomMember.user_id == User.id)
+        .where(RoomMember.room_id == room.id)
+        .where(User.is_guest.is_(True))
+        .where(User.name == name)
+    )
+    existing = existing_q.scalars().first()
+    if existing is not None:
+        token = issue_jwt(
+            user_id=existing.id,
+            email=existing.email,
+            name=existing.name,
+            picture=None,
+            calendar_consent=False,
+            is_guest=True,
+        )
+        logger.info(
+            "guest_join_room: reusing existing guest user_id=%s name=%r in room=%s",
+            existing.id, existing.name, room.id,
+        )
+        return GuestJoinResponse(
+            user_id=existing.id,
+            name=existing.name,
+            token=token,
+        )
+
     synthetic_email = f"guest-{uuid.uuid4().hex[:12]}@maedeup.local"
     guest = User(
         email=synthetic_email,

@@ -23,6 +23,7 @@
 .gstack/
 .gstack-demo-token
 .gstack-shots/
+.rehearsal-*
 .gstack-bak-*/
 .gstack-old/
 .gstack.bak.*/

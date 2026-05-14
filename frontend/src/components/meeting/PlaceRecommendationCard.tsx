@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { MapPin } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import type { PlaceResult } from "@/types";
@@ -8,6 +8,25 @@ import type { PlaceRecommendationPayload } from "@/hooks/useAgentWebSocket";
 
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
+}
+
+// PR-Z2 (Q5 hybrid): JWT sub → 숫자 user_id 추출. ScheduleRecommendationCard와 동일 패턴.
+function getCurrentUserIdFromToken(): number | null {
+  if (typeof window === "undefined") return null;
+  const token = localStorage.getItem("auth_token");
+  if (!token) return null;
+  try {
+    const payloadPart = token.split(".")[1];
+    if (!payloadPart) return null;
+    const normalized = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const decoded = JSON.parse(atob(padded));
+    if (decoded?.sub) {
+      const asNum = Number(decoded.sub);
+      if (Number.isFinite(asNum)) return asNum;
+    }
+  } catch { /* ignore */ }
+  return null;
 }
 
 interface PlaceRecommendationCardProps {
@@ -33,6 +52,11 @@ export default function PlaceRecommendationCard({
   const [isPlaceConfirmed, setIsPlaceConfirmed] = useState(false);
   const [placeConfirmError, setPlaceConfirmError] = useState<string | null>(null);
 
+  // PR-Z2 (Q5 hybrid): 선호 기준 토글 로딩/에러 상태. 응답은 WS broadcast로 자동 갱신.
+  const [isRefreshingPreference, setIsRefreshingPreference] = useState(false);
+  const [preferenceRefreshError, setPreferenceRefreshError] = useState<string | null>(null);
+  const currentUserId = useMemo(() => getCurrentUserIdFromToken(), []);
+
   // Reset state when new recommendation arrives
   useEffect(() => {
     setSelectedPlaceId(null);
@@ -40,7 +64,56 @@ export default function PlaceRecommendationCard({
     setIsPlaceConfirmed(false);
     setPlaceConfirmError(null);
     setIsConfirmingPlace(false);
+    setPreferenceRefreshError(null);
   }, [placeRecommendation]);
+
+  // PR-Z2 (Q5 hybrid): refresh API 호출 — ScheduleRecommendationCard와 동일 시그니처.
+  const refreshRecommendations = useCallback(
+    async (
+      mid: number,
+      scope: "vote_card" | "place_recommendation" | "both",
+      source: "group" | "speaker",
+    ) => {
+      if (currentUserId === null) {
+        setPreferenceRefreshError("로그인이 필요합니다.");
+        return;
+      }
+      setIsRefreshingPreference(true);
+      setPreferenceRefreshError(null);
+      try {
+        await apiFetch<{
+          vote_card: unknown;
+          place_recommendation: PlaceRecommendationPayload | null;
+          narrator: string;
+          cached: boolean;
+        }>(`/api/v1/meetings/${mid}/recommendations/refresh`, {
+          method: "POST",
+          body: JSON.stringify({
+            scope,
+            preference_source: source,
+            requester_user_id: currentUserId,
+          }),
+        });
+        // 성공: WebSocket broadcast로 placeRecommendation 자동 갱신.
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "추천 갱신 실패";
+        let userMessage = message;
+        if (/permission_denied|not_a_room_member/i.test(message)) {
+          userMessage = "토글 권한이 없어요 (발화자 또는 방장만 가능).";
+        } else if (/toggle_disabled/i.test(message)) {
+          userMessage = "현재는 토글할 수 있는 조건이 아니에요.";
+        } else if (/daily_limit_exceeded/i.test(message)) {
+          userMessage = "일일 한도(100회)를 초과했어요.";
+        } else if (/meeting_not_found/i.test(message)) {
+          userMessage = "모임을 찾을 수 없어요.";
+        }
+        setPreferenceRefreshError(userMessage);
+      } finally {
+        setIsRefreshingPreference(false);
+      }
+    },
+    [currentUserId],
+  );
 
   const handlePlaceClick = useCallback((place: {
     place_id: string; name: string; address: string; phone?: string;
@@ -126,6 +199,57 @@ export default function PlaceRecommendationCard({
           <span style={{ fontSize: 17, fontWeight: 700, color: "#1e293b" }}>{placeRecommendation.place_hint} 추천 장소</span>
         </div>
       </div>
+
+      {/* PR-Z2 (Q5 hybrid): 추천 기준 토글. preference_toggle_enabled=true + meetingId 있을 때만. */}
+      {placeRecommendation.preference_toggle_enabled && meetingId !== null && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{
+            display: "flex", alignItems: "center", gap: 6,
+            padding: 3, borderRadius: 10,
+            background: "#e0e7ff", border: "1px solid #c7d2fe",
+            alignSelf: "flex-start",
+          }}>
+            {(["group", "speaker"] as const).map((source) => {
+              const active = (placeRecommendation.preference_source ?? "group") === source;
+              const label = source === "group" ? "그룹 다수결" : "내 선호";
+              return (
+                <button
+                  key={source}
+                  type="button"
+                  onClick={() => {
+                    if (active || isRefreshingPreference) return;
+                    refreshRecommendations(meetingId, "place_recommendation", source);
+                  }}
+                  disabled={active || isRefreshingPreference}
+                  style={{
+                    padding: "5px 12px", borderRadius: 8, border: "none",
+                    background: active ? "#4f46e5" : "transparent",
+                    color: active ? "#ffffff" : "#4338ca",
+                    fontSize: 12, fontWeight: 600,
+                    cursor: active || isRefreshingPreference ? "default" : "pointer",
+                    opacity: isRefreshingPreference && !active ? 0.5 : 1,
+                    fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                  }}
+                  aria-pressed={active}
+                >
+                  {label}
+                </button>
+              );
+            })}
+            {isRefreshingPreference && (
+              <span style={{ fontSize: 11, color: "#4338ca", marginLeft: 4 }}>
+                갱신 중...
+              </span>
+            )}
+          </div>
+          {preferenceRefreshError && (
+            <span style={{ fontSize: 12, color: "#dc2626", fontWeight: 500 }}>
+              {preferenceRefreshError}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* A5-2: 멤버별 PersonalData 인용 reasoning. 시드 있으면 "수현님 채식·홍대 비선호 ✨ 반영" 톤,
           없으면 익명 그룹 톤 ("멤버 중 채식주의자가 있어요"). 빈/공백 문자열이면 표시 안 함. */}
       {placeRecommendation.group_constraints_summary?.trim() && (

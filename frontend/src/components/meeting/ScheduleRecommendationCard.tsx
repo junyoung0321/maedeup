@@ -80,6 +80,12 @@ export default function ScheduleRecommendationCard({
   const currentUserId = useMemo(() => getCurrentUserIdFromToken(), []);
   const isHost = currentUserId !== null && hostUserId === currentUserId;
 
+  // PR-Z2 (Q5 hybrid): 선호 기준 토글 상태.
+  // 토글 클릭 → refresh API 호출 → 응답은 WebSocket으로 broadcast 되므로 별도 state 갱신 불필요.
+  // 자체 로딩/에러 상태만 관리.
+  const [isRefreshingPreference, setIsRefreshingPreference] = useState(false);
+  const [preferenceRefreshError, setPreferenceRefreshError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!roomId) return;
     let cancelled = false;
@@ -99,7 +105,58 @@ export default function ScheduleRecommendationCard({
     setConfirmedLabel(null);
     setError(null);
     setExpandedUnavailableSlotId(null);
+    setPreferenceRefreshError(null);
   }, [voteCard]);
+
+  // PR-Z2 (Q5 hybrid): refresh API 호출 — viewer === requester(자기 자신)만 호출.
+  // 응답은 WebSocket으로 broadcast되어 voteCard가 자동 갱신되므로 별도 setter 불필요.
+  const refreshRecommendations = useCallback(
+    async (
+      meetingId: number,
+      scope: "vote_card" | "place_recommendation" | "both",
+      source: "group" | "speaker",
+    ) => {
+      if (currentUserId === null) {
+        setPreferenceRefreshError("로그인이 필요합니다.");
+        return;
+      }
+      setIsRefreshingPreference(true);
+      setPreferenceRefreshError(null);
+      try {
+        await apiFetch<{
+          vote_card: VoteCardPayload | null;
+          place_recommendation: unknown;
+          narrator: string;
+          cached: boolean;
+        }>(`/api/v1/meetings/${meetingId}/recommendations/refresh`, {
+          method: "POST",
+          body: JSON.stringify({
+            scope,
+            preference_source: source,
+            requester_user_id: currentUserId,
+          }),
+        });
+        // 성공: WebSocket broadcast로 voteCard 자동 갱신.
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "추천 갱신 실패";
+        // 백엔드 detail 매핑 (PR-Z1 보고서).
+        let userMessage = message;
+        if (/permission_denied|not_a_room_member/i.test(message)) {
+          userMessage = "토글 권한이 없어요 (발화자 또는 방장만 가능).";
+        } else if (/toggle_disabled/i.test(message)) {
+          userMessage = "현재는 토글할 수 있는 조건이 아니에요.";
+        } else if (/daily_limit_exceeded/i.test(message)) {
+          userMessage = "일일 한도(100회)를 초과했어요.";
+        } else if (/meeting_not_found/i.test(message)) {
+          userMessage = "모임을 찾을 수 없어요.";
+        }
+        setPreferenceRefreshError(userMessage);
+      } finally {
+        setIsRefreshingPreference(false);
+      }
+    },
+    [currentUserId],
+  );
 
   const handleConfirm = useCallback(async () => {
     if (!voteCard || !selectedSlotId) return;
@@ -260,6 +317,59 @@ export default function ScheduleRecommendationCard({
         <CalendarDays style={{ width: 18, height: 18, color: "#4f46e5" }} />
         <span style={{ fontSize: 13, fontWeight: 600, color: "#4f46e5" }}>AI 일정 추천</span>
       </div>
+
+      {/* PR-Z2 (Q5 hybrid): 추천 기준 토글.
+          백엔드가 preference_toggle_enabled=true로 발행한 경우에만 노출.
+          현재 활성 출처(preference_source)에 따라 버튼 강조. */}
+      {voteCard.preference_toggle_enabled && typeof voteCard.meeting_id === "number" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{
+            display: "flex", alignItems: "center", gap: 6,
+            padding: 3, borderRadius: 10,
+            background: "#eef2ff", border: "1px solid #c7d2fe",
+            alignSelf: "flex-start",
+          }}>
+            {(["group", "speaker"] as const).map((source) => {
+              const active = (voteCard.preference_source ?? "group") === source;
+              const label = source === "group" ? "그룹 다수결" : "내 선호";
+              return (
+                <button
+                  key={source}
+                  type="button"
+                  onClick={() => {
+                    if (active || isRefreshingPreference) return;
+                    if (typeof voteCard.meeting_id !== "number") return;
+                    refreshRecommendations(voteCard.meeting_id, "vote_card", source);
+                  }}
+                  disabled={active || isRefreshingPreference}
+                  style={{
+                    padding: "5px 12px", borderRadius: 8, border: "none",
+                    background: active ? "#4f46e5" : "transparent",
+                    color: active ? "#ffffff" : "#4338ca",
+                    fontSize: 12, fontWeight: 600,
+                    cursor: active || isRefreshingPreference ? "default" : "pointer",
+                    opacity: isRefreshingPreference && !active ? 0.5 : 1,
+                    fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+                  }}
+                  aria-pressed={active}
+                >
+                  {label}
+                </button>
+              );
+            })}
+            {isRefreshingPreference && (
+              <span style={{ fontSize: 11, color: "#4338ca", marginLeft: 4 }}>
+                갱신 중...
+              </span>
+            )}
+          </div>
+          {preferenceRefreshError && (
+            <span style={{ fontSize: 12, color: "#dc2626", fontWeight: 500 }}>
+              {preferenceRefreshError}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* PR-Y2 (F1 fallback): 다수결 추천 안내 배너 */}
       {isMajorityFallback && (

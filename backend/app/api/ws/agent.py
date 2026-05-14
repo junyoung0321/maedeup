@@ -22,6 +22,7 @@ from app.repositories.messages import MessageReader
 from app.services import scheduling_round as sr
 from app.services.gemini import call_gemini
 from app.services.langgraph_pipeline import KST, _analyze_conversation, run_pipeline
+from app.services.pipeline.helpers.preferences import load_requester_context
 from app.services.quick_classify import quick_classify
 
 logger = logging.getLogger(__name__)
@@ -312,6 +313,7 @@ async def _run_auto_trigger_pipeline(
     trigger_intent: str,
     trigger_reason: str,
     slot_context: dict,
+    viewer_user_id: Optional[int] = None,
 ) -> None:
     logger.info(
         "[AUTO_TRIGGER] pipeline entry: room=%s intent=%s reason=%s",
@@ -440,10 +442,24 @@ async def _run_auto_trigger_pipeline(
                     slot_context["confirmed_time"] = consensus_label
 
         async with AsyncSessionLocal() as session:
+            # 해결점 K: requester_* 주입 — compute_preference_toggle_enabled가
+            # state.requester_home_base / state.requester_preferences를 참조하므로
+            # None이면 C4 즉시 발동 → toggle 항상 false. 발화자 정보를 여기서 주입.
+            if viewer_user_id is not None:
+                try:
+                    requester_ctx = await load_requester_context(session, viewer_user_id)
+                    slot_context["requester_user_id"] = requester_ctx.get("requester_user_id")
+                    slot_context["requester_home_base"] = requester_ctx.get("requester_home_base")
+                    slot_context["requester_preferences"] = requester_ctx.get("requester_preferences")
+                except Exception:
+                    logger.warning(
+                        "load_requester_context failed for user %s room %s",
+                        viewer_user_id, room_id, exc_info=True,
+                    )
             context = await MessageReader.load_agent_context(
                 session=session,
                 room_id=room_pk_val,
-                viewer_user_id=None,
+                viewer_user_id=viewer_user_id,
             )
             result = await run_pipeline(
                 room_id,
@@ -758,6 +774,7 @@ async def agent_ws(
                         trigger_intent,
                         trigger_reason,
                         sc,
+                        viewer_user_id=user_id_check,
                     )
                 )
                 task.add_done_callback(_log_detached_task_result)
@@ -970,6 +987,20 @@ async def agent_ws(
                 slot_context["direct_request_kind"] = qc["kind"]
 
                 async with AsyncSessionLocal() as session:
+                    # 해결점 K: requester_* 주입 — direct_request 발화자의 personal data를
+                    # slot_context에 주입. None이면 compute_preference_toggle_enabled가
+                    # C4 즉시 발동 → toggle 항상 false 회귀.
+                    try:
+                        requester_ctx = await load_requester_context(session, user_id_check)
+                        slot_context["requester_user_id"] = requester_ctx.get("requester_user_id")
+                        slot_context["requester_home_base"] = requester_ctx.get("requester_home_base")
+                        slot_context["requester_preferences"] = requester_ctx.get("requester_preferences")
+                    except Exception:
+                        logger.warning(
+                            "load_requester_context failed for user %s room %s",
+                            user_id_check, room_id, exc_info=True,
+                        )
+
                     context = await MessageReader.load_agent_context(
                         session=session,
                         room_id=room_pk,

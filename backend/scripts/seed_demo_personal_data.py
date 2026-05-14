@@ -33,20 +33,38 @@ logging.basicConfig(level=logging.INFO, format="[%(name)s] %(message)s")
 
 
 # 시나리오 박힌 시드. user.name 매칭 (정확한 표기 가정).
+_지민_DATA: dict[str, object] = {
+    "food_preferences": ["한식"],
+    "liked_areas": ["강남"],
+    "home_base": "강남",          # C3 lightweight: home_base vs default_place_hint 비교용
+    "time_preference": "저녁형",
+    "share_food_data": True,
+    "share_location_data": True,
+}
+
 SEED_MAP: dict[str, dict[str, object]] = {
-    "지민": {
-        "food_preferences": ["한식"],
-        "liked_areas": ["강남"],
-        "time_preference": "저녁형",
-    },
+    "지민": _지민_DATA,
+    "김창윤": _지민_DATA,         # 실제 host alias — 동일 시드 적용
     "수현": {
+        "food_preferences": ["일식"],   # 지민(["한식"])과 distinct → Jaccard < 70%
         "food_restrictions": ["채식"],
-        "disliked_areas": ["홍대"],
+        "liked_areas": ["홍대"],
+        "disliked_areas": ["홍대"],     # ACT 5 reasoning 인용용 (보존)
+        "home_base": "홍대",
+        "share_food_data": True,
     },
     "민수": {
+        "food_preferences": ["중식"],   # distinct
         "transport_mode": "지하철",
+        "home_base": "신촌",
+        "share_food_data": True,
     },
-    # 예린은 게스트 — 시드 없음 (의도)
+    "예린": {
+        "food_preferences": ["양식"],   # distinct
+        "home_base": "강남역",
+        "share_food_data": True,
+    },
+    # group union = ["한식","일식","중식","양식"], 김창윤 ["한식"] Jaccard = 1/4 = 25% < 70% → C3 toggle 활성
 }
 
 

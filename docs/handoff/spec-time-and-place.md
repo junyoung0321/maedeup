@@ -45,10 +45,10 @@
 | **S2. 거부 누적** | "월요일은 안돼" (이후 새 추천 요청) | `direct_request` | 월요일 제외된 vote_card | `rejected_dates` 누적, 안전망 필터 작동 |
 | **S3. 선호 매칭** | (방 설정: 평일 오전 선호) "이번주 모이자" | `direct_request` | 평일 오전 슬롯만 vote_card | `preference_common_times` 적용, 주말 자동 제외 |
 | **S4. 다음주 확장** | "이번주 모이자" → 이번주 모두 안됨 | `direct_request` | 다음주로 확장된 vote_card + 사유 narrator | `expanded_to_next_week=true`, 사용자에게 사유 안내 |
-| **S5. 명시 단일 시간** | "내일 6시 어때" | `direct_request` | 단일 슬롯 카드 (또는 maedeup 직행) | Q1 결정 필요 (현재 단일이면 skip) |
+| **S5. 명시 단일 시간** | "내일 6시 어때" | `direct_request` | 단일 슬롯 vote_card (날짜범위 확정 전제, Q1=B) | 단일이어도 명시적 동의 의식 부여 |
 | **S6. 채팅 기반 충돌 감지** | (TimeBar에서 멤버 전원 선택 완료) | `all_members_selected` | TimeBar 데이터 기반 vote_card | 채팅에서 추출된 거부 시간 반영 |
 | **S7. 시간대 충돌 투표** | "A는 토요일, B는 일요일이래" | `direct_request` | conflict_options 분기 vote_card | `conflict_options` 슬롯 생성 |
-| **S8. 모두 불가 fallback** | 거부/캘린더로 가능한 슬롯 0개 | any | 가장 많은 멤버 가능한 슬롯 3개 vote_card + "전원 가능 시간 없음" narrator | "다수결 vote_card" 분기 — **v1.0 구현 대상 (Q6=A)**, 정렬 정책 Q8 미결 |
+| **S8. 모두 불가 fallback** | 거부/캘린더로 가능한 슬롯 0개 | any | 가장 많은 멤버 가능한 슬롯 3개 vote_card + "전원 가능 시간 없음" narrator | "다수결 vote_card" 분기 — **v1.0 구현 대상 (Q6=A)**, 정렬: 시간 빠른 순 (Q8=A). 별도 우선 구현 PR-Y |
 | **S9. 시간만 결정** | "다음주 화요일 6시" | `direct_request` | `time_only_ready` → maedeup 카드 직행 (vote_card 우회) | `partial_mode="time_only"` |
 | **S10. 결론 자동 감지** | (멤버들이 채팅에서 "그럼 화요일 7시로 ㄱ") | `conclusion_detected` | maedeup 카드 직행 | vote_card 스킵, 결론 합의로 인식 |
 
@@ -135,8 +135,8 @@
 | ID | 기능 | 트리거 | 출력 |
 |---|---|---|---|
 | F1 | 0 슬롯 → 다수결 | 전원 가능 슬롯 0개 | (**v1.0 구현 대상**, Q6=A) 가능 멤버 max인 슬롯 3개 + blocker_notification — **정렬: 시간 빠른 순 (Q8=A)**, 후보는 이미 선호·거부 반영된 상태 가정 |
-| F2 | headcount=None | entity가 인원 추출 못함 | (현재) supervisor가 에러 — Q3 결정 필요 |
-| F3 | single slot skip | 슬롯 1개만 남음 | `vote_card_skipped` 상태 → maedeup 직행 — Q1 결정 필요 |
+| F2 | headcount=None | entity가 인원 추출 못함 | 방 멤버 수 fallback (**Q3=A**, 게스트 포함 — Q12=A) |
+| F3 | 단일 슬롯도 vote_card | 슬롯 1개만 남음 | 단일 옵션 vote_card 발행 (**Q1=B**, 날짜범위 확정 전제) — skip 폐기 |
 | F4 | 캘린더 권한 없음 | OAuth 미동의 멤버 | 해당 멤버 캘린더 무시 + narrator에 명시 |
 
 ---
@@ -377,6 +377,10 @@ async def test_S1_basic_next_week_vote_card():
 - 시간대 변환 (KST 외 멤버)
 - 다중 모임 시간 겹침 경고
 - AI 자동 협상 ("A님 양보해주실 수 있을까요?" 같은 능동 제안)
+
+**알려진 한계 (Known Limitations)**
+
+- **Gemini 휴일 라벨 (Q10=C)**: prompt의 휴일·요일 안내는 힌트 수준 — 실제 매장 영업시간·휴무 회피를 보장하지 않음 (Kakao Local Keyword API 영업시간 미제공). 정확한 휴무 필터는 v2 후보 (Google Places 또는 영업시간 데이터 plumbing).
 
 ---
 

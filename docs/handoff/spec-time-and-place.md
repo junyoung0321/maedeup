@@ -60,6 +60,12 @@
 | **S12. place_hint 미지정 fallback** | "다음주에 모이자" (place_hint 없음) | `direct_request` | 선호 장소 다수결 → 동률 시 발화자 → 선호 없으면 방장 home_base 기준 추천 | F5 fallback 순서 (Q2), `preference_source="group"` 기본, 발화자 토글 시 `"speaker"` |
 | **S13. cuisine 자동 감지** | "한식 먹자" | `direct_request` | 한식 카테고리 Kakao 검색 + reranking | `_detect_cuisine_type` → `meeting_type="한식"`, place_recommendation_payload |
 | **S14. 그룹 비선호 음식 페널티** | (방 멤버 중 1명 disliked_food="갑각류") "맛집 추천해줘" | `direct_request` | 갑각류 키워드 포함 후보 score 0.1 강등 | `_contains_disliked_keyword` 패널티 (P4), 익명 합산 prompt |
+| **S15. Q5 hybrid 토글 (refresh)** | (vote/place 카드 발행 후) "내 취향으로 보기" 버튼 클릭 → `POST /meetings/{id}/recommendations/refresh` | `preference_toggle` (PR-Z1 신설, §9.2와 1:1) | 새 `vote_card_payload`·`place_recommendation_payload` 방 전체 broadcast (Q7-b) + narrator "OOO님 선호 기준으로 다시 추천했어요" (Q15=A 실명) | 권한 Q13=B (발화자+방장만), rate limit Q14=C (Redis idempotency + 일일 100회), Q7-c 토글 차단 조건 (C1∨C3∨C4) 422 분기, 신규 페이로드 `preference_source="speaker"` 또는 `"group"` 일관 표기 |
+| **S16. 장소 거부 누적·재추천** | (강남 후보 카드 발행 후) "강남 말고 다른 데로" | `direct_request` (재추천) | 강남 제외된 `place_recommendation_payload` | "말고" 뒤 키워드 추출하여 새 `place_hint`로 재검색 — `rejected_places` state 키 누적 정책은 **v1.5 후보 (코드 미존재, §6.16 v1.5 backlog)**, 현재는 새 발화 시 place_hint 덮어쓰기만 작동 |
+| **S17. Kakao 검색 결과 0건 fallback** | "북극해에서 모이자" (Kakao 미등록 지명) | `direct_request` | narrator "해당 지역에서 추천 결과를 찾지 못했어요. 다른 지역을 알려주실래요?" + `place_recommendation_payload` 미발행 (또는 빈 `recommendations`) | `place_search_results == []` 분기 (`nodes/function_call.py:55, 72`), narrator 발행 — F7 fallback (§4.4) |
+| **S18. cuisine 다중 충돌** | "한식 먹을까 일식 먹을까" | `direct_request` | cuisine ambiguity 감지 → narrator "한식과 일식 중 어느 쪽이 좋으세요?" 또는 두 카테고리 모두 후보로 reranking (정책 미확정) | `_detect_cuisine_type` 결과 2건 이상일 때 conflict_options 활용 또는 신규 분기 — **v1.5 후보 (현재 코드는 첫 매칭 cuisine만 반환, `helpers/places.py:128~135`)** |
+| **S19. 발화자 토글 후 speaker 차이** | (그룹 다수결로 "강남 한식" 카드 발행 후) 김민수가 "내 취향으로 보기" 클릭, 김민수 프로필 `liked_areas=["홍대"]`·`food_preferences=["양식"]` | `preference_toggle` | 홍대 양식 후보로 reranking된 `place_recommendation_payload` (그룹 카드와 다른 결과) | `requester_preferences` 적용, Q5 hybrid 시각화 (PR-Z1 P0-4 plumbing), `preference_source="speaker"` 명시 |
+| **S20. 거리 vs ML 점수 트레이드오프** | (place_coord = 강남 기준) "한식 추천" | `direct_request` | ML 1위(10km 강북·distance_score 0.2 + ML 0.95) vs 후순위(1km 강남·distance_score 0.8 + ML 0.7) — **종합 score 높은 쪽 우선** | Q4 가중치 공식 (점수 통합) — 현재 ML reranking + Gemini scoring + 거리 점수 혼합, **정확 공식 미정 → v1.5 또는 v2 후보** |
 
 ### 2.1 비목표 시나리오 (Out of scope, §11)
 - "매주 모이는 정기 모임" (recurring) — MVP에선 단일 약속만
@@ -269,6 +275,9 @@
 | F4 | 캘린더 권한 없음 | OAuth 미동의 멤버 | 해당 멤버 캘린더 무시 + narrator에 명시 |
 | F5 | place_hint 미지정 fallback | 발화에 place_hint 없음 | **Q2 결정 순서**: ① 멤버 선호 장소 다수결(`pref_data["best_location"]`) → ② 동률 시 발화자 개인 선호 → ③ 선호 정보 없으면 방장(creator) `home_base` |
 | F6 | cuisine 미감지 | `_detect_cuisine_type` 결과 없음 | `meeting_type` fallback (e.g. "저녁모임"→"음식점") 또는 일반 카테고리("맛집") — 카테고리 미특정 시 Kakao 일반 검색 |
+| F7 | Kakao API 실패 / 결과 0건 | Kakao 응답 5xx·timeout (`kakao_maps.py:74~75` `except Exception: return []`) 또는 정상 응답이지만 빈 documents | narrator "장소 검색 서비스가 일시 불가합니다. 잠시 후 다시 시도해주세요." (장애) / "해당 지역에서 추천 결과를 찾지 못했어요. 다른 지역을 알려주실래요?" (0건) + `place_recommendation_payload` 미발행 (또는 빈 `recommendations`). 코드 분기: `nodes/function_call.py:55, 72` `place_search_results=[]`, `nodes/place.py:149` |
+| F8 | 거리·ML·Gemini 점수 동률 | top-K 후보 종합 score 동률 (`reranked.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)`, `nodes/place.py:211`) | 안정적 정렬 (Python `sort` stable) — 입력 순서(Kakao relevance/distance) 유지가 사실상 tiebreaker. **명시적 tiebreaker(거리 가까운 순 → place_id 사전순) 도입은 v1.5 후보** (현재 암묵적 의존). |
+| F9 | ML 모델 비활성 (`_ML_AVAILABLE=False`) | `from app.services.ml_recommend import ml_place_search` ImportError 또는 LGBMRanker 로드 실패 (`nodes/place.py:66~71`) | Gemini scoring + 거리 점수만으로 reranking 진행 (`nodes/place.py:187~283` Gemini 분기), narrator 변경 없음 — silent degradation. 로깅: `[ML] ml_place_search 실패, Gemini fallback` 또는 import 시 단발성 로그. |
 
 ---
 
@@ -667,6 +676,92 @@ async def _slot_filling_conclusion(state, pref_data):
 > - **C3**: 그룹 다수결 결과 = 발화자 선호 결과 (분리 의미 없음)
 > - **C4**: 발화자 본인 정보 비어있음
 > - C2(게스트)는 채팅방 입장 후 선호 설정 가능하므로 토글 허용 (§5.1.3 참조).
+
+### 6.14 Kakao API 실패 처리 (F7 본문)
+
+Kakao Local Keyword API 호출이 5xx·timeout 또는 네트워크 예외로 실패한 경우.
+
+```python
+# backend/app/services/kakao_maps.py:66~80 (search_keyword)
+try:
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(KAKAO_KEYWORD_URL, params=params,
+                                 headers={"Authorization": f"KakaoAK {api_key}"},
+                                 timeout=5.0)
+except Exception:
+    return []                       # ← 모든 네트워크 예외 silent → []
+if resp.status_code != 200:
+    return []                       # ← 5xx·4xx도 동일 처리
+return list(resp.json().get("documents", []))
+```
+
+- **현재 동작**: 모든 실패 경로가 빈 리스트로 수렴 → 호출자(`search_place`)는 `place_search_results=[]`로 진입 → `nodes/place.py:149~150` `place_results=[]`·`ranked_places=[]` → `state["place_recommendation_payload"]`는 빈 `recommendations` 발행. narrator는 §6.15 0건 흐름과 합쳐진다.
+- **장애 vs 0건 미구분**: 현재 코드는 timeout/5xx와 정상 응답 0건을 구분하지 못함. 사용자에게는 동일 메시지로 노출. **v1.5 후보**: 예외 분기 시 `state["kakao_api_failed"]=True` 플래그 set + 전용 narrator ("장소 검색 서비스 일시 불가, 잠시 후 다시 시도해주세요").
+- **재시도 정책**: 현재 미구현 (httpx 5s timeout 1회). 권장: exponential backoff(0.5s, 1s, 2s) 회당 1회 재시도, 최종 실패 시 narrator. **v1.5 backlog**.
+- **다운스트림**: `_handle_node_exception` 진입 안 함 (예외는 kakao_maps 내부에서 흡수). 따라서 `status="<node>_error"` 미설정, vote_card 흐름은 영향 없음. 사용자 인지는 narrator 1회만.
+
+### 6.15 place_search_results 0건 처리 (F7 분기)
+
+Kakao API 정상 응답이나 documents 빈 리스트인 경우 (미등록 지명·오타·radius 외).
+
+- **분기 조건**: `search_place` 정상 호출 후 `documents == []` → `place_search_results == []` (`nodes/function_call.py:55, 72, 98, 120, 215`).
+- **현재 동작**: `nodes/place.py:149~150` `place_results=[]` 진입 → ranking 분기 (line 172~283) 모두 빈 리스트 통과 → `ranked_places=[]` → `state["place_recommendation_payload"]`의 `recommendations=[]` 발행.
+- **narrator**: 카운트 0이면 `"추천 장소를 정리해봤어요. 📍 아래 카드를 확인해 주세요."` (`nodes/place.py:357~361`) — **사용자 친화도 낮음** (실제론 결과 0건). **v1.5 후보**: 명시 narrator "해당 지역에서 추천 결과를 찾지 못했어요. 다른 지역을 알려주실래요?" 분기, 빈 카드 미발행.
+- **state 키 신설 권고 (v1.5)**: `place_search_empty: bool` — 0건과 정상 비교 가능. 또는 `state["place_search_results"]`가 `None` vs `[]`로 의도 구분.
+- **이력**: place_hint 인식 실패 케이스(예: "북극해")도 동일 분기로 수렴 (지오코딩은 `_resolve_place_coord`에서 별도 처리, `helpers/places.py:168~176`).
+
+### 6.16 cuisine 자동 감지 실패
+
+`_detect_cuisine_type` 반환값 None 케이스 (F6 본문).
+
+```python
+# backend/app/services/pipeline/helpers/places.py:128~135
+def _detect_cuisine_type(text: str) -> str | None:
+    if not text:
+        return None
+    for trigger, cuisine in _CUISINE_TRIGGERS.items():
+        if trigger in text:
+            return cuisine
+    return None
+```
+
+- **현재 동작**: cuisine None → `meeting_type` fallback ("모임"으로 일반화, `helpers/places.py:191`) → Kakao query는 `f"{place_hint} {meeting_type}"` (line 211) 사용. 특정 cuisine 카테고리 강요 안 함.
+- **사용자 narrator**: 없음 (silent fallback). meeting_type fallback이 적용된 사실은 user-visible하지 않음.
+- **Gemini prompt 영향**: cuisine 미식별 시 prompt에 cuisine 라벨 제외 — 자유 카테고리 reranking. 카드 reasoning은 다른 신호(거리·선호·페널티)에 의존.
+- **갭 (다중 cuisine)**: "한식 먹을까 일식 먹을까" 같은 다중 cuisine 발화는 첫 매칭만 반환(`for trigger, cuisine in _CUISINE_TRIGGERS.items()` 첫 hit). 다중 후보 처리는 §2 S18 시나리오와 연결 — **v1.5 후보 (cuisine ambiguity 분기 + 사용자 확인 narrator)**.
+
+### 6.17 place_hint·place_coord 모두 None (F5 본문)
+
+발화에 place_hint 부재 + entity_extraction이 patterns/Gemini로도 추출 실패한 경우.
+
+- **분기 조건**: `state.get("place_hint") is None` AND `_resolve_place_hint(state)` 반환 None → `nodes/place.py:140~146` 노드 `status="place_skipped"` 진입.
+- **Q2 결정 fallback 순서** (§4.4 F5):
+  1. **선호 장소 다수결**: `MeetingPreference.preferred_location` 교차 → `pref_data["best_location"]` (구현 위치: `nodes/slot.py` → `_load_meeting_preferences` 결과). 결과 있으면 `state["place_hint"]` 채움 후 search 진행.
+  2. **동률 시 발화자 선호**: `requester_home_base` 또는 발화자 `liked_areas` 1순위 (PR-Z1 P0-4 plumbing).
+  3. **방장 home_base**: `Room.creator.home_base` 또는 `creator.liked_areas` (1·2 모두 미발견 시).
+  4. **셋 다 None**: narrator "장소 추천을 위해 지역을 알려주세요" 발행 (또는 silent skip — **현재 silent skip만 구현**, narrator는 v1.5 후보).
+- **현재 코드 갭**: F5 1·2·3 단계의 명시적 분기 순서 코드 미통합. `_resolve_place_hint`가 단일 함수에서 결정. **v1.5 정교화 후보** — F5 fallback의 4-step 명세를 코드 분기 1:1로 매핑.
+- **`preference_source` 영향**: 1단계 진입 시 `"group"`, 2단계 진입 시 `"speaker"`, 3단계 진입 시 `"group"` (방장 = 그룹 대표) 표기.
+
+### 6.18 ML 모델 비활성 (F9 본문)
+
+LGBMRanker 로드 실패 또는 환경변수 OFF 시 추천 품질 degradation.
+
+```python
+# backend/app/services/pipeline/nodes/place.py:66~71
+try:
+    from app.services.ml_recommend import ml_place_search as _ml_place_search
+    _ML_AVAILABLE = True
+except Exception:
+    _ml_place_search = None  # type: ignore[assignment]
+    _ML_AVAILABLE = False
+```
+
+- **분기 조건**: import 시점에 `_ML_AVAILABLE=False` 결정 (모듈 단위, 런타임 토글 불가). 런타임 ML 호출 실패는 try/except로 잡혀 Gemini fallback (`nodes/place.py:184~185`).
+- **현재 동작**: Gemini scoring (`nodes/place.py:213~283`) + 거리 점수 (`helpers/places.py:225~232`)만 사용. ranked_places는 ML 없이도 정상 발행, narrator 변경 없음 — **silent degradation**.
+- **추천 품질**: ML reranking 부재로 약간 저하 가능 (특히 협업필터링 기반 사용자별 선호 학습 손실). 사용자에게는 노출되지 않음.
+- **로깅 권고**: 현재 `[ML] ml_place_search 실패, Gemini fallback: ...` (line 185) — import 시점 단발성 fallback 메트릭은 미발행. **v1.5 권고**: `[FALLBACK] ml_disabled` 구조화 로그 + 메트릭 카운터, P95 latency·품질 회귀 추적.
+- **연관 시나리오**: §2 S14·S18 (음식 페널티·cuisine 다중) — ML 없이도 정상 동작해야 함 (회귀 §10.4 negative test에 분류).
 
 ---
 
@@ -1212,10 +1307,16 @@ PIPA 의무 또는 정책 일관성을 위해 추가 구현이 필요한 항목:
 | S12 | place_hint fallback (Q2 F5) | `integration/test_place_fallback.py::test_creator_home_base` | 순서 검증: 선호 다수결 → 동률 시 발화자 → 둘 다 비면 방장 `home_base` |
 | S13 | cuisine 감지 "한식 먹자" | `unit/test_cuisine.py::test_korean_food` | `_detect_cuisine_type` 반환 "한식", Kakao 검색 쿼리에 cuisine 포함 |
 | S14 | 비선호 음식 페널티 (P4) | `unit/test_disliked_food.py::test_penalty` | `_contains_disliked_keyword` True, 후보 score `-= 0.1`, 익명 합산 prompt에 실명 미노출 |
+| S15 | Q5 hybrid refresh 토글 (§9.2 PR-Z1) | `integration/test_refresh_route.py` (신규) — §10.4 세부 케이스 | 권한(Q13=B)·rate limit(Q14=C)·toggle 차단(Q7-c)·narrator 실명(Q15=A)·broadcast(Q7-b)·`preference_source` 변경 |
+| S16 | 장소 거부 누적·재추천 | `integration/test_place_rejected.py::test_excluded` (**v1.5 후보**) | 새 place_hint 추출 후 재검색 또는 `rejected_places` state 키 누적 — 현재 코드 미존재, **v1.5 backlog** |
+| S17 | Kakao 0건 fallback (F7) | `integration/test_kakao_empty.py::test_no_results` (신규) | `place_search_results==[]`·narrator 명시 발행 (또는 빈 `recommendations` 카드 + narrator) |
+| S18 | cuisine 다중 충돌 (S18) | `unit/test_cuisine_ambiguity.py::test_dual_cuisine` (**v1.5 후보**) | `_detect_cuisine_type` 결과 2건 이상 시 ambiguity 분기 또는 두 카테고리 모두 reranking — **현재 첫 매칭만 반환, v1.5 backlog** |
+| S19 | speaker 토글 차이 (S15 후속) | `integration/test_speaker_toggle.py::test_personal_results` | `requester_preferences` 반영, group 카드와 다른 결과 (예: 그룹 강남 → speaker 홍대), `preference_source=="speaker"` |
+| S20 | 거리 vs ML 점수 트레이드오프 | `unit/test_score_integration.py::test_distance_ml_balance` (**v1.5 또는 v2 후보**) | Q4 종합 가중치 공식 (거리·ML·Gemini score 통합) — **현재 정확 공식 미정, v1.5/v2 backlog** |
 
 ### 10.4 추가 시나리오 (refresh·negative test)
 
-**S15 — refresh 토글 (PR-3.4 §9.2, Q7-b·Q13=B·Q14=C·Q7-c)**:
+**S15 세부 — refresh 토글 (PR-3.4 §9.2, Q7-b·Q13=B·Q14=C·Q7-c)**:
 
 | 케이스 | pytest 파일·함수 | 핵심 assertion |
 |---|---|---|
@@ -1225,15 +1326,18 @@ PIPA 의무 또는 정책 일관성을 위해 추가 구현이 필요한 항목:
 | S15.4 | `integration/test_refresh_toggle.py::test_daily_limit_429` | 일일 100회 초과 → HTTP 429 (Q14=C) |
 | S15.5 | `integration/test_refresh_toggle.py::test_q7c_blocked_422` | Q7-c C1·C3·C4 위배 (`share_*_data=False`·결과 동일·발화자 정보 부재) → HTTP 422 |
 
-**Negative test (§9.6 에러 코드)**:
+**Negative test (§9.6 에러 코드 + 신규 fallback 검증)**:
 
-| 케이스 | 라우터 | 기대 응답 |
+| 케이스 | 라우터·노드 | 기대 응답·동작 |
 |---|---|---|
 | 비멤버 호출 | 모든 `/rooms/{id}/*` | 403 (§7.3 멤버십 검증) |
 | JWT 부재 | 모든 보호 라우터 | 401 |
 | 존재하지 않는 `meeting_id` | `/meetings/{id}/*` | 404 |
 | 이미 finalized된 모임 confirm 재시도 | `/meetings/{id}/confirm` | 409 SUPERSEDED (§9.6) |
 | 요청 body 검증 실패 | 모든 POST | 422 |
+| `test_kakao_5xx_returns_narrator` (F7) | `nodes/place.py` + `services/kakao_maps.py` monkeypatch (5xx) | `place_search_results==[]`, narrator 발행, vote_card 흐름 영향 없음 — F7 검증 |
+| `test_ml_disabled_uses_gemini_only` (F9) | `nodes/place.py` (`_ML_AVAILABLE=False` 패치) | Gemini scoring + 거리 점수만으로 reranking, narrator 변경 없음, ranked_places 정상 발행 — F9 silent degradation 검증 |
+| `test_cuisine_none_uses_meeting_type_fallback` (F6/§6.16) | `helpers/places._detect_cuisine_type` None 케이스 | meeting_type fallback 적용, cuisine prompt 라벨 제외, silent fallback |
 
 ### 10.5 로그·메트릭 assert
 
@@ -1253,8 +1357,9 @@ PIPA 의무 또는 정책 일관성을 위해 추가 구현이 필요한 항목:
 | 우선순위 | 목적 | 케이스 |
 |---|---|---|
 | **P0** (시연 영향 큼) | 핵심 흐름 — 골든 데모 | S1, S2, S4, S8, S11, S12, S15.1, S15.2 |
-| **P1** (시연 통과 권고) | 분기·partial·도메인 | S3, S5, S7, S9, S13, S14 |
-| **P2** (운영 단계) | edge·내부·동시성 | S6, S10, S15.3, S15.4, S15.5, §10.6 동시성, §10.4 negative test |
+| **P1** (시연 통과 권고) | 분기·partial·도메인 | S3, S5, S7, S9, S13, S14, S17 (F7 Kakao 0건), S19 (speaker 토글 차이) |
+| **P2** (운영 단계) | edge·내부·동시성 | S6, S10, S15.3, S15.4, S15.5, §10.6 동시성, §10.4 negative test, F7·F9 fallback 검증 |
+| **v1.5 후보** | 후속 정교화 | S16 (rejected_places 누적), S18 (cuisine 다중), S20 (Q4 점수 공식) |
 
 ### 10.8 미구현 / v2 backlog
 
@@ -1263,6 +1368,11 @@ PIPA 의무 또는 정책 일관성을 위해 추가 구현이 필요한 항목:
 - 해결점 O (정규식 단축 사각지대) 회귀 — v2.
 - 부하 테스트 (rate limit 일일 100회·broadcast 다중 사용자 fan-out) — v2 (외부 도구 locust 등 도입 검토).
 - Q17 F4 narrator 실명/익명 결정 후 회귀 케이스 추가 — 권고 A 적용 가정 (Q15=A 일관, §9.7 반영).
+- **S16 `rejected_places` state 키 누적** — 현재 코드 미존재, v1.5 도입 시 회귀 추가 (`integration/test_place_rejected.py`).
+- **S18 cuisine ambiguity 분기** — `_detect_cuisine_type` 다중 매칭 지원 + ambiguity narrator 또는 두 카테고리 reranking, v1.5 후보.
+- **S20 Q4 점수 통합 공식** — 거리·ML·Gemini score 가중치 명문화 (현재 암묵적 sort by score), v1.5 또는 v2.
+- **F7 Kakao 장애 vs 0건 구분** — `state["kakao_api_failed"]` 플래그 + 전용 narrator, v1.5.
+- **F8 명시적 tiebreaker** — 동률 시 (거리 가까운 순 → place_id 사전순) 정렬 추가, v1.5.
 
 ---
 

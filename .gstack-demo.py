@@ -282,19 +282,57 @@ async def wait_for_text(page: Page, contains: str, timeout_s: float = 10.0, poll
 async def click_first_vote_slot(page: Page) -> bool:
     """ScheduleRecommendationCard의 첫 슬롯 카드 클릭 (selectedSlotId 세팅).
 
-    ScheduleRecommendationCard.tsx:421~424 / 486~492 — 슬롯 카드는 selectedSlotId 일치 시
-    border가 1.5px solid #4f46e5 (인디고)로 바뀌는 div. onClick={setSelectedSlotId(slot_id)}.
-    여기서는 가장 위쪽 + 색 매칭으로 첫 슬롯 div를 찾아 click().
+    ScheduleRecommendationCard.tsx:419~424 — Best 슬롯 div는 padding "12px 14px",
+    borderRadius 12, cursor pointer 인 클릭 가능 div.
+    ScheduleRecommendationCard.tsx:486~492 — 대안 슬롯도 동일 패턴 (padding "10px 12px").
+
+    주의: React inline style은 DOM에서 hex → rgb()로 변환되므로
+    hex 문자열 (#e2e8f0, #4f46e5)로 style 매칭 불가.
+    대신 cursor:pointer + border-radius + 충분한 너비로 슬롯 카드 식별.
+
+    전략 1 (primary): '추천' 배지 span을 포함한 조상 div 클릭 (Best 슬롯 확실히 선택)
+    전략 2 (backup-A): cursor:pointer + borderRadius + 시간 텍스트(오전/오후) 포함 div
+    전략 3 (backup-B): cursor:pointer + border 속성 있는 카드 div 중 최상단
     """
-    js = """
+    # 전략 1: '추천' 배지 span → closest clickable parent div 클릭
+    js1 = """
     (() => {
-      // 인디고 border 슬롯 카드 후보 (이미 선택됐으면 #4f46e5, 미선택이면 #e2e8f0)
+      // '추천' 텍스트를 담은 span 중 인디고 색(rgb(79, 70, 229)) 또는 fontSize 11 + fontWeight 600인 것
+      const badges = Array.from(document.querySelectorAll('span')).filter(s => {
+        return s.innerText && s.innerText.trim() === '추천' && s.offsetParent;
+      });
+      if (!badges.length) return false;
+      // 각 badge의 조상 중 cursor:pointer이며 너비 100px 이상인 div
+      for (const badge of badges) {
+        let el = badge.parentElement;
+        while (el && el.tagName !== 'BODY') {
+          if (el.tagName === 'DIV') {
+            const cs = window.getComputedStyle(el);
+            if (cs.cursor === 'pointer' && el.offsetWidth > 100) {
+              el.click();
+              return true;
+            }
+          }
+          el = el.parentElement;
+        }
+      }
+      return false;
+    })()
+    """
+    if bool(await js_eval(page, js1)):
+        return True
+
+    # 전략 2 (backup-A): 시간 텍스트(오전/오후) 포함 div 중 cursor:pointer
+    js2 = """
+    (() => {
       const cands = Array.from(document.querySelectorAll('div')).filter(d => {
-        const s = d.getAttribute('style') || '';
-        return (s.includes('border: 1px solid #e2e8f0') || s.includes('border: 1.5px solid #4f46e5'))
-          && s.includes('border-radius')
-          && d.offsetParent
-          && d.offsetWidth > 100 && d.offsetWidth < 600;
+        if (!d.offsetParent || d.offsetWidth < 100 || d.offsetWidth > 700) return false;
+        const cs = window.getComputedStyle(d);
+        if (cs.cursor !== 'pointer') return false;
+        const br = parseFloat(cs.borderRadius || '0');
+        if (br < 8) return false;
+        const txt = d.innerText || '';
+        return txt.includes('오전') || txt.includes('오후');
       });
       if (!cands.length) return false;
       cands.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
@@ -302,7 +340,28 @@ async def click_first_vote_slot(page: Page) -> bool:
       return true;
     })()
     """
-    return bool(await js_eval(page, js))
+    if bool(await js_eval(page, js2)):
+        return True
+
+    # 전략 3 (backup-B): cursor:pointer + border 있는 카드형 div 최상단
+    js3 = """
+    (() => {
+      const cands = Array.from(document.querySelectorAll('div')).filter(d => {
+        if (!d.offsetParent || d.offsetWidth < 100 || d.offsetWidth > 700) return false;
+        const cs = window.getComputedStyle(d);
+        if (cs.cursor !== 'pointer') return false;
+        const br = parseFloat(cs.borderRadius || '0');
+        if (br < 8) return false;
+        // border가 실제 적용돼 있어야 함 (none/0px 제외)
+        return cs.borderStyle !== 'none' && cs.borderWidth !== '0px';
+      });
+      if (!cands.length) return false;
+      cands.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+      cands[0].click();
+      return true;
+    })()
+    """
+    return bool(await js_eval(page, js3))
 
 
 async def click_personal_data_widget(page: Page) -> bool:

@@ -451,11 +451,222 @@
 
 ## 6. 상태 및 예외 처리
 
-(작성 예정)
-- 슬롯 진행 차수 (slot_filling_turns) — 중복 발화 처리
-- awaiting_user_reply / wait_timed_out — 대기 상태
-- 노드 예외 시 fallback narrator
-- conclusion_false_positive 분기
+본 절은 §1~§5에서 정의된 정상 경로 밖에서 발생하는 모든 분기 — 노드 예외, 사용자 응답 대기, 부분 정보 acknowledgment, fallback narrator, 동시성, v2 backlog로 미뤄둔 갭 — 을 한 곳에 모아 정의한다. **운영 중 한 번이라도 관찰될 수 있는 상태는 모두 본 절에 명세된다**.
+
+### 6.1 상태 머신 개요
+
+본 spec 파이프라인은 발화 진입부터 카드 발행까지 다음 핵심 상태 키를 유지·전이한다 (`backend/app/services/pipeline/state.py:46~98`).
+
+| 상태 키 | 타입 | 의미 | 전이 시점 |
+|---|---|---|---|
+| `trigger_reason` | str\|None | 진입 원인 (`stalemate_judged` / `conclusion_detected` / `all_members_selected` / `direct_request`) | 라우터 분기 시점, `graph.py:57~115` |
+| `slot_filling_turns` | int | 같은 partial 상태에서 acknowledgment 발행 횟수 | `slot.py:384, 400` |
+| `awaiting_user_reply` | bool | 멤버 응답 대기 중 (vote_card 발행 후) | vote_card 발행 시 true, 다음 발화 진입 시 reset |
+| `wait_timed_out` | bool | 대기 timeout 경과 (재추천 트리거 조건) | timeout 워커 또는 timed-out 진입 시 |
+| `partial_mode` | str\|None | `"time_only"` 잠금 모드 (Q9=A) | maedeup 카드(partial) 발행 시 set, refresh 명시 호출 전 immutable |
+| `confirmed_date` / `confirmed_time` / `confirmed_place` | str\|None | 사용자 동의된 슬롯 값 | confirm 라우터 또는 conclusion 분기 |
+| `status` | str | 노드별 종결 상태 (`slots_filled`, `slots_filled_with_defaults`, `partial_info_acknowledged`, `multi_date_vote`, `conclusion_false_positive`, `time_only_ready`, `<node>_error`) | 각 노드 종결 시 |
+| `validation_passed` | bool | supervisor_validation 통과 여부 | validation 노드 종결 시 |
+
+전이 패턴 (전형):
+
+```
+direct_request → entity_extraction(O) → slot_filling
+                ↓ all_slots_filled=true              ↓ partial_info_acknowledged
+              function_call → vote_card_creation → (사용자 투표 대기) → maedeup
+                                                       ↑ awaiting_user_reply=true
+```
+
+trigger별 진입 분기는 `graph.py:63` (`stalemate_judged | conclusion_detected | direct_request` → 노드3부터, ~1s 절약).
+
+### 6.2 슬롯 진행 차수 (slot_filling_turns)
+
+부분 정보(날짜만 / 장소만)로 진입한 발화에 대한 **acknowledgment 1회 한정 응답 게이트**. 같은 partial 상태에서 사용자가 같은 정보를 두 번 발화해도 매듭 AI는 1회만 응답한다 (스팸 방지).
+
+```python
+# backend/app/services/pipeline/nodes/slot.py:382~395 (_slot_filling_default_partial)
+async def _slot_filling_default_partial(state, has_date, has_place):
+    if has_date and not has_place:
+        state["slot_filling_turns"] += 1
+        if state["slot_filling_turns"] <= 1:
+            date_display = state.get("date_hint", "")
+            confirm_msg = (
+                f"{date_display} 좋아요! 👍 "
+                "장소나 인원이 대화에서 나오면 제가 바로 정리해드릴게요~"
+            )
+            await _emit_assistant_message(...)
+        state["awaiting_user_reply"] = False
+        state["status"] = "partial_info_acknowledged"
+```
+
+- **재발화 시**: `slot_filling_turns >= 2` → acknowledgment 메시지 생략. `status="partial_info_acknowledged"` 유지.
+- **상태 리셋**: 모든 슬롯이 채워져 `slots_filled` 또는 `slots_filled_with_defaults`로 전이될 때 자연 리셋 (해당 meeting 사이클 종료).
+- **장소 단독 발화 (`has_place and not has_date`)**: 동일 게이트 적용 (`slot.py:399~410`). 단, `intent == "meeting_schedule"`는 우회 (날짜 필수 흐름).
+
+### 6.3 대기 상태 (awaiting_user_reply / wait_timed_out)
+
+vote_card 발행 후 또는 acknowledgment 후 사용자 응답을 기다리는 상태. 두 키는 mutually exclusive하게 동작한다.
+
+| 키 | true 진입 | false 복귀 |
+|---|---|---|
+| `awaiting_user_reply` | vote_card 발행 직후 (`vote_card.py`), conflict 중재 발행 (`slot.py:155, 201`) | 다음 사용자 발화 진입, 또는 acknowledgment 후 (`slot.py:393, 410`) |
+| `wait_timed_out` | 외부 timeout 워커가 set (대기 N분 초과) | 사용자 발화 또는 명시 refresh 후 reset |
+
+**timeout 분기 동작**:
+- `wait_timed_out=true` 진입 시 → narrator "다들 바쁘신가봐요. 다른 후보로 다시 추천해드릴까요?" 발행 (v1 구현 후보, 현재 코드상 wait_timed_out 키 정의만 존재 — **미확인**, `state.py:88`).
+- timeout 후 동일 meeting에서 재추천 트리거 시 `previous_recommendations`(P1 후보, v2)를 활용해 같은 슬롯 재제시 방지.
+
+### 6.4 노드 예외 처리 (`_handle_node_exception`)
+
+모든 본 spec 노드는 try/except 블록으로 감싸이며, 미처리 예외는 단일 헬퍼로 격리된다.
+
+```python
+# backend/app/services/pipeline/helpers/messaging.py:93~106
+async def _handle_node_exception(node_name, state, exc):
+    logger.exception("LangGraph node failed: %s", node_name, exc_info=exc)
+    state["status"] = f"{node_name}_error"
+    state["validation_passed"] = False
+    state["awaiting_user_reply"] = False
+    await _emit_assistant_message(state["room_id"], state["db"],
+                                   FRIENDLY_ERROR_MESSAGE, state)
+    return state
+```
+
+- **공통 narrator**: `FRIENDLY_ERROR_MESSAGE = "잠깐, 뭔가 잘못됐어요 😅 다시 한번 말해줄래요?"` (`constants.py:29`).
+- **적용 노드 (본 spec 범위)**: `slot_filling` (`slot.py:70`), `entity_extraction` (`entity.py:574`), `place_recommendation` (`place.py:363`), `supervisor_validation` (`validation.py:121`).
+- **다운스트림**: `_has_node_error(state)`로 후속 노드가 진입 차단 (`messaging.py:89~90`, `status` 접미사 `_error` 검사).
+- **카드 미발행**: 예외 발생 시 vote_card / place_recommendation / maedeup_card 모두 미발행. 사용자 인지: 친절 메시지 1회.
+
+### 6.5 fallback narrator 매트릭스 (F1~F4)
+
+§4.4의 F1~F4를 narrator 문구·사용자 인지 정책 관점으로 재정리.
+
+| ID | 트리거 | 동작 | narrator 문구 | 사용자 인지 |
+|---|---|---|---|---|
+| **F1** | 0 슬롯 (전원 가능 슬롯 없음) | 가능 멤버 max인 슬롯 3개 발행 (Q6=A 구현 완료), 시간 빠른 순 정렬 (Q8=A) | `"전원 가능한 시간이 없어 가장 많은 멤버가 가능한 시간 3개로 추천드려요. 📅"` + `blocker_notification` (Q16=C 익명 + "더보기") | vote_card 위 narrator, `blocker_notification` 페이로드 키 |
+| **F2** | `headcount == None` (entity가 인원 미추출) | 방 멤버 수 fallback (Q3=A, 게스트 포함 Q12=A) | (narrator 없음 — silent fallback) `headcount` 페이로드에 값만 설정 | 카드 헤더의 인원 표시로 간접 인지 |
+| **F3** | 단일 슬롯만 남음 | vote_card 발행 유지 (Q1=B, skip 폐기) | `"이 시간으로 괜찮으실까요?"` (단일 옵션 vote_card) | 단일 옵션 카드 + 동의 의식 |
+| **F4** | OAuth 미동의 멤버 존재 | 해당 멤버 busy 합집합 계산에서 제외, `google_event_ids` dict에 그 user_id 키 생략 | `"OOO님은 캘린더 권한이 없어 제외하고 추천했어요"` (실명 표기, Q15=A 정책과 유사) | narrator로 명시 |
+
+> **F1·F4 동시 발생**: F1 narrator 우선, F4는 부가 안내로 후속 발행 (구현은 v1.0 단계 — 미확인).
+
+### 6.6 동시성 race condition
+
+여러 사용자가 동시에 발화하거나 동시에 투표할 때의 처리 정책.
+
+| 상황 | 정책 | 코드 위치 |
+|---|---|---|
+| 동시 발화 (`agent_message_received` 다중) | LangGraph 파이프라인은 **room_id 단위 직렬화 가정** (큐 메커니즘 — **미확인**). 동시 진입 시 두 번째 발화는 첫 진입의 `awaiting_user_reply` 상태를 보고 진입 분기 조정 | `run_pipeline` 진입부 — 검증 필요 |
+| 동시 투표 (`record_availability`) | DB row-level lock (`scheduling_round.py:499`), 동일 (user_id, date) UPSERT | `scheduling_round.py:499~` |
+| 동시 unavailable 토글 (`record_unavailable_toggle`) | 동일 row-level lock, 마지막 쓰기 승리 | `scheduling_round.py:713~` |
+| 동시 confirm | `MeetingSchedule.status` 트랜잭션 — `pending → confirmed` 1회만 허용. 두 번째 confirm은 409 또는 무시 (**미확인**) | confirm 라우터 |
+
+> **트랜잭션 격리 수준**: PostgreSQL 기본값(`READ COMMITTED`) 가정. `SERIALIZABLE` 미사용. 동시 발화 직렬화 메커니즘 — **미확인**, v1.0 시연에서는 단일 사용자 발화 위주라 race 노출 가능성 낮음.
+
+### 6.7 토큰 만료 / revoke 처리 (Google OAuth)
+
+캘린더 freeBusy 조회 중 토큰이 만료되거나 사용자가 권한을 revoke한 경우.
+
+```python
+# backend/app/services/google_calendar.py:58~64
+try:
+    await asyncio.to_thread(credentials.refresh, Request())
+except RefreshError as exc:
+    raise GoogleCalendarAuthError() from exc
+if not credentials.token:
+    raise GoogleCalendarAuthError()
+```
+
+- **격리 정책**: 멤버 단위 try/except로 처리. 한 멤버 실패 시 그 멤버 freeBusy 데이터만 제외, 나머지 멤버는 정상 진행.
+- **결과 페이로드**: `google_event_ids` dict에서 실패 멤버 user_id 키 생략 (`google_calendar.py:269, 338` `except GoogleCalendarAuthError` 블록).
+- **사용자 인지**: F4 narrator로 노출 (실명, Q15=A 정책). PII 노출 트레이드오프 인지.
+- **연관 키**: `User.google_access_token` / `google_refresh_token` null 또는 만료 → 동일 분기.
+
+### 6.8 단일 슬롯 거부 흐름 (충돌 C3 해소)
+
+Q1=B로 단일 슬롯도 vote_card 발행 → 사용자가 그 슬롯을 거부할 때의 흐름.
+
+1. 거부 발화 ("이날 안 돼") → `entity_extraction`이 `rejected_dates`에 누적 (`entity.py:284~298, 519~533`).
+2. 재추천 트리거: 사용자 추가 발화(`direct_request`) 또는 `awaiting_user_reply` 시간 초과(`wait_timed_out`) 후 명시 refresh.
+3. 후보 슬롯 0개면 → **F1 fallback** (다수결 vote_card) 또는 **T2 다음주 확장** (`expanded_to_next_week=true`).
+4. 무한 재시도 방지: `previous_recommendations` (P1 v2 후보)로 같은 슬롯 재제시 차단 — **현재 미구현**, v2.
+
+> **C3 해소 명시**: Q1=B 결정 (단일 슬롯도 vote_card 발행)이 만들 수 있는 "거부할 곳도 없는 강제 동의" 우려를 본 6.8 흐름으로 해소. 거부 → rejected_dates 누적 → 재추천 → F1/T2 fallback의 일관된 경로 제공.
+
+### 6.9 partial maedeup 시간 잠금 (충돌 C2 해소, Q9=A)
+
+`partial_mode = "time_only"` 상태에서 후속 발화 처리 정책.
+
+- **시간 immutable**: `selected_time`은 partial 카드(maedeup, §3.4) 발행 시점에 잠긴다. 후속 장소 발화가 들어와도 새 vote_card 발행 X.
+- **장소 갱신**: 같은 `meeting_id`의 partial 카드를 update (해결점 J, `maedeup.py:150~166`). 별도 vote_card 미발행.
+- **명시적 시간 재선정**: `POST /meetings/{id}/recommendations/refresh` (§9 신설, 권한 Q13=B 발화자+방장만, rate limit Q14=C Redis idempotency + 일일 100회) 호출 시에만.
+- **refresh 동작**: partial 상태 감지 시 → `time_options` 잠금 + `place` 옵션만 재생성 (또는 명시 unlock 플래그 시 시간 재추천).
+
+> **C2 해소 명시**: "시간만 결정 후 장소 발화 → 시간 재추천 충돌"을 Q9=A로 차단. 시간 결정은 한 번, 장소는 자유 갱신.
+
+### 6.10 conclusion_false_positive 분기
+
+"그럼 화요일 7시로 ㄱ" 같은 conclusion 발화가 실제 합의 아닌 경우 (예: 한 명만 발화, 다른 멤버 응답 없음).
+
+```python
+# backend/app/services/pipeline/nodes/slot.py:206~216 (_slot_filling_conclusion)
+async def _slot_filling_conclusion(state, pref_data):
+    has_date = bool(state.get("date_hint"))
+    has_place = bool(state.get("place_hint"))
+    if not has_date and not has_place:
+        state["new_assistant_messages"] = []
+        state["awaiting_user_reply"] = False
+        state["status"] = "conclusion_false_positive"
+        logger.info("[TRIGGER] conclusion_detected false positive, silent abort")
+        return state
+```
+
+- **분기 조건**: trigger_reason이 `conclusion_detected`임에도 date/place 슬롯 모두 비어있을 때 → **silent abort** (카드·narrator 미발행).
+- **다운스트림 처리**: `graph.py:85, 105` 및 `validation.py:36`에서 `status == "conclusion_false_positive"`면 후속 노드 진입 차단, 사용자에게 아무것도 노출 안 함.
+- **추가 검증 필요**: 단일 발화자가 conclusion 표현을 썼지만 멤버 동의 부재인 경우의 별도 검증 로직 — 현재 silent abort만 존재, confirm 모달 등 정교화는 v2 backlog.
+
+### 6.11 해결점 P 번복 처리 (v2 backlog)
+
+사용자가 거부한 날짜 후 번복하는 케이스 ("월요일 안돼" → "아 8일 되네").
+
+- **현재 동작**: `_analyze_conversation`이 `signals.rejected_dates`에 누적만 함. 번복 발언이 들어와도 자동 clear 안 됨.
+- **갭**: `rejected_dates`에서 해당 항목 제거 또는 명시 `unavailable=False` 추출 경로 부재.
+- **수정 방향 (audit-findings.md 해결점 P, line 1023)**: 인버스 토글 — 채팅 자연어 → `record_unavailable_toggle(unavailable=False)` 동기화. 함정: 시점 모호("아 8일 되네"의 "8일" 어느 8일?), LLM 환각 방어 필요.
+- **상태**: 🟡 기능 갭, v2 spec backlog. 인용: `docs/handoff/audit-findings.md:1004~1029`.
+
+### 6.12 해결점 O 정규식 사각지대 (v2 backlog)
+
+정규식 단축 경로(`_pattern_extract_entities`)가 `rejected_dates` / `conflict_*` 키를 생성하지 않는 갭.
+
+- **현재 동작 (`langgraph_pipeline.py:979~1062`)**: AI 패널 직접 요청 시 정규식 1차 단축 (date_hints≥2 OR date+place 존재) → Gemini 스킵 → 채팅방 누적 거부 발언이 vote_card 후보 필터에 반영 안 됨.
+- **영향 범위**: AI 패널 `direct_request` 경로만. 자동 트리거 경로(`_analyze_conversation`)는 정상.
+- **수정 방향 (옵션 B, audit-findings.md 해결점 O, line 996)**: shortcut 조건에 "context에 거부 키워드 없을 때만" AND 추가. Completeness 9/10, ~10min.
+- **상태**: 🔴 부분 작동 (auto-trigger 정상, direct_request 갭). v2 spec backlog 또는 시연 직전 hotfix 후보. 인용: `docs/handoff/audit-findings.md:971~1002`.
+
+### 6.13 확정 결정 사항 인라인 점검 (Q* 매핑)
+
+본 §6에서 직접 다룬 결정 사항:
+
+| Q | 결정 | 본 §6 반영 위치 |
+|---|---|---|
+| Q1=B | 단일 슬롯도 vote_card 발행 | §6.5 F3, §6.8 (C3 해소) |
+| Q3=A | headcount=None → 방 멤버 수 | §6.5 F2 |
+| Q6=A | 0 슬롯 → 다수결 vote_card | §6.5 F1 |
+| Q7-b | refresh 시 방 전체 broadcast | §6.9 refresh 동작 |
+| Q7-c | 토글 차단 조건 (C1∨C3∨C4) | §6.5/§6.9에서 참조 (페이로드 §3 인라인) |
+| Q8=A | F1 정렬 시간 빠른 순 | §6.5 F1 |
+| Q9=A | partial 시간 immutable | §6.9 (C2 해소) |
+| Q12=A | 게스트 포함 headcount | §6.5 F2 |
+| Q13=B | refresh 권한 발화자+방장 | §6.9 |
+| Q14=C | Redis idempotency + 일일 100회 | §6.9 |
+| Q15=A | 실명 narrator (PII 트레이드오프) | §6.7 F4, §6.9 |
+| Q16=C | blocker 익명 + 더보기 | §6.5 F1 |
+
+> **Q7-c 토글 차단 조건 재확인**:
+> - **C1**: 발화자 `share_*_data == False` → 그룹/발화자 분리 불가
+> - **C3**: 그룹 다수결 결과 = 발화자 선호 결과 (분리 의미 없음)
+> - **C4**: 발화자 본인 정보 비어있음
+> - C2(게스트)는 채팅방 입장 후 선호 설정 가능하므로 토글 허용 (§5.1.3 참조).
 
 ---
 

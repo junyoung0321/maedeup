@@ -1,10 +1,10 @@
 # 시간+장소 기능정의서 작성 — 진행 상태 핸드오프 (v3)
 
 작성: 2026-05-14
-최종 갱신: 2026-05-14 (PR-Y2 후)
+최종 갱신: 2026-05-14 (PR-2 후)
 작성자: 본인 + Claude Opus 4.7 (PM 모드)
-브랜치: `docs/spec-time-coordination` (origin 푸시 = `e996bba` 시점까지, 그 후 로컬 `adc444f`까지 진행)
-대상 문서: `docs/handoff/spec-time-and-place.md` (기능정의서, 412줄)
+브랜치: `docs/spec-time-coordination` (origin 푸시 = `e996bba` 시점까지, 그 후 로컬 `d3b7d89`까지 진행)
+대상 문서: `docs/handoff/spec-time-and-place.md` (기능정의서, **544줄** PR-2 보강 후)
 
 > **다음 세션 빠른 컨텍스트 복구**: `cat docs/handoff/2026-05-14-spec-progress.md` 한 줄로 본 문서를 먼저 읽으세요.
 
@@ -13,16 +13,18 @@
 ## 1. 현재 상태 (한눈에)
 
 - **스코프 확정**: 시간 + 장소 조율을 **한 문서**로 통합
-- **파일**: `docs/handoff/spec-time-and-place.md` (rename·재구조·결정 반영 완료)
-- **작성 진행**: §1~§5 + §11 완성, §6~§10 / §12 / §13 미작성
-- **결정 누적**: **30건 확정 + 1건 미결** (Q7-c)
+- **파일**: `docs/handoff/spec-time-and-place.md` (헤더·§1~§5·§11 시간+장소 통합 완료)
+- **작성 진행**: §1~§5 + §11 완성, **§6~§10 / §12 / §13 미작성**
+- **결정 누적**: **31건 확정 + 0건 미결** (Q7-c 해소)
 - **코드 작업**: PR-X·PR-Y1·PR-Y2 로컬 커밋 완료, **푸시 안 함**
 - **운영 모드**: PM 모드 — 리더는 분배·통합·결정 제안, 깊은 분석은 3담당 에이전트에 위임 (메모리 영구 저장)
 
-## 2. 이번 세션 변경 (커밋 8건)
+## 2. 이번 세션 변경 (커밋 10건)
 
 | # | SHA | 메시지 | 변경 | 상태 |
 |---|---|---|---|---|
+| 10 | `d3b7d89` | docs(handoff): spec §1~§4 시간+장소 보강 (PR-2, 12 위치) | +157 / -25 | 로컬 |
+| 9 | `9ce7de4` | docs(handoff): v3 갱신 — PR-X·Y1·Y2 완료 반영 | +119 / -88 | 로컬 |
 | 8 | `adc444f` | feat(frontend): F1 fallback vote_card UI (배너·배지·토글) | +132 / -11 | 로컬 |
 | 7 | `54e1532` | feat(pipeline): F1 fallback (다수결 vote_card) v1.0 구현 | +522 / -3 | 로컬 |
 | 6 | `9609bee` | feat(consent): calendar_consent default True + 일괄 마이그 | +372 / -1 | 로컬 |
@@ -34,7 +36,7 @@
 |   | `494807e` | docs(handoff): spec 파일 rename + 해결점 N 추가 | +29 / 0 | origin |
 |   | `1de2024` | (출발점) 시간 조율 초안 §1~§4·§11 | (기존) | origin |
 
-**푸시 상태**: `origin/docs/spec-time-coordination`은 `e996bba`까지. 그 이후 로컬 미푸시 3 커밋(`9609bee`, `54e1532`, `adc444f`).
+**푸시 상태**: `origin/docs/spec-time-coordination`은 `e996bba`까지. 그 이후 **로컬 미푸시 5 커밋** (`9609bee`, `54e1532`, `adc444f`, `9ce7de4`, `d3b7d89`).
 
 ## 3. 수정한 파일
 
@@ -102,11 +104,14 @@
 ### 4.4 운영 결정 (1건)
 - **해결점 N** = audit-findings.md에 정식 헤더 추가 (PR-0 완료)
 
-## 5. 미결 결정 (1건)
+## 5. 미결 결정 (0건)
 
-| # | 결정 | 단서 | 처리 시점 |
-|---|---|---|---|
-| **Q7-c** | `preference_toggle_enabled=false` 트리거 조건 (게스트? 그룹·발화자 일치? 발화자 정보 부재?) | §3 페이로드 보강 | **PR-2 §3 작업 시** |
+모든 결정 해소 완료 (Q7-c는 PR-2에서 결정 + spec 반영).
+
+**잠재 후속 결정 (PR-3 작성 시 자연 발생 가능)**:
+- 게스트가 토글 누를 때의 narrator 문구 (Q15=A 실명 vs 게스트는 익명?)
+- refresh 라우트 에러 응답 형식 (rate limit 초과·권한 없음 등)
+- 단일 슬롯 거부 시 narrator 문구 (충돌 C3 해소 방법)
 
 ## 6. 남은 TODO
 
@@ -121,22 +126,16 @@
 - [ ] **pytest 실행** 검증 (`pytest backend/tests/unit/test_majority_fallback.py backend/tests/integration/test_f1_fallback_pipeline.py -v`)
 - [ ] **시연 시나리오 S8 수동 검증** (전원 가능 슬롯 0개 → 다수결 카드)
 
-### PR-2 — §1~§4 동반 확장 (다음 작업)
-- [ ] 헤더 라인1: "시간 조율 (Time Coordination)" → "시간·장소 조율"
-- [ ] 헤더 라인5: 대상 노드에 `place_recommendation`, `maedeup_card_creation` 추가
-- [ ] 헤더 line10 목적문: 장소 합의 보강
-- [ ] §1.1 핵심 가치 — 장소 가치 보강 1줄
-- [ ] §1.2 시스템 위치 — 노드 5/7 추가
-- [ ] §1.3 책임 경계 — 장소 추천·확정 책임 추가
-- [ ] §2 시나리오 — **S11~S14 장소 시나리오 4건 신설**
-- [ ] §3 페이로드 — §3.3 `place_recommendation_payload`, §3.4·§3.5 `maedeup_card_payload` 확정/partial + **`preference_source`/`preference_toggle_enabled` 키 추가** (Q7=B 반영)
-- [ ] §3.1 narrator — 4종 통합 + 토글 narrator 추가 (Q15=A "OOO님 선호 기준")
-- [ ] §4.1 R 매트릭스 — R7 `place_hint`, R8 `place_coord`, R9 `cuisine`
-- [ ] §4.2 P 매트릭스 — P4 음식 비선호, P5 areas, P6 transport_mode
-- [ ] §4.3 T 매트릭스 — T6 Kakao, T7 ML, T8 Gemini
-- [ ] §4.4 F 매트릭스 — F5 place_hint fallback(Q2 반영), F6 cuisine 미감지
-- [ ] **Q7-c 결정 받기** (PR-2 §3 작업 시점)
-- [ ] 변경 이력 갱신
+### ~~PR-2 — §1~§4 동반 확장~~ ✅ 완료 (`d3b7d89`)
+~~- 헤더·§1.1~1.3 시간+장소 보강~~
+~~- §2 S11~S14 장소 시나리오 4건~~
+~~- §3 페이로드 4종 통합 (vote/place/maedeup 확정·partial) + preference_source/toggle_enabled~~
+~~- §3.5 narrator 4종 통합 + 토글 narrator (Q15)~~
+~~- §4 R/P/T/F 매트릭스 장소 항목 추가 (R7~9·P4~6·T6~8·F5~6)~~
+~~- Q7-c 결정 (C1+C3+C4, C2 제외)~~
+~~- 변경 이력 갱신~~
+- [ ] (선택) §5.2.1 "3종 4변형" 헤더 검토 (place 별도 카드로 명시 후 4종 4변형 갱신 여부)
+- [ ] (선택) 노드 번호 (6a/6b/7) 정합 검증 — `pipeline-structure.html`·카탈로그와 일대일
 
 ### PR-3 — §6~§10 본격 신규 작성
 - [ ] **§6 상태 및 예외 처리** — slot turns, awaiting/timeout, F1·F4 fallback narrator, 동시성 race, 해결점 P 번복, O 정규식 사각지대, 토큰 만료/revoke, **단일 슬롯 거부 흐름** (충돌 C3), **partial 시 time_options 잠금** (충돌 C2)
@@ -162,14 +161,14 @@ cat docs/handoff/2026-05-14-spec-progress.md
 
 ### 다음 작업별 진입 명령
 
-**A. PR-2 시작 — §1~§4 보강 + Q7-c 결정**
-```
-PR-2 시작 — §1~§4 보강. Q7-c 결정 우선
-```
-
-**B. PR-3 시작 — §6~§10 본격 작성**
+**A. PR-3 시작 — §6~§10 본격 작성 (다음 우선)**
 ```
 PR-3 시작 — §6 상태·예외부터 절 단위로
+```
+
+**B. PR-4 시작 — §12·§13 신설**
+```
+PR-4 시작 — §12 비기능 + §13 부록
 ```
 
 **C. PR-4 시작 — §12·§13 신설**

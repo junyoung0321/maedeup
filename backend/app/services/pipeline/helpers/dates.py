@@ -229,7 +229,22 @@ def _fallback_parse_natural_date(text: str, now_kst: datetime) -> dict[str, Any]
         return None
 
     normalized_no_space = normalized.replace(" ", "")
-    if any(keyword in normalized_no_space for keyword in ("저녁", "밤")):
+    # Fix 7 (2026-05-14): 정수 시간 추출 우선 ("오후 6시", "저녁 8시", "9시 30분" 등).
+    # 기존 키워드 fallback ("오후"→13:00)이 정수 시간 정보 손실시키던 버그 해결.
+    time_match = re.search(r"(\d{1,2})\s*시(?:\s*(\d{1,2})\s*분)?", normalized)
+    if time_match:
+        hour = int(time_match.group(1))
+        minute = int(time_match.group(2) or 0)
+        # 오후/저녁/밤 + 12 미만 시간 → +12 (예: "오후 6시" → 18:00)
+        if any(kw in normalized_no_space for kw in ("저녁", "밤", "오후")) and hour < 12:
+            hour += 12
+        # 오전 12시 → 0시
+        if "오전" in normalized_no_space and hour == 12:
+            hour = 0
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            result["time"] = f"{hour:02d}:{minute:02d}"
+            result["is_flexible"] = False  # 명시 시간 = not flexible
+    elif any(keyword in normalized_no_space for keyword in ("저녁", "밤")):
         result["time"] = "18:00"
         result["is_flexible"] = True
     elif "오후" in normalized_no_space:

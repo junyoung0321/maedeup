@@ -82,8 +82,24 @@ def _engine(db_url: str) -> sa.Engine:
 
 
 def _seed_users(conn: Connection, rows: list[dict]) -> None:
-    """users 테이블에 직접 INSERT. id를 명시해 추적 쉽게."""
+    """users 테이블에 직접 INSERT. id를 명시해 추적 쉽게.
+
+    NOT NULL 컬럼은 호출자가 명시 안 하면 default로 채움 (테스트 편의):
+    - created_at: 현재 시각 (naive UTC, models/user.py 동일 패턴)
+    - share_*_data: True (opt-out 모델 기본)
+    - is_ai_filled: '{}' (빈 JSON)
+    - name: row id 기반 placeholder
+    """
+    from datetime import datetime, timezone
+
+    default_created_at = datetime.now(timezone.utc).replace(tzinfo=None)
     for row in rows:
+        row = dict(row)  # 복사 (caller 입력 보존)
+        row.setdefault("created_at", default_created_at)
+        row.setdefault("share_food_data", True)
+        row.setdefault("share_location_data", True)
+        row.setdefault("share_schedule_data", True)
+        row.setdefault("is_ai_filled", "{}")
         cols = ", ".join(row.keys())
         placeholders = ", ".join(f":{k}" for k in row.keys())
         conn.execute(sa.text(f"INSERT INTO users ({cols}) VALUES ({placeholders})"), row)

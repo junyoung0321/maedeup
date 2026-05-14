@@ -49,13 +49,13 @@ def upgrade() -> None:
         return
 
     # 1) server_default를 true로 변경 (이후 INSERT 기본값)
-    op.alter_column(
-        "users",
-        "calendar_consent",
-        existing_type=sa.Boolean(),
-        existing_nullable=False,
-        server_default=sa.true(),
-    )
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.alter_column(
+            "calendar_consent",
+            existing_type=sa.Boolean(),
+            existing_nullable=False,
+            server_default=sa.true(),
+        )
 
     # 2) 기존 row 일괄 UPDATE — 게스트 제외
     #    COALESCE로 is_guest NULL(과거 마이그레이션 잔존) 대비
@@ -85,10 +85,10 @@ def downgrade() -> None:
         return
 
     # server_default만 false로 복귀. 기존 동의 데이터는 보존.
-    op.alter_column(
-        "users",
-        "calendar_consent",
-        existing_type=sa.Boolean(),
-        existing_nullable=False,
-        server_default=sa.false(),
-    )
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.alter_column(
+            "calendar_consent",
+            existing_type=sa.Boolean(),
+            existing_nullable=False,
+            server_default=sa.false(),
+        )

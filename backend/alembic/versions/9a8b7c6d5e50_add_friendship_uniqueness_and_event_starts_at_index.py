@@ -32,11 +32,11 @@ def upgrade() -> None:
         return
     friendship_constraints = _unique_constraint_names("friendships")
     if "uq_friendships_requester_id_addressee_id" not in friendship_constraints:
-        op.create_unique_constraint(
-            "uq_friendships_requester_id_addressee_id",
-            "friendships",
-            ["requester_id", "addressee_id"],
-        )
+        with op.batch_alter_table("friendships") as batch_op:
+            batch_op.create_unique_constraint(
+                "uq_friendships_requester_id_addressee_id",
+                ["requester_id", "addressee_id"],
+            )
 
     if inspector.has_table("events"):
         event_indexes = _index_names("events")
@@ -54,8 +54,8 @@ def downgrade() -> None:
     if inspector.has_table("friendships"):
         friendship_constraints = _unique_constraint_names("friendships")
         if "uq_friendships_requester_id_addressee_id" in friendship_constraints:
-            op.drop_constraint(
-                "uq_friendships_requester_id_addressee_id",
-                "friendships",
-                type_="unique",
-            )
+            with op.batch_alter_table("friendships") as batch_op:
+                batch_op.drop_constraint(
+                    "uq_friendships_requester_id_addressee_id",
+                    type_="unique",
+                )

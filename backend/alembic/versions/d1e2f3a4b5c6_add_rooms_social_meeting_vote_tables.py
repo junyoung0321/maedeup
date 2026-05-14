@@ -188,9 +188,10 @@ def upgrade() -> None:
         op.create_index("ix_chat_messages_room_id", "chat_messages", ["room_id"])
     cm_fks = [f["name"] for f in inspector.get_foreign_keys("chat_messages")]
     if "fk_chat_messages_room_id" not in cm_fks:
-        op.create_foreign_key(
-            "fk_chat_messages_room_id", "chat_messages", "rooms", ["room_id"], ["id"]
-        )
+        with op.batch_alter_table("chat_messages") as batch_op:
+            batch_op.create_foreign_key(
+                "fk_chat_messages_room_id", "rooms", ["room_id"], ["id"]
+            )
 
     ev_cols = [c["name"] for c in inspector.get_columns("events")]
     if "room_id" not in ev_cols:
@@ -200,27 +201,33 @@ def upgrade() -> None:
         op.create_index("ix_events_room_id", "events", ["room_id"])
     ev_fks = [f["name"] for f in inspector.get_foreign_keys("events")]
     if "fk_events_room_id" not in ev_fks:
-        op.create_foreign_key("fk_events_room_id", "events", "rooms", ["room_id"], ["id"])
+        with op.batch_alter_table("events") as batch_op:
+            batch_op.create_foreign_key(
+                "fk_events_room_id", "rooms", ["room_id"], ["id"]
+            )
     if "meeting_id" not in ev_cols:
         op.add_column("events", sa.Column("meeting_id", sa.Integer(), nullable=True))
     if "fk_events_meeting_id" not in ev_fks:
-        op.create_foreign_key(
-            "fk_events_meeting_id", "events", "meeting_schedules", ["meeting_id"], ["id"]
-        )
+        with op.batch_alter_table("events") as batch_op:
+            batch_op.create_foreign_key(
+                "fk_events_meeting_id", "meeting_schedules", ["meeting_id"], ["id"]
+            )
 
 
 def downgrade() -> None:
     # events
-    op.drop_constraint("fk_events_meeting_id", "events", type_="foreignkey")
-    op.drop_column("events", "meeting_id")
-    op.drop_constraint("fk_events_room_id", "events", type_="foreignkey")
-    op.drop_index("ix_events_room_id", table_name="events")
-    op.drop_column("events", "room_id")
+    with op.batch_alter_table("events") as batch_op:
+        batch_op.drop_constraint("fk_events_meeting_id", type_="foreignkey")
+        batch_op.drop_column("meeting_id")
+        batch_op.drop_constraint("fk_events_room_id", type_="foreignkey")
+        batch_op.drop_index("ix_events_room_id")
+        batch_op.drop_column("room_id")
 
     # chat_messages
-    op.drop_constraint("fk_chat_messages_room_id", "chat_messages", type_="foreignkey")
-    op.drop_index("ix_chat_messages_room_id", table_name="chat_messages")
-    op.drop_column("chat_messages", "room_id")
+    with op.batch_alter_table("chat_messages") as batch_op:
+        batch_op.drop_constraint("fk_chat_messages_room_id", type_="foreignkey")
+        batch_op.drop_index("ix_chat_messages_room_id")
+        batch_op.drop_column("room_id")
 
     # new tables (reverse dependency order)
     op.drop_index("ix_ai_memories_user_id", table_name="ai_memories")

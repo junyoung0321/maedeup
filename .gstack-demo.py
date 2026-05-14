@@ -43,6 +43,58 @@ import sys
 import time
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+
+# ─── ACT 2 동적 날짜 계산 ─────────────────────────────────────────────────────
+# 실행 시점 기준 미래 날짜만 사용 → supervisor_validation "slot in the past" 방지
+WEEKDAYS_KO = ["월", "화", "수", "목", "금", "토", "일"]
+
+def _date_label(d: datetime, with_weekday: bool = False) -> str:
+    base = f"{d.month}/{d.day}"
+    if with_weekday:
+        return f"{base} {WEEKDAYS_KO[d.weekday()]}요일"
+    return base
+
+def _build_act2_messages() -> dict:
+    """ACT 2 발화 4건을 실행 시점 기준 동적 날짜로 생성."""
+    today = datetime.now()
+    # 이번주 거부 날짜 오프셋 (1~5일 후)
+    d1 = today + timedelta(days=1)   # 이번주 가장 가까운 날 (MT)
+    d2 = today + timedelta(days=2)   # 시험 기간 시작
+    d3 = today + timedelta(days=3)
+    d4 = today + timedelta(days=4)
+    d5 = today + timedelta(days=5)   # 시험 기간 끝
+    # 다음주 거부 날짜 오프셋 (7~12일 후)
+    d6 = today + timedelta(days=7)   # 다음주 초 (발표 준비)
+    d7 = today + timedelta(days=8)
+    # 민수 거부: 이번주 중간
+    d_minsu = today + timedelta(days=3)
+    # 예린 거부: 이번주 1일 (토 느낌)
+    d_yerin_this = today + timedelta(days=2)
+    # 예린 다음주 예외 (바쁘지 않은 1일)
+    d_yerin_free = today + timedelta(days=7)
+    # 예린 다음주 바쁨 기준 (free 빼고 다 바쁨)
+    d_yerin_busy_start = today + timedelta(days=8)
+
+    suhyun_msg = (
+        f"{_date_label(d1, with_weekday=True)}은 동아리 MT라 안 되고, "
+        f"{_date_label(d2)}·{_date_label(d3)}·{_date_label(d4)}·{_date_label(d5)}도 시험 기간이라 다 안 돼. "
+        f"다음주 {_date_label(d6)}·{_date_label(d7)}도 발표 준비 때문에 일정 잡혀있어"
+    )
+    minsu_msg = f"{_date_label(d_minsu)}은 본가 내려가야 해서 패스"
+    yerin_msg = (
+        f"{_date_label(d_yerin_this, with_weekday=True)}은 좀 쉬고 싶다… "
+        f"다음주도 사실 {_date_label(d_yerin_free)} 빼고 다 바빠"
+    )
+    return {
+        "suhyun": suhyun_msg,
+        "minsu": minsu_msg,
+        "yerin": yerin_msg,
+    }
+
+# 시연 시작 시점에 한 번만 계산 → 진행 중 일관성 유지
+ACT2_MSGS = _build_act2_messages()
+# ──────────────────────────────────────────────────────────────────────────────
 
 import websockets
 from playwright.async_api import Page, async_playwright
@@ -609,21 +661,20 @@ async def run_demo(flags: DemoFlags) -> None:
         await page.keyboard.press("Enter")
         await asyncio.sleep(pace["after_msg"])
 
-        # D-1 #1: 수현 발화 강화 — 5/13~5/16 + 5/19·5/20 직접 열거 (28일 확장 후 busy_by_user non-empty 보장)
-        suhyun_msg = (
-            "5/8 금요일은 동아리 MT라 안 되고, 5/13·5/14·5/15·5/16도 시험 기간이라 다 안 돼. "
-            "다음주 5/19·5/20도 발표 준비 때문에 일정 잡혀있어"
-        )
+        # D-1 #1: 수현 발화 강화 — 동적 날짜 열거 (28일 확장 후 busy_by_user non-empty 보장)
+        suhyun_msg = ACT2_MSGS["suhyun"]
         log(f"[수현] {suhyun_msg[:30]}... (강화된 거부)")
         await send_chat(room_id, suhyun, suhyun_msg)
         await asyncio.sleep(pace["after_msg"])
 
-        log("[민수] '9일은 본가 내려가야 해서 패스'")
-        await send_chat(room_id, minsu, "9일은 본가 내려가야 해서 패스")
+        minsu_msg = ACT2_MSGS["minsu"]
+        log(f"[민수] '{minsu_msg}'")
+        await send_chat(room_id, minsu, minsu_msg)
         await asyncio.sleep(pace["after_msg"])
 
-        log("[예린] '10일 토요일은 좀 쉬고 싶다… 다음주도 사실 5/11 빼고 다 바빠'")
-        await send_chat(room_id, yerin, "10일 토요일은 좀 쉬고 싶다… 다음주도 사실 5/11 빼고 다 바빠")
+        yerin_msg = ACT2_MSGS["yerin"]
+        log(f"[예린] '{yerin_msg}'")
+        await send_chat(room_id, yerin, yerin_msg)
 
         # ─────────────────────────────────────────────────
         hr("ACT 2.5 — F1 다수결 fallback vote_card 자동 발행")

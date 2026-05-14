@@ -1,9 +1,9 @@
 # 시간+장소 기능정의서 작성 — 진행 상태 핸드오프 (v3)
 
 작성: 2026-05-14
-최종 갱신: 2026-05-15 (QA + P2 hotfix 후 — **시연 GO 확정**)
+최종 갱신: 2026-05-15 (P3 hotfix 후 — **테스트 인프라 완성, 91/91 PASS**)
 작성자: 본인 + Claude Opus 4.7 (PM 모드 + QA 신설)
-브랜치: `docs/spec-time-coordination` (origin 푸시 = `e996bba` 시점까지, 그 후 로컬 `1892b50`까지 진행)
+브랜치: `docs/spec-time-coordination` (origin 푸시 = `e996bba` 시점까지, 그 후 로컬 `aaec29d`까지 진행)
 대상 문서 (PR-V로 3분할):
 - `docs/handoff/spec-common.md` — 공통 정책·권한·API·비기능·결정 안건·변경 이력 SoT (~700줄)
 - `docs/handoff/spec-time-coordination.md` — 시간 조율 본문 (~700줄, git mv로 history 보존)
@@ -30,10 +30,12 @@
 - **코드 작업**: PR-X·PR-Y1·PR-Y2 로컬 커밋 완료, **푸시 안 함**
 - **운영 모드**: PM 모드 — 리더는 분배·통합·결정 제안, 깊은 분석은 3담당 에이전트에 위임 (메모리 영구 저장)
 
-## 2. 이번 세션 변경 (커밋 37건)
+## 2. 이번 세션 변경 (커밋 39건)
 
 | # | SHA | 메시지 | 변경 | 상태 |
 |---|---|---|---|---|
+| 39 | `aaec29d` | fix(test-infra): P3 — alembic batch + JSON dialect + test seed (PR-V1.5.2) | +208 / -193 | 로컬 |
+| 38 | `dcc9c9c` | docs(handoff): v15 — QA + P2 hotfix 완료 반영 | +6 / -4 | 로컬 |
 | 37 | `1892b50` | fix(test-infra): QA P2 hotfix (PR-V1.5.1) — alembic·JSON·SENTINEL | +60 / -11 | 로컬 |
 | 36 | `625cdac` | docs(handoff): v14 — PR-V1.5 + Codex P1·P2 통합 반영 | +9 / -4 | 로컬 |
 | 35 | `90131f2` | feat(pipeline): spec v1.0 미구현 12건 + Codex P1·P2 (PR-V1.5) | +1342 / -54 | 로컬 |

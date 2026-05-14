@@ -1,10 +1,10 @@
 # 시간+장소 기능정의서 작성 — 진행 상태 핸드오프 (v3)
 
 작성: 2026-05-14
-최종 갱신: 2026-05-14 (PR-2 후)
+최종 갱신: 2026-05-14 (PR-3.1 후)
 작성자: 본인 + Claude Opus 4.7 (PM 모드)
-브랜치: `docs/spec-time-coordination` (origin 푸시 = `e996bba` 시점까지, 그 후 로컬 `d3b7d89`까지 진행)
-대상 문서: `docs/handoff/spec-time-and-place.md` (기능정의서, **544줄** PR-2 보강 후)
+브랜치: `docs/spec-time-coordination` (origin 푸시 = `e996bba` 시점까지, 그 후 로컬 `36eed6c`까지 진행)
+대상 문서: `docs/handoff/spec-time-and-place.md` (기능정의서, **755줄** PR-3.1 후)
 
 > **다음 세션 빠른 컨텍스트 복구**: `cat docs/handoff/2026-05-14-spec-progress.md` 한 줄로 본 문서를 먼저 읽으세요.
 
@@ -14,15 +14,17 @@
 
 - **스코프 확정**: 시간 + 장소 조율을 **한 문서**로 통합
 - **파일**: `docs/handoff/spec-time-and-place.md` (헤더·§1~§5·§11 시간+장소 통합 완료)
-- **작성 진행**: §1~§5 + §11 완성, **§6~§10 / §12 / §13 미작성**
+- **작성 진행**: §1~§6 + §11 완성, **§7~§10 / §12 / §13 미작성**
 - **결정 누적**: **31건 확정 + 0건 미결** (Q7-c 해소)
 - **코드 작업**: PR-X·PR-Y1·PR-Y2 로컬 커밋 완료, **푸시 안 함**
 - **운영 모드**: PM 모드 — 리더는 분배·통합·결정 제안, 깊은 분석은 3담당 에이전트에 위임 (메모리 영구 저장)
 
-## 2. 이번 세션 변경 (커밋 10건)
+## 2. 이번 세션 변경 (커밋 12건)
 
 | # | SHA | 메시지 | 변경 | 상태 |
 |---|---|---|---|---|
+| 12 | `36eed6c` | docs(handoff): spec §6 상태 및 예외 처리 (PR-3.1) | +216 / -5 | 로컬 |
+| 11 | `471128c` | docs(handoff): v4 갱신 — PR-2 완료 반영 | +31 / -32 | 로컬 |
 | 10 | `d3b7d89` | docs(handoff): spec §1~§4 시간+장소 보강 (PR-2, 12 위치) | +157 / -25 | 로컬 |
 | 9 | `9ce7de4` | docs(handoff): v3 갱신 — PR-X·Y1·Y2 완료 반영 | +119 / -88 | 로컬 |
 | 8 | `adc444f` | feat(frontend): F1 fallback vote_card UI (배너·배지·토글) | +132 / -11 | 로컬 |
@@ -36,7 +38,7 @@
 |   | `494807e` | docs(handoff): spec 파일 rename + 해결점 N 추가 | +29 / 0 | origin |
 |   | `1de2024` | (출발점) 시간 조율 초안 §1~§4·§11 | (기존) | origin |
 
-**푸시 상태**: `origin/docs/spec-time-coordination`은 `e996bba`까지. 그 이후 **로컬 미푸시 5 커밋** (`9609bee`, `54e1532`, `adc444f`, `9ce7de4`, `d3b7d89`).
+**푸시 상태**: `origin/docs/spec-time-coordination`은 `e996bba`까지. 그 이후 **로컬 미푸시 7 커밋** (`9609bee`, `54e1532`, `adc444f`, `9ce7de4`, `d3b7d89`, `471128c`, `36eed6c`).
 
 ## 3. 수정한 파일
 
@@ -137,12 +139,12 @@
 - [ ] (선택) §5.2.1 "3종 4변형" 헤더 검토 (place 별도 카드로 명시 후 4종 4변형 갱신 여부)
 - [ ] (선택) 노드 번호 (6a/6b/7) 정합 검증 — `pipeline-structure.html`·카탈로그와 일대일
 
-### PR-3 — §6~§10 본격 신규 작성
-- [ ] **§6 상태 및 예외 처리** — slot turns, awaiting/timeout, F1·F4 fallback narrator, 동시성 race, 해결점 P 번복, O 정규식 사각지대, 토큰 만료/revoke, **단일 슬롯 거부 흐름** (충돌 C3), **partial 시 time_options 잠금** (충돌 C2)
-- [ ] **§7 권한·접근 조건** — 멤버/방장/게스트 권한 매트릭스, viewer_user_id 멤버십 검증
-- [ ] **§8 데이터 정책** — opt-out 모델, `is_ai_filled` UI, k-anonymity 가드(소규모 방 N≤3), Redis 캐시 PII·만료, 동의 철회/삭제 SLA, **Q15 PII 트레이드오프 명시**
-- [ ] **§9 API·이벤트·로그** — 시간+장소 엔드포인트 표, **`POST /meetings/{id}/recommendations/refresh` 명세** (Q13 권한 + Q14 rate limit 반영), 구조화 로그 필드
-- [ ] **§10 회귀 테스트** — S1~S14 → pytest 매핑, fixture 패턴
+### PR-3 — §6~§10 본격 신규 작성 (절 단위)
+- [x] **PR-3.1 §6 상태 및 예외 처리** ✅ `36eed6c` — 13 하위 절, 충돌 C2·C3 해소
+- [ ] **PR-3.2 §7 권한·접근 조건** — 멤버/방장/게스트 권한 매트릭스, viewer_user_id 멤버십 검증, refresh 권한 (Q13=B 발화자+방장)
+- [ ] **PR-3.3 §8 데이터 정책** — opt-out 모델, `is_ai_filled` UI, k-anonymity 가드(소규모 방 N≤3), Redis 캐시 PII·만료, 동의 철회/삭제 SLA, **Q15 PII 트레이드오프 명시**
+- [ ] **PR-3.4 §9 API·이벤트·로그** — 시간+장소 엔드포인트 표, **`POST /meetings/{id}/recommendations/refresh` 명세** (Q13 권한 + Q14 rate limit 반영), 구조화 로그 필드
+- [ ] **PR-3.5 §10 회귀 테스트** — S1~S14 → pytest 매핑, fixture 패턴
 
 ### PR-4 — §12·§13 신설
 - [ ] **§12 비기능 요구사항** — 성능(P95 ≤ 10s), 가용성, 보안, 프라이버시, 접근성(WCAG 2.1 AA), 관측성 + 측정 지표
@@ -205,8 +207,8 @@ docker rebuild + pytest 실행
 | # | 충돌·트레이드오프 | 상태 |
 |---|---|---|
 | C1 | Q5 hybrid + Q7-b 방 전체 갱신 + Q15=A 실명 → 발화자 PII 간접 노출 | PR-2 §3에서 `toggled_by: user_id` + Q7-c 차단 조건으로 완화 |
-| C2 | Q9 번복 불가 + Q7-b refresh → partial 상태 토글 시 시간 변경 가능성 | PR-3 §9 refresh 라우트 명세에서 "partial/confirmed 시 time_options 잠금" 명시 |
-| C3 | Q1=B 단일 슬롯 + 거부 흐름 미정의 | PR-3 §6에 "단일 슬롯 거부 → rejected_dates 누적 → F1 또는 N" 명시 |
+| ~~C2~~ | ~~Q9 번복 불가 + Q7-b refresh → partial 상태 토글 시 시간 변경 가능성~~ | **PR-3.1 §6.9로 해소** (refresh가 partial 시 time_options 잠금 명시) |
+| ~~C3~~ | ~~Q1=B 단일 슬롯 + 거부 흐름 미정의~~ | **PR-3.1 §6.8로 해소** (단일 거부 → rejected_dates 누적 → F1 또는 N) |
 | ~~C4~~ | ~~opt-out 정책 + calendar_consent default=False 모순~~ | **PR-X로 해소** (`9609bee`) |
 
 ## 10. 참고 SoT

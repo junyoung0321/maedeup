@@ -41,6 +41,7 @@ from app.services.pipeline.helpers.messaging import (
 from app.services.pipeline.helpers.slot_state import _normalize_preferred_times
 from app.services.pipeline.helpers.slots import _filter_out_rejected
 from app.services.pipeline.state import GraphState
+from app.services.slot_ranker import rank_slots
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +229,26 @@ async def vote_card_creation(state: GraphState) -> GraphState:
             weekday_only = [s for s in vote_slots if not s.get("is_weekend", False)]
             if weekday_only:
                 vote_slots = weekday_only
+
+        # Fix 11 (2026-05-14): slot_ranker로 모임 유형 기반 재정렬.
+        # 식사면 12~13/18~20시, 카페면 14~15시 등 시간대 점수화.
+        # multi_date_vote는 날짜별 카드라 시간 순위 무의미 → skip.
+        # preference_based는 이미 선호 시간대로 만들어졌으니 추가 정렬 불필요 → skip.
+        if not is_multi_date and not is_preference_based and len(vote_slots) >= 2:
+            try:
+                ranked = rank_slots(
+                    vote_slots,
+                    {"meeting_type": state.get("meeting_type")},
+                    top_k=len(vote_slots),  # 전체 유지, 순서만 변경
+                )
+                if ranked:
+                    vote_slots = ranked
+                    logger.info(
+                        "[FIX-11] vote_slots reranked by slot_ranker (meeting_type=%s)",
+                        state.get("meeting_type"),
+                    )
+            except Exception:
+                logger.debug("slot_ranker failed, keeping original order", exc_info=True)
 
         # meeting_id가 없으면 DB에 pending meeting 생성 (필터된 vote_slots 사용)
         if not meeting_id:

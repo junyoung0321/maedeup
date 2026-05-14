@@ -55,33 +55,42 @@ def _date_label(d: datetime, with_weekday: bool = False) -> str:
         return f"{base} {WEEKDAYS_KO[d.weekday()]}요일"
     return base
 
-def _build_act2_messages() -> dict:
-    """ACT 2 발화 4건을 실행 시점 기준 동적 날짜로 생성.
+def _nth_upcoming_weekday(today: datetime, n: int) -> datetime:
+    """today 이후 n번째 평일 (월~금). n=1이면 오늘 다음 평일.
 
-    금요일·주말 실행 시 today+N이 다음주로 spill되는 문제를 방지하기 위해
-    이번주 월요일을 anchor로 사용한다.
-    과거 날짜 거부 발화는 backend가 rejected_dates에 추가하지만 후보 선정에는
-    미래 슬롯만 쓰이므로 시연 흐름에 영향 없음.
+    오늘 요일 무관 항상 미래 날짜를 반환 → backend 'slot in the past' 거부 방지.
+    """
+    d = today
+    count = 0
+    while count < n:
+        d += timedelta(days=1)
+        if d.weekday() < 5:  # 토(5)·일(6) skip
+            count += 1
+    return d
+
+
+def _build_act2_messages() -> dict:
+    """ACT 2 발화 4건을 실행 시점 기준 미래 평일로 생성.
+
+    _nth_upcoming_weekday 헬퍼를 사용해 오늘 요일 무관 항상 미래 날짜만 생성.
+    금요일·주말 실행 시 과거 날짜가 포함되던 J2 회귀를 해소.
     """
     today = datetime.now()
-    # 이번주 월요일 anchor (월=0, ..., 일=6)
-    this_monday = today - timedelta(days=today.weekday())
 
-    # 이번주 요일별 날짜
-    d1 = this_monday + timedelta(days=4)   # 이번주 금 — MT
-    d2 = this_monday + timedelta(days=1)   # 이번주 화 — 시험기간 시작
-    d3 = this_monday + timedelta(days=2)   # 이번주 수
-    d4 = this_monday + timedelta(days=3)   # 이번주 목
-    d5 = this_monday + timedelta(days=5)   # 이번주 토 — 시험기간 끝
-    # 다음주 거부
-    d6 = this_monday + timedelta(days=8)   # 다음주 화 — 발표 준비
-    d7 = this_monday + timedelta(days=9)   # 다음주 수
-    # 민수 거부: 이번주 목
-    d_minsu = this_monday + timedelta(days=3)
-    # 예린 거부: 이번주 토
-    d_yerin_this = this_monday + timedelta(days=5)
-    # 예린 다음주 예외 (바쁘지 않은 1일): 다음주 월
-    d_yerin_free = this_monday + timedelta(days=7)
+    # 수현 거부: next upcoming 1(MT) + 2·3·4·5(시험기간) + 6·7(발표 준비)
+    d1 = _nth_upcoming_weekday(today, 1)   # MT
+    d2 = _nth_upcoming_weekday(today, 2)   # 시험기간 시작
+    d3 = _nth_upcoming_weekday(today, 3)
+    d4 = _nth_upcoming_weekday(today, 4)
+    d5 = _nth_upcoming_weekday(today, 5)   # 시험기간 끝
+    d6 = _nth_upcoming_weekday(today, 6)   # 발표 준비
+    d7 = _nth_upcoming_weekday(today, 7)
+    # 민수 거부: next upcoming 3
+    d_minsu = _nth_upcoming_weekday(today, 3)
+    # 예린 거부: next upcoming 2 (쉬고싶다)
+    d_yerin_this = _nth_upcoming_weekday(today, 2)
+    # 예린 다음주 예외 (바쁘지 않은 1일): next upcoming 7
+    d_yerin_free = _nth_upcoming_weekday(today, 7)
     # (d_yerin_busy_start 변수는 발화에 미사용, 제거)
 
     suhyun_msg = (
@@ -838,8 +847,49 @@ async def run_demo(flags: DemoFlags) -> None:
         if not place_appeared:
             log("⚠️  장소 카드 미발견 (60s)")
         else:
-            log(f"카드 확인 시간 ({pace['view_pause']}s) 후 첫 장소 클릭")
+            log(f"carousel 확인 시간 ({pace['view_pause']}s) — 토글 진입 전 시연자 narration")
             await asyncio.sleep(pace["view_pause"])
+
+        # ─────────────────────────────────────────────────
+        # ACT 5.5 — Q5 hybrid 토글 ("내 선호") + F4 narrator
+        # carousel 노출 상태 (place 미확정)에서 진입 → done 페이지 전환 전 토글 시연
+        # ─────────────────────────────────────────────────
+        toggle_clicked = False
+        if not flags.skip_act_5_5:
+            hr("ACT 5.5 — Q5 hybrid 토글 ('내 선호') + F4 실명 narrator")
+
+            # step 1: "내 선호" 토글 노출 대기 (preference_toggle_enabled=true 조건)
+            log("'내 선호' 토글 노출 대기 (최대 10s)...")
+            toggle_visible = await wait_for_button(page, "내 선호", timeout_s=10.0)
+            if not toggle_visible:
+                # B-5 대응: preference_toggle_enabled=false → 토글 미노출. ACT 5.5 스킵.
+                log("[BACKUP] '내 선호' 토글 미노출 (preference_toggle_enabled=false 추정) — ACT 5.5 스킵")
+            else:
+                log("step 1 — '내 선호' 토글 클릭")
+                toggle_clicked = await click_preference_toggle(page, "내 선호")
+                if not toggle_clicked:
+                    log("[BACKUP] 토글 클릭 실패 — ACT 5.5 스킵")
+                else:
+                    # step 2: refresh API 응답 + carousel rerender 대기
+                    log(f"refresh API + carousel rerender 대기 ({pace['act_5_5_after_toggle']}s)")
+                    await asyncio.sleep(pace["act_5_5_after_toggle"])
+
+                    # step 3: narrator 노출 확인 ("님 선호 기준으로 다시 추천했어요")
+                    narrator_shown = await wait_for_text(page, "선호 기준", timeout_s=5.0)
+                    if narrator_shown:
+                        log("  ✓ narrator: '○○님 선호 기준으로 다시 추천했어요' 노출 확인")
+                    else:
+                        log("  [INFO] narrator 미확인 — refresh는 실행됐을 수 있음 (Idempotency 캐시 가능)")
+
+                    log(f"refreshed carousel narration ({pace['act_5_5_view_pause']}s)")
+                    await asyncio.sleep(pace["act_5_5_view_pause"])
+        else:
+            log("[FLAG] --skip-act-5-5 — Q5 hybrid 토글 스킵")
+
+        # ─────────────────────────────────────────────────
+        # ACT 5 후속 — 첫 카드 클릭 → PlaceDetailPane → "이 장소로 확정"
+        # ACT 5.5 토글 후 새 carousel(또는 원래 carousel)에서 첫 카드 클릭
+        # ─────────────────────────────────────────────────
 
         # 첫 장소 카드: '이 장소로 확정' 버튼의 가장 가까운 카드 컨테이너 → 가장 위에 있는 굵은 텍스트
         clicked_place = await js_eval(
@@ -912,43 +962,9 @@ async def run_demo(flags: DemoFlags) -> None:
             if not ok:
                 log("⚠️  '이 장소로 확정' 버튼 못 찾음")
             await asyncio.sleep(pace["after_place_confirm"])
+            # → VoteCardSection.handleConfirmPlace가 schedule confirmed 후 2초 내 done 페이지 전환
         else:
             log("⚠️  장소 카드 미발견 — 장소 확정 스킵")
-
-        # ─────────────────────────────────────────────────
-        # ACT 5.5 — Q5 hybrid 토글 ("내 선호") + F4 narrator
-        # ─────────────────────────────────────────────────
-        toggle_clicked = False
-        if not flags.skip_act_5_5:
-            hr("ACT 5.5 — Q5 hybrid 토글 ('내 선호') + F4 실명 narrator")
-
-            # step 1: "내 선호" 토글 노출 대기 (preference_toggle_enabled=true 조건)
-            log("'내 선호' 토글 노출 대기 (최대 10s)...")
-            toggle_visible = await wait_for_button(page, "내 선호", timeout_s=10.0)
-            if not toggle_visible:
-                # B-5 대응: preference_toggle_enabled=false → 토글 미노출. ACT 5.5 스킵.
-                log("[BACKUP] '내 선호' 토글 미노출 (preference_toggle_enabled=false 추정) — ACT 5.5 스킵")
-            else:
-                log("step 1 — '내 선호' 토글 클릭")
-                toggle_clicked = await click_preference_toggle(page, "내 선호")
-                if not toggle_clicked:
-                    log("[BACKUP] 토글 클릭 실패 — ACT 5.5 스킵")
-                else:
-                    # step 2: refresh API 응답 + carousel rerender 대기
-                    log(f"refresh API + carousel rerender 대기 ({pace['act_5_5_after_toggle']}s)")
-                    await asyncio.sleep(pace["act_5_5_after_toggle"])
-
-                    # step 3: narrator 노출 확인 ("님 선호 기준으로 다시 추천했어요")
-                    narrator_shown = await wait_for_text(page, "선호 기준", timeout_s=5.0)
-                    if narrator_shown:
-                        log("  ✓ narrator: '○○님 선호 기준으로 다시 추천했어요' 노출 확인")
-                    else:
-                        log("  [INFO] narrator 미확인 — refresh는 실행됐을 수 있음 (Idempotency 캐시 가능)")
-
-                    log(f"refreshed carousel narration ({pace['act_5_5_view_pause']}s)")
-                    await asyncio.sleep(pace["act_5_5_view_pause"])
-        else:
-            log("[FLAG] --skip-act-5-5 — Q5 hybrid 토글 스킵")
 
         # ─────────────────────────────────────────────────
         hr("결과 검증 (verify_demo_completion)")

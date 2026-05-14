@@ -763,10 +763,12 @@ async def agent_ws(
             if isinstance(manual_time, dict):
                 sc["manual_chosen_time"] = manual_time
 
-            # P1 fix: viewer_user_id = 실제 trigger 발화자.
+            # P1 fix (v2): viewer_user_id = 실제 trigger 발화자.
             # trigger_message_id가 있으면 해당 ChatMessage.user_id 조회 (stalemate / conclusion).
-            # 없으면 (all_members_selected 등) lock winner인 user_id_check로 fallback.
-            trigger_author_id: Optional[int] = user_id_check
+            # 없으면 (all_members_selected 등) None으로 safe fallback — lock-winner(user_id_check)는
+            # multi-member 환경에서 임의 멤버 user_id가 될 수 있어 다른 멤버의 context 누출 위험.
+            # None 시 _run_auto_trigger_pipeline이 requester_* 주입을 graceful skip.
+            trigger_author_id: Optional[int] = None
             trigger_msg_id = trigger.get("trigger_message_id")
             if trigger_msg_id is not None:
                 try:
@@ -776,7 +778,7 @@ async def agent_ws(
                             trigger_author_id = _msg.user_id
                 except Exception:
                     logger.debug(
-                        "[AUTO_TRIGGER] could not resolve trigger_message_id=%s, using lock-winner",
+                        "[AUTO_TRIGGER] could not resolve trigger_message_id=%s, using None",
                         trigger_msg_id,
                     )
 

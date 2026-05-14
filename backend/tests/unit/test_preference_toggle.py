@@ -12,14 +12,26 @@ from app.services.pipeline.helpers.preference_toggle import (
 )
 
 
+# SENTINEL: kwargs 미지정(default 적용) vs 명시적 None 전달을 구분하기 위한 마커.
+# `_make_state(prefs=None)`처럼 None을 명시한 호출이 default 값으로 덮어쓰여지지
+# 않도록 한다 (C4 차단 조건 테스트가 prefs=None을 그대로 전달해야 한다).
+_SENTINEL: object = object()
+
+
 def _make_state(
     *,
-    home_base: str | None = "서울 강남",
-    prefs: dict | None = None,
+    home_base: str | object = _SENTINEL,
+    prefs: dict | None | object = _SENTINEL,
     preference_source: str | None = None,
 ) -> dict:
-    """GraphState-like dict factory. dict는 TypedDict의 런타임 표현."""
-    if prefs is None:
+    """GraphState-like dict factory. dict는 TypedDict의 런타임 표현.
+
+    home_base / prefs는 _SENTINEL일 때만 default를 적용하므로, 호출자가
+    `home_base=None` 또는 `prefs=None`을 명시하면 그 값이 그대로 state에 들어간다.
+    """
+    if home_base is _SENTINEL:
+        home_base = "서울 강남"
+    if prefs is _SENTINEL:
         prefs = {
             "food_preferences": ["한식"],
             "food_restrictions": None,
@@ -168,12 +180,17 @@ def test_compute_source_invalid_falls_back_to_group():
 
 def _make_state_with_group(
     *,
-    home_base: str | None = "서울 강남",
+    home_base: str | object = _SENTINEL,
     speaker_foods: list[str] | None = None,
     group_home: str | None = None,
     group_foods: list[str] | None = None,
 ) -> dict:
-    """그룹 컨텍스트가 포함된 state factory."""
+    """그룹 컨텍스트가 포함된 state factory.
+
+    home_base는 SENTINEL일 때만 default("서울 강남")를 적용한다 (None 명시 가능).
+    """
+    if home_base is _SENTINEL:
+        home_base = "서울 강남"
     state = _make_state(
         home_base=home_base,
         prefs={

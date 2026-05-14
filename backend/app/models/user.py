@@ -25,9 +25,12 @@ class User(SQLModel, table=True):
     transport_mode: Optional[str] = Field(default=None, max_length=32)
     # category_name(str) → AI가 채웠는지 여부(bool). 사용자 수동 수정 시 False.
     # 홈 PersonalData UI의 ✨ 마크 결정에 사용.
+    # server_default는 dialect-agnostic 문자열 리터럴을 사용한다.
+    # postgres에서도 JSON 컬럼은 '{}' 그대로 valid (::json cast 불필요), sqlite는
+    # ::json 토큰을 인식하지 못해 마이그레이션이 실패한다. 양쪽 호환을 위해 단순화.
     is_ai_filled: dict[str, bool] = Field(
         default_factory=dict,
-        sa_column=Column(JSON(), nullable=False, server_default=text("'{}'::json")),
+        sa_column=Column(JSON(), nullable=False, server_default=text("'{}'")),
     )
 
     google_access_token: Optional[str] = Field(default=None, sa_column=Column(Text(), nullable=True))

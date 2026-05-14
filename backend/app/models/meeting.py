@@ -36,9 +36,12 @@ class MeetingSchedule(SQLModel, table=True):
     vote_options: Optional[list[dict[str, Any]]] = Field(default=None, sa_column=Column(JSON(), nullable=True))
     votes: Optional[dict[str, int]] = Field(default=None, sa_column=Column(JSON(), nullable=True))
     status: str = Field(sa_column=sa.Column(sa.String(32), nullable=False, server_default="pending"))
+    # P2-2 hotfix: server_default를 dialect-agnostic 문자열 리터럴로 변경.
+    # postgres JSON 컬럼은 '{}' 그대로 valid (::json cast 불필요), sqlite는 ::json을
+    # parse 못 해 SQL 토큰 에러를 던진다. user.py is_ai_filled와 동일 처리.
     google_event_ids: dict[str, str] = Field(
         default_factory=dict,
-        sa_column=Column(JSON(), nullable=False, server_default=text("'{}'::json")),
+        sa_column=Column(JSON(), nullable=False, server_default=text("'{}'")),
     )
     created_by: int = Field(foreign_key="users.id")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))

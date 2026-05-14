@@ -1,7 +1,7 @@
-# 시간+장소 기능정의서 작성 — 진행 상태 핸드오프 (v18)
+# 시간+장소 기능정의서 작성 — 진행 상태 핸드오프 (v19)
 
 작성: 2026-05-14
-최종 갱신: 2026-05-15 (QA 시연 dry-run v2 완료 — **ACT 1·2·4·5 풀 시나리오 PASS, P0 0건**)
+최종 갱신: 2026-05-15 (v3 자동화 PR — `.gstack-demo.py` 풀 패치 + `seed_demo_calendar_busy.py` 신설 + 푸시 완료)
 작성자: 본인 + Claude Opus 4.7 (PM 모드 + QA + Playwright MCP)
 브랜치: `docs/spec-time-coordination` (origin 푸시 = `e996bba` 시점까지, 그 후 로컬 `0ffdfbe`까지 진행)
 대상 문서 (PR-V로 3분할):
@@ -29,12 +29,30 @@
 - **결정 누적**: 30+ 결정 확정 (Q1~Q17 + Q-X + Q-Y + 운영 + 신규 6건, `docs/DECISIONS.md` SoT)
 - **테스트**: 신규 12 파일 91/91 PASS ✅
 - **QA 검증 (2026-05-15)**: dry-run v2 풀 자동 재현 PASS — ACT 1→2→4→5 통과, room 72/meeting 88/수담한정식 강남점 확정, 백엔드 ERROR 0건, 스크린샷 6장
-- **코드 작업**: 로컬 38+ 커밋, **푸시 안 함** (사용자 명시 승인 후)
-- **운영 모드**: PM 4담당 + QA (메모리 영구 저장, `feedback_pm_operating_mode.md` / `feedback_qa_runtime_role.md` / `feedback_handoff_auto_update.md`)
+- **QA v3 시나리오 점검**: GREEN 근접 — D-1 5건 반영 완료, F4 narrator 백엔드 미구현은 v1.6 backlog #13 이관
+- **시연 자동화 v3 (2026-05-15)**: `.gstack-demo.py` 풀 패치 (812줄), `seed_demo_calendar_busy.py` 신설 (272줄). ACT 0.5·3·5.5 모두 자동, CLI 인자로 v2 fallback·개별 스킵 가능
+- **코드 작업**: 로컬 ahead 0, 푸시 완료 (`9c8c076`까지) + v19 작업물 미커밋
+- **운영 모드**: PM 4담당 + QA (메모리 영구 저장, `feedback_pm_operating_mode.md` / `feedback_qa_runtime_role.md` / `feedback_handoff_auto_update.md`). Sonnet 강등 규칙 (코드 분석·문서/기획·Explore = Sonnet 기본)
 - **시연 환경**: Windows PowerShell + `.venv\Scripts\python.exe` (WSL 사용 금지, BUG-1 결정)
 - **복구 문서**: `docs/SESSION_STATE.md` + `docs/TODO.md` + `docs/DECISIONS.md` + `docs/BUGS.md` 4 파일 — compact 후 첫 읽기
 
-## 2. 이번 세션 변경 (커밋 39+ + QA v2 검증 + 복구 4 파일)
+## 2. 이번 세션 변경 (커밋 40+ + QA v2 검증 + v3 자동화 + 복구 4 파일)
+
+### v19 추가 (2026-05-15 v3 자동화 PR)
+
+- **`.gstack-demo.py` 풀 패치** (Opus dispatch, 443 → 812줄, +407 / -38)
+  - 신설 ACT 0.5 (Personal Data 모달) · ACT 3 (시간 투표 전체 흐름) · ACT 5.5 (Q5 hybrid 토글)
+  - 신설 헬퍼 7개 (`get_pending_meeting_id`·`vote_as_user`·`wait_for_text`·`click_first_vote_slot`·`click_personal_data_widget`·`close_personal_data_modal`·`click_preference_toggle`)
+  - 신설 dataclass `DemoFlags` + CLI 4개 (`--v2-mode` · `--skip-act-0-5` · `--skip-act-3` · `--skip-act-5-5`)
+  - ACT 2 수현 발화 강화 (D-1 #1, 5/19·5/20 발표 준비) + 4번째 메시지 예린 게스트로 변경
+  - ACT 5 입력 단순화 (D-1 #5, `"강남 한식 추천해줘"`)
+  - 백업 B-5·B-8-시나리오4 자동 우회 처리
+  - `verify_demo_completion` 검증 헬퍼 추가
+- **`backend/scripts/seed_demo_calendar_busy.py` 신설** (Sonnet dispatch, 272줄)
+  - 로컬 Event INSERT 없이 `calendar_consent=True` + synthetic `google_refresh_token` 주입
+  - 기존 real 토큰 보호 + 게스트 자동 skip + `--clean`/`--dry-run`/`--users`/`--user-ids`
+  - 핵심 발견: `busy_by_user`는 Google Calendar FreeBusy API 실시간 구성. synthetic placeholder로 `consenting_users` 조건 통과 → majority_fallback 로직 진입 보장
+- **푸시**: `origin/docs/spec-time-coordination` `e996bba → 9c8c076` (36 커밋), ahead/behind 0/0 동기
 
 ### v18 추가 (2026-05-15 QA dry-run v2 + 복구 문서)
 - **QA dry-run v2 PASS** (taskId `a9dbbaccb1eb8c374`, 8m38s): ACT 1·2·4·5 풀 자동 재현, 백엔드 ERROR 0건, 스크린샷 6장 (`qa-v2-act1`/`act2`/`act4`/`act5-cards`/`act5-confirmed`/`final-success`)

@@ -20,9 +20,16 @@ Phase 4 분할 (2026-05-13). 로직 변경 없음 — 순수 이동.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import datetime, timedelta
 from typing import Any
+
+# Fix 14 (2026-05-14): 사람 명사 패턴 — headcount 최소 2명 추정용.
+_PEOPLE_NOUN_RE = re.compile(
+    r"친구들|친구|사람들|사람|멤버|동료|동기|선배|후배|"
+    r"우리|저희|모두|다같이|같이|함께|일행"
+)
 
 from app.services import scheduling_round as sr
 from app.services.pipeline.constants import KST
@@ -75,12 +82,25 @@ async def slot_filling(state: GraphState) -> GraphState:
 
 
 def _enrich_with_preferences(state: GraphState, pref_data: dict[str, Any]) -> None:
+    # Fix 14 (2026-05-14): 사용자 메시지에 사람 명사 ("친구들/사람들/멤버" 등) 있으면
+    # headcount fallback 시 최소 2명 보장. 방 멤버 1명이라도 "친구들이랑" 명시했으면
+    # 혼자 모임이 아님. AI가 "1명이요" 답하는 버그 방지.
+    text_signals = ""
+    for msg in (state.get("message_records") or []):
+        if msg.get("role") == "user" and msg.get("content"):
+            text_signals += " " + str(msg["content"])
+    has_people_noun = bool(_PEOPLE_NOUN_RE.search(text_signals))
+
     if pref_data.get("has_preferences") and state.get("intent") != "place_suggestion":
         if not state.get("place_hint") and pref_data.get("best_location"):
             state["place_hint"] = pref_data["best_location"]
             logger.info("[PREF] place_hint set from preferences: %s", pref_data["best_location"])
         if not state.get("headcount") and pref_data.get("total_members"):
-            state["headcount"] = pref_data["total_members"]
+            default_hc = pref_data["total_members"]
+            if default_hc < 2 and has_people_noun:
+                default_hc = 2
+                logger.info("[FIX-14] people noun detected, bumping headcount fallback to 2")
+            state["headcount"] = default_hc
         if not state.get("meeting_type"):
             state["meeting_type"] = "모임"
         if pref_data.get("all_submitted") and state.get("intent") in (

@@ -410,17 +410,56 @@ async def close_personal_data_modal(page: Page) -> bool:
 
 
 async def click_preference_toggle(page: Page, label: str = "내 선호") -> bool:
-    """PlaceRecommendationCard.tsx:212~238 hybrid 토글 클릭.
+    """PlaceRecommendationCard.tsx:204~251 hybrid 토글 클릭.
 
     `[그룹 다수결] [내 선호]` 토글 중 label에 해당하는 button 클릭.
     aria-pressed=false 인 버튼만 활성 클릭 대상 (이미 active면 onClick early return).
+
+    P2 fix: 검색 범위를 PlaceRecommendationCard 컨테이너 내부로 제한.
+    PlaceRecommendationCard.tsx:198 — "장소 추천" span이 카드 헤더 내 유일 텍스트.
+    PlaceRecommendationCard.tsx:183 — outer div background="#f1f5f9"(rgb(241,245,249)), borderRadius:18.
+    해당 span을 앵커로 closest 조상 div(background rgb(241,245,249))를 카드 루트로 특정 →
+    그 안에서만 토글 버튼 탐색.
+    ScheduleRecommendationCard는 background="#f8fafc"(rgb(248,250,252)) → 색이 달라 교차 매칭 없음.
     """
     js = f"""
     (() => {{
-      const btns = Array.from(document.querySelectorAll('button')).filter(
+      // 1단계: "장소 추천" 헤더 span → PlaceRecommendationCard 컨테이너 특정
+      const header = Array.from(document.querySelectorAll('span')).find(
+        s => s.innerText && s.innerText.trim() === '장소 추천' && s.offsetParent
+      );
+      // 컨테이너 후보: header 조상 중 background가 rgb(241, 245, 249) 인 div
+      let container = null;
+      if (header) {{
+        let el = header.parentElement;
+        while (el && el.tagName !== 'BODY') {{
+          if (el.tagName === 'DIV') {{
+            const bg = window.getComputedStyle(el).backgroundColor;
+            if (bg === 'rgb(241, 245, 249)') {{
+              container = el;
+              break;
+            }}
+          }}
+          el = el.parentElement;
+        }}
+      }}
+      // 2단계: 컨테이너 내부에서만 토글 탐색 (fallback: 전체 DOM 중 가장 아래쪽 매칭 버튼)
+      const scope = container || document;
+      const btns = Array.from(scope.querySelectorAll('button')).filter(
         b => b.innerText && b.innerText.trim() === {json.dumps(label)} && b.offsetParent
       );
-      if (!btns.length) return 'not_found';
+      if (!btns.length) {{
+        // fallback: 컨테이너 미발견 시 DOM 위치 가장 아래쪽 버튼 (최근 렌더된 카드가 PlaceCard 가정)
+        const allBtns = Array.from(document.querySelectorAll('button')).filter(
+          b => b.innerText && b.innerText.trim() === {json.dumps(label)} && b.offsetParent
+        );
+        if (!allBtns.length) return 'not_found';
+        allBtns.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
+        const last = allBtns[0];
+        if (last.getAttribute('aria-pressed') !== 'false' || last.disabled) return 'already_active';
+        last.click();
+        return 'clicked_fallback';
+      }}
       // aria-pressed=false 또는 disabled 아닌 첫 번째
       const target = btns.find(b => b.getAttribute('aria-pressed') === 'false' && !b.disabled);
       if (!target) return 'already_active';
@@ -429,7 +468,9 @@ async def click_preference_toggle(page: Page, label: str = "내 선호") -> bool
     }})()
     """
     result = await js_eval(page, js)
-    if result == "clicked":
+    if result in ("clicked", "clicked_fallback"):
+        if result == "clicked_fallback":
+            log(f"  [INFO] '{label}' 토글: PlaceCard 컨테이너 미발견, DOM 최하단 버튼 fallback 사용")
         return True
     log(f"  [BACKUP] '{label}' 토글: {result}")
     return False
@@ -587,17 +628,36 @@ async def run_demo(flags: DemoFlags) -> None:
         # ─────────────────────────────────────────────────
         hr("ACT 2.5 — F1 다수결 fallback vote_card 자동 발행")
         # ─────────────────────────────────────────────────
-        log("트리거 + LLM + sync — vote_card 버튼 폴링 (최대 60s)...")
-        appeared = await wait_for_button(page, "로 확정", timeout_s=60.0)
-        if not appeared:
-            log("⚠️  vote_card 버튼 60s 이내 미발견 — ACT 3/4 스킵")
+        # P1 fix: vote_card 발현 신호는 "추천" 배지(안정적 텍스트)로 먼저 감지.
+        # ScheduleRecommendationCard:449~454 — 베스트 슬롯 div 내 "추천" 배지 span이
+        # selectedSlotId 여부와 무관하게 카드 렌더 시점부터 항상 존재.
+        # "로 확정" 텍스트는 selectedSlotId 세팅 후에야 나타나므로 여기서 폴링하면 안 됨.
+        log("트리거 + LLM + sync — vote_card '추천' 배지 폴링 (최대 60s)...")
+        vote_card_appeared = await wait_for_text(page, "AI 일정 추천", timeout_s=60.0)
+        if not vote_card_appeared:
+            log("⚠️  vote_card 60s 이내 미발견 — ACT 3/4 스킵")
             confirm_btn = []
         else:
-            confirm_btn = await js_eval(
-                page,
-                "Array.from(document.querySelectorAll('button')).filter(b => b.innerText && b.innerText.includes('로 확정') && b.offsetParent).map(b => b.innerText)",
-            )
-            log(f"vote_card 버튼 발견: {confirm_btn[0] if confirm_btn else '?'}")
+            log("vote_card 발현 확인 (AI 일정 추천 헤더 노출)")
+            # 슬롯 클릭 먼저 수행 → selectedSlotId 세팅 → 그 후 "로 확정" 버튼 텍스트 생성
+            log("vote_card 슬롯 사전 클릭 (selectedSlotId 세팅 — '로 확정' 텍스트 생성용)")
+            pre_slot_ok = await click_first_vote_slot(page)
+            if not pre_slot_ok:
+                await asyncio.sleep(0.8)
+                pre_slot_ok = await click_first_vote_slot(page)
+            if pre_slot_ok:
+                await asyncio.sleep(0.5)
+            # 이제 "로 확정" 버튼이 렌더됐는지 확인 (최대 5s)
+            appeared = await wait_for_button(page, "로 확정", timeout_s=5.0)
+            if not appeared:
+                log("⚠️  슬롯 클릭 후에도 '로 확정' 버튼 미발견 — fallback: confirm_btn 비움")
+                confirm_btn = []
+            else:
+                confirm_btn = await js_eval(
+                    page,
+                    "Array.from(document.querySelectorAll('button')).filter(b => b.innerText && b.innerText.includes('로 확정') && b.offsetParent).map(b => b.innerText)",
+                )
+                log(f"vote_card 버튼 발견: {confirm_btn[0] if confirm_btn else '?'}")
 
         # ─────────────────────────────────────────────────
         # ACT 3 — ★시간대 변경 → 게스트 vote → 방장 확정
@@ -606,8 +666,9 @@ async def run_demo(flags: DemoFlags) -> None:
         if confirm_btn and not flags.skip_act_3:
             hr("ACT 3 — ★시간대 변경 → 게스트 3명 vote → 방장 확정 팝업")
 
-            # step 0: 슬롯 1개 클릭 → selectedSlotId 세팅 (시간대 변경 버튼 활성화)
-            log("step 0 — 첫 vote_card 슬롯 클릭 (selectedSlotId 세팅)")
+            # step 0: 슬롯 선택 확보 (ACT 2.5에서 이미 클릭했으나 re-click으로 선택 상태 보장).
+            # ScheduleRecommendationCard:424 — 동일 슬롯 재클릭은 setSelectedSlotId(same) → 무해.
+            log("step 0 — vote_card 슬롯 선택 확보 (ACT 2.5 선택 상태 재확인)")
             slot_ok = await click_first_vote_slot(page)
             if not slot_ok:
                 log("[BACKUP] 슬롯 클릭 실패 — 1회 재시도")

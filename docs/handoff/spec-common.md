@@ -818,7 +818,7 @@ PIPA 의무 또는 정책 일관성을 위해 추가 구현이 필요한 항목:
 | Q14 | refresh 호출 제한 | §9 API | **결정: C) Redis idempotency 캐시 + 일일 100회** (같은 source/scope 조합은 캐시 hit) |
 | Q15 | 토글 재발행 narrator 문구 | 자매 spec §3 narrator | **결정: A) "OOO님 선호 기준으로 다시 추천했어요"** (실명 명시 — PII 노출 트레이드오프, 사용자 토글 행동의 투명성 우선) |
 | Q16 | F1 `blocker_notification_payload` UI 멤버 식별 | 자매 spec §3 페이로드, UI | **결정: C) 기본 익명 + 더보기 실명** (기본 "1명 불참", 사용자 의도로 클릭 시 실명 — 점진 공개) |
-| Q17 | F4 캘린더 권한 만료 narrator 실명/익명 | [`spec-time-coordination.md §6.7`](./spec-time-coordination.md), §8.6 | 미결 — 권고 A) 실명("OOO님 캘린더 권한이 만료됐어요", Q15=A 일관, 액션 가능성 우선) vs B) 익명("1명 권한 만료", Q16=C 일관) |
+| Q17 | F4 캘린더 권한 만료 narrator 실명/익명 | [`spec-time-coordination.md §6.7`](./spec-time-coordination.md), §8.6 | **결정: A) 실명** ("OOO님 캘린더 권한이 만료됐어요"). Q15=A 일관 + 액션 가능성 우선. 2026-05-15 사용자 확정 (`docs/DECISIONS.md` SoT와 동기화, §9.7 권고 A 본 적용) |
 | Q-X1 | PR-X 마이그레이션 시 기존 명시 거부 사용자(`calendar_consent=False`) 처리 | PR-X | **결정: A) 일괄 True 재설정** (opt-out 모델 일관성, 사용자가 다시 토글 가능) |
 
 ---

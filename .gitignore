@@ -22,7 +22,16 @@
 .env.local
 .gstack/
 .gstack-demo-token
+.t-*
 .gstack-shots/
+qa-v2-*.png
+demo-act5-*.png
+.playwright-mcp/
+playwright.config.ts
+tests/
+package.json
+package-lock.json
+assignment/
 .rehearsal-*
 .gstack-bak-*/
 .gstack-old/
@@ -43,3 +52,10 @@ postgres_data/
 redis_data/
 temp_write_test.txt
 venv/
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/

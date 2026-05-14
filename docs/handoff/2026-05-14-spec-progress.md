@@ -1,7 +1,7 @@
-# 시간+장소 기능정의서 작성 — 진행 상태 핸드오프 (v3)
+# 시간+장소 기능정의서 작성 — 진행 상태 핸드오프 (v18)
 
 작성: 2026-05-14
-최종 갱신: 2026-05-15 (QA 시연 dry-run 후 — **백엔드 OK, 시연 환경 셋업 진행 중**)
+최종 갱신: 2026-05-15 (QA 시연 dry-run v2 완료 — **ACT 1·2·4·5 풀 시나리오 PASS, P0 0건**)
 작성자: 본인 + Claude Opus 4.7 (PM 모드 + QA + Playwright MCP)
 브랜치: `docs/spec-time-coordination` (origin 푸시 = `e996bba` 시점까지, 그 후 로컬 `0ffdfbe`까지 진행)
 대상 문서 (PR-V로 3분할):
@@ -23,14 +23,29 @@
 ## 1. 현재 상태 (한눈에)
 
 - **스코프 확정**: 시간 + 장소 조율을 **한 문서**로 통합
-- **파일**: 구 `docs/handoff/spec-time-and-place.md` (헤더·§1~§5·§11 시간+장소 통합 완료) → PR-V로 3분할 (`spec-common.md`·`spec-time-coordination.md`·`spec-place-recommendation.md`)
+- **파일**: 구 `docs/handoff/spec-time-and-place.md` → PR-V로 3분할 (`spec-common.md` 839 + `spec-time-coordination.md` 619 + `spec-place-recommendation.md` 459 = 1917줄)
 - **작성 진행**: **§1~§13 모두 완성 ✅** (spec v1.0)
-- **코드 구현**: spec v1.0의 **핵심 미구현 항목(Q5 hybrid 인프라) 완성 ✅** (PR-Z1·Z2)
-- **결정 누적**: **31건 확정 + 1건 신규 미결** (Q17 F4 narrator 실명/익명)
-- **코드 작업**: PR-X·PR-Y1·PR-Y2 로컬 커밋 완료, **푸시 안 함**
-- **운영 모드**: PM 모드 — 리더는 분배·통합·결정 제안, 깊은 분석은 3담당 에이전트에 위임 (메모리 영구 저장)
+- **코드 구현**: spec v1.0의 미구현 12항목 + Codex P1·P2 + QA P2·P3 hotfix 완성 ✅ (PR-V1.5·V1.5.1·V1.5.2)
+- **결정 누적**: 30+ 결정 확정 (Q1~Q17 + Q-X + Q-Y + 운영 + 신규 6건, `docs/DECISIONS.md` SoT)
+- **테스트**: 신규 12 파일 91/91 PASS ✅
+- **QA 검증 (2026-05-15)**: dry-run v2 풀 자동 재현 PASS — ACT 1→2→4→5 통과, room 72/meeting 88/수담한정식 강남점 확정, 백엔드 ERROR 0건, 스크린샷 6장
+- **코드 작업**: 로컬 38+ 커밋, **푸시 안 함** (사용자 명시 승인 후)
+- **운영 모드**: PM 4담당 + QA (메모리 영구 저장, `feedback_pm_operating_mode.md` / `feedback_qa_runtime_role.md` / `feedback_handoff_auto_update.md`)
+- **시연 환경**: Windows PowerShell + `.venv\Scripts\python.exe` (WSL 사용 금지, BUG-1 결정)
+- **복구 문서**: `docs/SESSION_STATE.md` + `docs/TODO.md` + `docs/DECISIONS.md` + `docs/BUGS.md` 4 파일 — compact 후 첫 읽기
 
-## 2. 이번 세션 변경 (커밋 39건)
+## 2. 이번 세션 변경 (커밋 39+ + QA v2 검증 + 복구 4 파일)
+
+### v18 추가 (2026-05-15 QA dry-run v2 + 복구 문서)
+- **QA dry-run v2 PASS** (taskId `a9dbbaccb1eb8c374`, 8m38s): ACT 1·2·4·5 풀 자동 재현, 백엔드 ERROR 0건, 스크린샷 6장 (`qa-v2-act1`/`act2`/`act4`/`act5-cards`/`act5-confirmed`/`final-success`)
+- **BUG-2 (Playwright MCP)** 최종 해소 확인
+- **복구 4 파일 신규**: `docs/SESSION_STATE.md` (212줄) + `docs/TODO.md` (138줄) + `docs/DECISIONS.md` (142줄) + `docs/BUGS.md` (185줄) — untracked, 사용자 결정 시 커밋
+- **QA v2 후속 (v1.6 backlog 편입)**:
+  - LIMIT-7: `/calendar/free-slots` 1095ms → Redis 캐싱 or 월별 prefetch (P2)
+  - LIMIT-8: favicon.ico 404 (P3, cosmetic)
+  - QA 가이드: WSL 게스트 WS = `docker exec maedeup-api python /tmp/send_chat.py` 활용 권장
+
+### 커밋 표 (39건, 변동 없음)
 
 | # | SHA | 메시지 | 변경 | 상태 |
 |---|---|---|---|---|

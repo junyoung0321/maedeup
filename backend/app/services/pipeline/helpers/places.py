@@ -104,35 +104,66 @@ _REJECT_SIGNAL_PATTERN = re.compile(
 
 
 def _resolve_place_hint(state: GraphState) -> str:
+    """F5 4-step 분기 (§6.17, PR-V1.5):
+
+    1. state["place_hint"] (이미 명시된 값) — fast-path 호환.
+    2. default_place_hint — 그룹 다수결 (recommendations/refresh 라우트가 주입).
+    3. requester_home_base — 발화자 본인 home_base (group이 비었을 때 fallback).
+    4. creator_home_base — 방장의 home_base (PR-Z1 이전 기본).
+    5. None ("") — place_recommendation 노드가 검색 건너뜀.
+
+    Spec §6.17 (F5)의 의도: 선호 장소 다수결 → 발화자 → 방장 → None.
+    state 키 매핑:
+      - "default_place_hint": 라우트가 미리 계산한 group consensus (preferred_location).
+      - "requester_home_base": PR-Z1 refresh 라우트가 발화자별 lookup해서 주입.
+      - "creator_home_base": (legacy) 방장 home_base. 일부 entry point가 주입.
+    """
+    # Step 1: 이미 추출된 place_hint가 있으면 사용 (entity_extraction이 채워둔 값).
     place_hint = state.get("place_hint")
     if isinstance(place_hint, str) and place_hint.strip():
         return place_hint.strip()
 
+    # Step 2: 다수결 default_place_hint (그룹 선호 — refresh 라우트 또는 preferences 헬퍼가 주입).
     default_place_hint = state.get("default_place_hint")
     if isinstance(default_place_hint, str) and default_place_hint.strip():
         resolved = default_place_hint.strip()
-    else:
-        # 방장의 home_base가 있으면 사용, 없으면 빈 문자열 반환
-        # (빈 문자열이면 place_recommendation 노드에서 검색을 건너뜀)
-        home_base = state.get("creator_home_base")
-        if isinstance(home_base, str) and home_base.strip():
-            resolved = home_base.strip()
-        else:
-            resolved = ""
-
-    if resolved:
         state["place_hint"] = resolved
-    return resolved
+        return resolved
+
+    # Step 3: 발화자 home_base (PR-Z1, requester_home_base).
+    requester_home = state.get("requester_home_base")
+    if isinstance(requester_home, str) and requester_home.strip():
+        resolved = requester_home.strip()
+        state["place_hint"] = resolved
+        return resolved
+
+    # Step 4: 방장 home_base (legacy).
+    creator_home = state.get("creator_home_base")
+    if isinstance(creator_home, str) and creator_home.strip():
+        resolved = creator_home.strip()
+        state["place_hint"] = resolved
+        return resolved
+
+    # Step 5: 셋 다 없음 → 검색 skip.
+    return ""
 
 
-def _detect_cuisine_type(text: str) -> str | None:
-    """사용자 메시지에서 cuisine 의도 추출. 매칭되면 cuisine ID, 없으면 None."""
+def _detect_cuisine_type(text: str) -> list[str]:
+    """사용자 메시지에서 cuisine 의도 추출. 매칭된 모든 cuisine을 list로 반환.
+
+    PR-V1.5 / S18 / §6.16 — 다중 cuisine 충돌 ambiguity 처리.
+    이전 시그니처: `str | None` (첫 매칭만). 변경: `list[str]` (전부, 중복 제거).
+    호출자는 첫 원소를 default cuisine로 쓰고, len() > 1이면 ambiguity 분기.
+    """
     if not text:
-        return None
+        return []
+    matched: list[str] = []
+    seen: set[str] = set()
     for trigger, cuisine in _CUISINE_TRIGGERS.items():
-        if trigger in text:
-            return cuisine
-    return None
+        if trigger in text and cuisine not in seen:
+            seen.add(cuisine)
+            matched.append(cuisine)
+    return matched
 
 
 def _filter_places_by_cuisine(
@@ -194,21 +225,31 @@ async def search_place(state: GraphState) -> list[dict[str, Any]]:
         meeting_type = "맛집"
 
     # 해결점 A5-3: cuisine 의도 식별. meeting_type 우선, 없으면 trigger/latest user msg에서.
-    cuisine = meeting_type if meeting_type in _CUISINE_CATEGORY_KEYWORDS else None
-    if not cuisine:
+    # PR-V1.5 / S18: cuisine을 list로 추출. 다중 매칭 시 OR query + ambiguity narrator 분기.
+    cuisines: list[str] = []
+    if meeting_type and meeting_type in _CUISINE_CATEGORY_KEYWORDS:
+        cuisines = [meeting_type]
+    if not cuisines:
         latest_user_msg = (state.get("trigger_message_text") or "").strip()
         if not latest_user_msg:
             for msg in reversed(state.get("message_records") or []):
                 if msg.get("role") == "user" and msg.get("content"):
                     latest_user_msg = str(msg["content"])
                     break
-        cuisine = _detect_cuisine_type(latest_user_msg)
+        cuisines = _detect_cuisine_type(latest_user_msg)
 
-    # query 강제: cuisine이 있으면 cuisine 단어를 query에 명시.
-    if cuisine:
+    cuisine = cuisines[0] if cuisines else None
+    # S18: 다중 cuisine 발화 → OR query로 Kakao 검색 (두 종류 모두 후보로).
+    if len(cuisines) >= 2:
+        query = f"{place_hint} {' '.join(cuisines)}".strip()
+    elif cuisine:
         query = f"{place_hint} {cuisine}".strip()
     else:
         query = f"{place_hint} {meeting_type}".strip()
+
+    # PR-V1.5 / S18: cuisine list를 state에 캐시 → place_recommendation 노드가
+    # narrator 분기에 사용 (한식·일식 모두 추천 중이에요 ...).
+    state["detected_cuisines"] = cuisines
 
     place_coord = state.get("place_coord") or {}
     documents = await search_keyword(
@@ -217,6 +258,8 @@ async def search_place(state: GraphState) -> list[dict[str, Any]]:
         y=place_coord.get("y"),
         radius=2000 if place_coord.get("x") and place_coord.get("y") else None,
     )
+    # PR-V1.5 / §6.15: Kakao 응답 정상 0건이면 flag (장애와 구분, F7).
+    state["place_search_empty"] = not documents
 
     results = []
     for doc in documents:
@@ -243,22 +286,69 @@ async def search_place(state: GraphState) -> list[dict[str, Any]]:
             "distance_m": distance_m,
             "max_headcount": 20,  # 카카오 API는 수용인원 미제공 → 기본값
             "score": round(distance_score, 2),
+            # PR-V1.5 / S20 (Q4=A): 점수 통합 공식 0.4·ML + 0.3·Gemini + 0.3·거리.
+            # distance_score는 항상 채우고, ML/Gemini는 호출자(place_recommendation)가 박음.
+            "distance_score": round(distance_score, 2),
         })
     # 거리 가까운 순으로 정렬 (Gemini 스코어링에서 재정렬됨)
     results.sort(key=lambda p: p["distance_m"] if p["distance_m"] > 0 else 99999)
 
     # 해결점 A5-3 후처리: cuisine 카테고리로 필터. 0개면 원본 fallback (UX 빈 카드 방지).
-    if cuisine and results:
-        filtered = _filter_places_by_cuisine(results, cuisine)
-        if filtered:
+    # PR-V1.5 / S18: 다중 cuisine이면 union 필터.
+    if cuisines and results:
+        union: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for c in cuisines:
+            for p in _filter_places_by_cuisine(results, c):
+                pid = str(p.get("place_id", ""))
+                if pid and pid in seen_ids:
+                    continue
+                seen_ids.add(pid)
+                union.append(p)
+        if union:
             logger.info(
                 "[KAKAO] cuisine filter %s: %d → %d",
-                cuisine, len(results), len(filtered),
+                "+".join(cuisines), len(results), len(union),
             )
-            return filtered
+            # PR-V1.5 / §6.15: rejected_places 필터 (검색 단계).
+            return _filter_out_rejected_places(union, state.get("rejected_places") or [])
         logger.info(
             "[KAKAO] cuisine filter %s yielded 0, using unfiltered (%d)",
-            cuisine, len(results),
+            "+".join(cuisines), len(results),
         )
 
-    return results
+    # PR-V1.5 / §6.15: rejected_places 필터.
+    return _filter_out_rejected_places(results, state.get("rejected_places") or [])
+
+
+def _filter_out_rejected_places(
+    places: list[dict[str, Any]],
+    rejected_places: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """PR-V1.5 / §6.15 — 거부 누적된 장소를 결과에서 제거.
+
+    매칭 기준: place 카드의 name/address/category 중 하나라도 거부 키워드를
+    포함하면 제외. 사용자가 "강남 말고"라고 했으면 name/address에 "강남"이
+    들어간 모든 후보 제거.
+    """
+    if not rejected_places:
+        return places
+    rejected_keywords: list[str] = []
+    for item in rejected_places:
+        place = item.get("place") if isinstance(item, dict) else None
+        if isinstance(place, str) and place.strip():
+            rejected_keywords.append(place.strip())
+    if not rejected_keywords:
+        return places
+
+    out: list[dict[str, Any]] = []
+    for p in places:
+        haystack = " ".join([
+            str(p.get("name", "")),
+            str(p.get("address", "")),
+            str(p.get("category", "")),
+        ])
+        if any(kw in haystack for kw in rejected_keywords):
+            continue
+        out.append(p)
+    return out

@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.core.security import AuthUser, get_current_user
 from app.db.session import get_session
 from app.models.meeting import MeetingSchedule, MeetingStatus
+from app.models.meeting_preference import MeetingPreference
 from app.models.room import Room, RoomMember
 from app.models.user import User
 from app.repositories.messages import MessageReader
@@ -61,6 +62,65 @@ async def _spawn_personal_data_extraction(room_id: int) -> None:
 
 router = APIRouter(tags=["meetings"])
 logger = logging.getLogger(__name__)
+
+
+async def _load_group_preference_context(
+    session: AsyncSession, room_id: int
+) -> dict[str, Any]:
+    """Codex P2 (2026-05-15): refresh route Q7-c C3 probe용 group 컨텍스트.
+
+    `_lightweight_speaker_matches_group`는 state["default_place_hint"]와
+    state["preference_common_foods"] 둘 다 있어야 비교가 가능. refresh route
+    probe_state는 requester-only 필드만 채웠기 때문에 C3 분기가 절대 발동되지
+    않는 버그를 수정.
+
+    Returns:
+        {
+          "default_place_hint": str | None,   # MeetingPreference 다수결 위치
+          "preference_common_foods": list[str],  # 멤버 선호 음식 union
+        }
+
+    실패/데이터 없음 시 빈 dict 반환 → C3는 자연스럽게 skip되어 토글 활성 유지.
+    """
+    try:
+        pref_result = await session.execute(
+            select(MeetingPreference).where(MeetingPreference.room_id == room_id)
+        )
+        prefs = pref_result.scalars().all()
+    except Exception:
+        logger.warning(
+            "MeetingPreference load failed room_id=%s — C3 probe will skip",
+            room_id,
+            exc_info=True,
+        )
+        return {}
+
+    # 장소 다수결 (best_location)
+    default_place_hint: str | None = None
+    if prefs:
+        location_counts: dict[str, int] = {}
+        for p in prefs:
+            loc = (p.preferred_location or "").strip()
+            if loc:
+                location_counts[loc] = location_counts.get(loc, 0) + 1
+        if location_counts:
+            default_place_hint = max(location_counts, key=location_counts.get)
+
+    # 선호 음식 union (preference_common_foods로 사용 — Q7-c C3 비교에서
+    # 70% 교집합 검사이므로 union이 보수적·충분).
+    common_foods: list[str] = []
+    seen: set[str] = set()
+    for p in prefs or []:
+        for item in (p.preferred_foods or []):
+            normalized = str(item).strip()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                common_foods.append(normalized)
+
+    return {
+        "default_place_hint": default_place_hint,
+        "preference_common_foods": common_foods,
+    }
 
 
 class ConfirmMeetingRequest(BaseModel):
@@ -1037,11 +1097,19 @@ async def refresh_recommendations(
     # ── 4) 발화자 본인 정보 lookup → state plumbing
     requester_ctx = await load_requester_context(session, body.requester_user_id)
 
+    # ── 4b) Codex P2 (2026-05-15): group 선호 컨텍스트 lookup.
+    # C3 lightweight 비교는 default_place_hint + preference_common_foods 둘 다
+    # state에 있어야 발동. 이전 버전은 requester-only 필드만 채워 C3가 사실상
+    # 죽어 있었음 → group=speaker 케이스에서 의미 없는 토글 허용 회귀.
+    group_pref_ctx = await _load_group_preference_context(session, room_id)
+
     # ── 5) Q7-c 차단 검증 — toggle_enabled=False면 422
     probe_state: dict[str, Any] = {
         "requester_home_base": requester_ctx.get("requester_home_base"),
         "requester_preferences": requester_ctx.get("requester_preferences"),
         "preference_source": body.preference_source,
+        "default_place_hint": group_pref_ctx.get("default_place_hint"),
+        "preference_common_foods": group_pref_ctx.get("preference_common_foods"),
     }
     if not compute_preference_toggle_enabled(probe_state):  # type: ignore[arg-type]
         raise HTTPException(

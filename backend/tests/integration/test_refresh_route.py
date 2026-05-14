@@ -351,3 +351,51 @@ async def test_refresh_meeting_not_found_returns_404(client):
         },
     )
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Codex P2 (2026-05-15) — refresh route C3 활성화 회귀 방지
+# ---------------------------------------------------------------------------
+
+
+async def test_refresh_c3_blocks_when_group_matches_speaker(
+    client, db_engine
+):
+    """Codex P2: refresh route probe_state에 group context가 주입되어 C3가 발동.
+
+    Seed: user 4 (speaker)의 home_base="서울 종로" + food_preferences=["한식"].
+    MeetingPreference 두 건을 동일 location/foods로 추가하면 group 다수결도
+    같아져 C3 lightweight 비교가 "동일"로 판정 → toggle_disabled → 422.
+    """
+    from app.models.meeting_preference import MeetingPreference
+
+    maker = async_sessionmaker(db_engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as session:
+        # user 4 home_base와 같은 location, food_preferences와 같은 foods로 다수결 형성.
+        session.add_all([
+            MeetingPreference(
+                room_id=10, user_id=4,
+                preferred_location="서울 종로",
+                preferred_foods=["한식"],
+                disliked_foods=[],
+            ),
+            MeetingPreference(
+                room_id=10, user_id=1,
+                preferred_location="서울 종로",
+                preferred_foods=["한식"],
+                disliked_foods=[],
+            ),
+        ])
+        await session.commit()
+
+    _set_current_user(4)
+    resp = await client.post(
+        "/api/v1/meetings/100/recommendations/refresh",
+        json={
+            "scope": "both",
+            "preference_source": "speaker",
+            "requester_user_id": 4,
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    assert "toggle_disabled" in resp.json()["detail"]

@@ -55,8 +55,19 @@ logger = logging.getLogger(__name__)
 
 
 def _pattern_extract_entities(context: str) -> dict[str, Any]:
-    """패턴 기반으로 엔티티를 추출합니다. Gemini 호출 없이 빠르게 처리."""
-    result: dict[str, Any] = {"date_hint": None, "date_hints": [], "place_hint": None, "headcount": None, "meeting_type": None}
+    """패턴 기반으로 엔티티를 추출합니다. Gemini 호출 없이 빠르게 처리.
+
+    PR-V1.5 / S16 (§6.15): rejected_places 누적용 패턴.
+    """
+    result: dict[str, Any] = {
+        "date_hint": None,
+        "date_hints": [],
+        "place_hint": None,
+        "headcount": None,
+        "meeting_type": None,
+        # PR-V1.5 / S16: 거부 발화에서 추출한 장소 list. 형식: [{"place": "강남", "reason": None, "user": None}]
+        "rejected_places": [],
+    }
     if not context:
         return result
 
@@ -122,6 +133,39 @@ def _pattern_extract_entities(context: str) -> dict[str, Any]:
             result["meeting_type"] = keyword
             break
 
+    # PR-V1.5 / S16 (§6.15): 거부 장소 패턴 추출.
+    # 예: "강남 말고", "홍대는 별로", "역삼 빼고", "이태원 싫어".
+    # _WELL_KNOWN_PLACES와 _KOREAN_PLACE_PATTERN 양쪽 모두 검사.
+    from app.services.pipeline.helpers.places import (
+        _WELL_KNOWN_PLACES, _KOREAN_PLACE_PATTERN,
+    )
+    rejected_place_keywords: list[str] = []
+    # _WELL_KNOWN_PLACES 매칭
+    for place in _WELL_KNOWN_PLACES:
+        # 거부 패턴: "{place} 말고", "{place}는 별로", "{place} 빼고", "{place} 싫"
+        pattern = rf"{re.escape(place)}\s*(?:말고|은\s*별로|는\s*별로|빼고|싫)"
+        if re.search(pattern, context):
+            rejected_place_keywords.append(place)
+    # _KOREAN_PLACE_PATTERN 매칭 (XX동, XX역 등)
+    for m in _KOREAN_PLACE_PATTERN.finditer(context):
+        place = m.group(1)
+        if place in rejected_place_keywords:
+            continue
+        tail_start = m.end()
+        tail = context[tail_start:tail_start + 10]
+        if re.match(r"\s*(?:말고|은\s*별로|는\s*별로|빼고|싫)", tail):
+            rejected_place_keywords.append(place)
+
+    seen_rp: set[str] = set()
+    rejected_places: list[dict[str, Any]] = []
+    for p in rejected_place_keywords:
+        if p in seen_rp:
+            continue
+        seen_rp.add(p)
+        rejected_places.append({"place": p, "reason": None, "user": None})
+    if rejected_places:
+        result["rejected_places"] = rejected_places
+
     return result
 
 
@@ -162,7 +206,8 @@ async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
         '"conflict_type": "date" | "place" | "time" | null, '
         '"conflict_options": [string] | null, '
         '"conflict_users": [string] | null, '
-        '"rejected_dates": [{"date": string, "user": string | null, "reason": string | null}] | null'
+        '"rejected_dates": [{"date": string, "user": string | null, "reason": string | null}] | null, '
+        '"rejected_places": [{"place": string, "user": string | null, "reason": string | null}] | null'
         "}\n\n"
         "date_hint: 첫 번째 날짜 표현. 가능하면 YYYY-MM-DD 형식으로 변환, 범위면 "
         "'YYYY-MM-DD~YYYY-MM-DD'\n"
@@ -203,6 +248,11 @@ async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
         '  - reason은 거부 이유 (예: "알바", "가족 모임"). 모르면 null.\n'
         '  - 단순 선호 ("금요일이 좋아", "토요일 가능")는 제외. 명시적 거부만 포함.\n'
         "  - 거부 키워드 예: 안 돼, 못 가, 힘들어, 불가능, 어려워, 패스, 어렵다.\n"
+        "rejected_places: 특정 사용자가 명시적으로 거부/제외한 장소 배열.\n"
+        "  - 형식: [{\"place\": \"강남\", \"user\": str | null, \"reason\": str | null}]\n"
+        "  - 거부 패턴: '강남 말고', '홍대는 별로', '역삼 빼고', '이태원 싫어' 등.\n"
+        "  - 단순 선호 ('홍대가 좋아')는 제외. 명시적 거부만 포함.\n"
+        "  - 추출 못 하면 null 또는 빈 배열.\n"
         "  예시:\n"
         '  - "금요일은 알바 있어서 안 돼" → [{"date": "2026-05-08", "user": "민수", "reason": "알바"}]\n'
         '  - "토요일 가족 모임이라 힘들어" → [{"date": "2026-05-09", "user": "수현", "reason": "가족 모임"}]\n'
@@ -216,6 +266,25 @@ async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
             # Merge date_hints from pattern_result if Gemini didn't return them
             if not result.get("date_hints") and pattern_result.get("date_hints"):
                 result["date_hints"] = pattern_result["date_hints"]
+            # PR-V1.5 / S16: rejected_places — pattern + Gemini union (Gemini가 못 잡은 well-known 보강).
+            gemini_rp = result.get("rejected_places") or []
+            pattern_rp = pattern_result.get("rejected_places") or []
+            if pattern_rp or gemini_rp:
+                merged: list[dict[str, Any]] = []
+                seen: set[str] = set()
+                for rp in list(gemini_rp) + list(pattern_rp):
+                    if not isinstance(rp, dict):
+                        continue
+                    p = rp.get("place")
+                    if not isinstance(p, str) or not p.strip() or p in seen:
+                        continue
+                    seen.add(p)
+                    merged.append({
+                        "place": p.strip(),
+                        "user": rp.get("user"),
+                        "reason": rp.get("reason"),
+                    })
+                result["rejected_places"] = merged
             return result
     except Exception:
         pass
@@ -337,6 +406,21 @@ async def entity_extraction(state: GraphState) -> GraphState:
             if cleaned_rejected:
                 logger.info("[REJECTED_DATES] Pre-extracted: %s", cleaned_rejected)
 
+            # PR-V1.5 / S16: pre-extracted rejected_places 머지.
+            raw_rp_pre = pre_extracted.get("rejected_places")
+            if isinstance(raw_rp_pre, list) and raw_rp_pre:
+                existing_rp = state.get("rejected_places") or []
+                seen_rp = {it["place"] for it in existing_rp if isinstance(it, dict) and isinstance(it.get("place"), str)}
+                for it in raw_rp_pre:
+                    if not isinstance(it, dict):
+                        continue
+                    p = it.get("place")
+                    if not isinstance(p, str) or not p.strip() or p in seen_rp:
+                        continue
+                    seen_rp.add(p)
+                    existing_rp.append({"place": p.strip(), "user": it.get("user"), "reason": it.get("reason")})
+                state["rejected_places"] = existing_rp
+
             place_coord = await _resolve_place_coord(state.get("place_hint"))
             if place_coord:
                 state["place_coord"] = place_coord
@@ -364,7 +448,9 @@ async def entity_extraction(state: GraphState) -> GraphState:
                         latest_msg = str(m["content"]).strip()
                         break
             place_kw = _extract_korean_place_keyword(latest_msg)
-            cuisine = _detect_cuisine_type(latest_msg)
+            # PR-V1.5 / S18: _detect_cuisine_type → list[str]. 첫 매칭만 fast-path에 사용.
+            cuisines = _detect_cuisine_type(latest_msg)
+            cuisine = cuisines[0] if cuisines else None
             has_place_intent = bool(cuisine) or bool(_PLACE_INTENT_PATTERN.search(latest_msg))
             has_other_entities = bool(_OTHER_ENTITY_SIGNAL_PATTERN.search(latest_msg))
             if place_kw and has_place_intent and not has_other_entities:
@@ -531,6 +617,31 @@ async def entity_extraction(state: GraphState) -> GraphState:
             state["rejected_dates"] = cleaned_rejected
             if cleaned_rejected:
                 logger.info("[REJECTED_DATES] Extracted: %s", cleaned_rejected)
+
+        # PR-V1.5 / S16 (§6.15): rejected_places 누적.
+        raw_rp = extracted.get("rejected_places")
+        if isinstance(raw_rp, list) and raw_rp:
+            existing = state.get("rejected_places") or []
+            existing_set = {
+                item["place"] for item in existing
+                if isinstance(item, dict) and isinstance(item.get("place"), str)
+            }
+            for item in raw_rp:
+                if not isinstance(item, dict):
+                    continue
+                place = item.get("place")
+                if not isinstance(place, str) or not place.strip():
+                    continue
+                if place in existing_set:
+                    continue
+                existing_set.add(place)
+                existing.append({
+                    "place": place.strip(),
+                    "user": item.get("user"),
+                    "reason": item.get("reason"),
+                })
+            state["rejected_places"] = existing
+            logger.info("[REJECTED_PLACES] Extracted: %s", existing)
 
         # place_suggestion intent인데 place_hint가 없으면 메시지에서 직접 추출
         if state.get("intent") == "place_suggestion" and not state.get("place_hint"):

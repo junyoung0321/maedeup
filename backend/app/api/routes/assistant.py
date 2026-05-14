@@ -95,8 +95,16 @@ async def _build_user_context(user: User) -> str:
     parts.append(_bullets("회피 지역", user.disliked_areas or []).rstrip("\n"))
     parts.append(f"- 선호 시간대: {user.time_preference or '(미설정)'}")
     parts.append(f"- 이동수단: {user.transport_mode or '(미설정)'}")
+    # PR-V1.5 / Q-X3 (2026-05-14): 토큰 체크 보강.
+    # calendar_consent=True 라도 google_access_token / google_refresh_token이
+    # 둘 다 없으면 실제 GCal 호출 불가능 — "아니오"로 표기해 사용자에게 정확한 상태 전달.
+    has_token = bool(
+        getattr(user, "google_access_token", None)
+        or getattr(user, "google_refresh_token", None)
+    )
+    calendar_active = bool(user.calendar_consent) and has_token
     parts.append(
-        f"- 캘린더 연동: {'예' if user.calendar_consent else '아니오'}"
+        f"- 캘린더 연동: {'예' if calendar_active else '아니오'}"
     )
     return "\n".join(parts)
 

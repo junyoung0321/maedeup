@@ -121,9 +121,19 @@ class GraphState(TypedDict, total=False):
     conflict_options: list[str]
     conflict_users: list[str]
     rejected_dates: list[dict[str, Any]]  # chat-level explicitly rejected dates
+    # PR-V1.5 / §6.15 — chat-level explicitly rejected places.
+    # 형식: [{"place": "강남", "reason": "...", "user": str | None}]
+    # entity_extraction이 거부 발화에서 누적 (예: "강남 말고", "홍대는 별로")
+    # place_recommendation 노드가 place_search_results 필터 시 제외 처리.
+    rejected_places: list[dict[str, Any]]
+    # PR-V1.5 / §6.15 — Kakao 응답이 정상 0건일 때 분기용 (장애와 구분).
+    place_search_empty: bool
     pre_extracted_signals: dict[str, Any] | None
     # 선호 정보
     preference_common_times: list[str]
+    # PR-V1.5 / F1 외 — 0 슬롯 원인 분기 reason.
+    # 값: "calendar_consent_zero" | "all_blocked" | None
+    zero_slot_reason: str | None
     status: str
     # 프라이버시 경계 (docs/ai-separation.md §9.4)
     viewer_user_id: int | None  # None = auto-trigger (shared), int = private viewer
@@ -217,8 +227,11 @@ def _default_state(
         "conflict_options": [],
         "conflict_users": [],
         "rejected_dates": [],
+        "rejected_places": [],
+        "place_search_empty": False,
         "pre_extracted_signals": ctx.get("pre_extracted_signals"),
         "preference_common_times": [],
+        "zero_slot_reason": None,
         "status": "initialized",
         # PR-Z1: refresh 라우트가 slot_context로 주입.
         "requester_user_id": ctx.get("requester_user_id"),

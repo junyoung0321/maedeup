@@ -220,7 +220,9 @@ async def intent_detection(state: GraphState) -> GraphState:
                 # pref_keywords_loose보다 먼저 시도 — "강남 한식 추천해줘"가 loose에 잡혀 meeting_schedule로
                 # 오분류되는 사각지대 방지 (Codex review 2026-05-07 P2).
                 place_kw = _extract_korean_place_keyword(latest_user_message)
-                cuisine = _detect_cuisine_type(latest_user_message)
+                # PR-V1.5 / S18: _detect_cuisine_type → list[str]. 첫 매칭만 fast-path에 사용.
+                cuisines = _detect_cuisine_type(latest_user_message)
+                cuisine = cuisines[0] if cuisines else None
                 has_place_intent = bool(cuisine) or bool(_PLACE_INTENT_PATTERN.search(latest_user_message))
                 has_other_entities = bool(_OTHER_ENTITY_SIGNAL_PATTERN.search(latest_user_message))
                 if place_kw and has_place_intent and not has_other_entities:

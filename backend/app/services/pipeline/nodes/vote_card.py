@@ -190,6 +190,30 @@ async def vote_card_creation(state: GraphState) -> GraphState:
             logger.info("[TIMING] vote_card_creation: skipped (no date selection) %.2fs", time.monotonic() - _t0)
             return state
 
+        # PR-V1.5: F1 외 0 슬롯 reason 분기 narrator.
+        zero_reason = state.get("zero_slot_reason")
+        if zero_reason and not state.get("calendar_free_slots"):
+            if zero_reason == "calendar_consent_zero":
+                narrator = (
+                    "캘린더 동의 후 다시 시도해주세요. "
+                    "오른쪽 설정에서 캘린더 연동을 켜실 수 있어요."
+                )
+            elif zero_reason == "all_blocked":
+                narrator = (
+                    "이번 주 모든 후보가 거부됐어요. 다음 주로 확장할까요? "
+                    "또는 다른 날짜를 제안해주세요."
+                )
+            else:
+                narrator = "일정 후보를 찾지 못했어요. 다른 날짜를 알려주세요."
+            async with AsyncSessionLocal() as db:
+                await _emit_assistant_message(state["room_id"], db, narrator, state, shared=True)
+            state["status"] = "vote_card_skipped"
+            logger.info(
+                "[TIMING] vote_card_creation: skipped (zero_slot_reason=%s) %.2fs",
+                zero_reason, time.monotonic() - _t0,
+            )
+            return state
+
         selected_slot = state["calendar_free_slots"][0] if state.get("calendar_free_slots") else {}
         start_at = _parse_iso_datetime(selected_slot.get("start_at")) if selected_slot else None
         meeting_id = selected_slot.get("meeting_id") or selected_slot.get("id")

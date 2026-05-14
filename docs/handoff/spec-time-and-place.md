@@ -1,37 +1,42 @@
-# 기능정의서 — 시간 조율 (Time Coordination)
+# 기능정의서 — 시간·장소 조율 (Time & Place Coordination)
 
 작성: 2026-05-14
 작성자: 본인 (장소/시간 조율 담당)
-대상 노드: `slot_filling` (입력 처리) + `vote_card_creation` (출력 카드) + `function_calling`의 캘린더 path
+대상 노드: `slot_filling` (입력 처리) + `vote_card_creation` (시간 카드) + `function_calling`의 캘린더 path + `place_recommendation` (장소 카드) + `maedeup_card_creation` (확정·partial 카드)
 관련 문서:
 - [recommend-input-catalog.md](./2026-05-13-recommend-input-catalog.md) — 활용 가능 인풋 카탈로그
 - [pipeline-structure.html](./pipeline-structure.html) — 파이프라인 구조
 
-> **목적**: 채팅방에서 모임 시간을 합의하는 과정을 자동화한다. 사용자가 합의 가능한 후보 시간을 만들어 투표 카드로 제시하는 책임.
+> **목적**: 채팅방에서 모임 **시간과 장소**를 합의하는 과정을 자동화한다. 사용자 발화·캘린더·선호도를 통합하여 (a) 합의 가능한 후보 시간을 투표 카드(vote_card)로, (b) 그룹·발화자 선호를 반영한 후보 장소를 추천 카드(place_recommendation)로 제시하고, (c) 합의된 결과를 매듭 카드(maedeup_card 확정/partial)로 마무리하는 책임.
 
 ---
 
 ## 1. 기능 개요
 
 ### 1.1 핵심 가치 (한 문장)
-**채팅으로 흩어진 시간 의사를 자동으로 모아 "투표 가능한 후보 슬롯"으로 변환한다.**
+**채팅으로 흩어진 시간·장소 의사를 자동으로 모아 "투표 가능한 후보 슬롯"과 "그룹·발화자 선호를 반영한 후보 장소"로 변환하고, 합의 결과를 매듭 카드로 마무리한다.**
 
 ### 1.2 시스템 위치
-- **slot_filling (노드 3)**: 사용자 발화·캘린더·선호도를 읽어 슬롯 상태 채우기
+- **slot_filling (노드 3)**: 사용자 발화·캘린더·선호도를 읽어 슬롯 상태 채우기 (시간·장소 공통 진입)
 - **function_calling (노드 4)**: 캘린더 API 호출 (`get_free_slots`), 빈 슬롯 계산
 - **vote_card_creation (노드 6a)**: 후보 슬롯을 투표 카드 페이로드로 직렬화 + meeting pending 생성
+- **place_recommendation (노드 6b)**: place_hint·home_base·그룹/발화자 선호로 Kakao 검색 + ML/Gemini reranking → 장소 추천 카드 페이로드
+- **maedeup_card_creation (노드 7)**: 시간·장소 확정 시 매듭 카드(확정), 시간만 결정된 경우 partial(time_only) 카드 발행
 
-이 spec은 **입력 발화부터 vote_card_payload 발행까지** 전체 경로를 다룬다.
+이 spec은 **입력 발화부터 vote_card / place_recommendation / maedeup_card payload 발행까지** 시간·장소 통합 경로를 다룬다.
 
 ### 1.3 책임 경계
 - ✅ 이 spec이 정의함
-  - 어떤 발화가 시간 조율 흐름을 트리거하는가
-  - 슬롯을 어떻게 만들고 거르는가
-  - 어떤 형태의 카드를 출력하는가
+  - 어떤 발화가 시간/장소 조율 흐름을 트리거하는가
+  - 시간 슬롯을 어떻게 만들고 거르는가 (선호/거부/캘린더 통합)
+  - 장소 후보를 어떻게 추출·검색·재정렬하는가 (place_hint·home_base fallback, ML/Gemini reranking, 비선호 페널티)
+  - 어떤 형태의 카드 페이로드(vote_card / place_recommendation / maedeup_card 확정·partial)를 출력하는가
+  - 발화자 vs 그룹 선호 토글 메타(Q7=B) 정책 (`preference_source`·`preference_toggle_enabled`)
 - ❌ 이 spec이 정의하지 않음
   - intent 분류 자체 (동료 영역, `intent_detection`)
-  - 검증 후 maedeup 카드로 갈지 여부 (동료 영역, `supervisor_validation`)
+  - 검증/판단 supervisor (동료 영역, `supervisor_validation`)
   - 캘린더 API 자체 (외부, `google_calendar.py`)
+  - Kakao Local API / ML ranker 내부 구현 (외부 서비스)
 
 ---
 
@@ -51,6 +56,10 @@
 | **S8. 모두 불가 fallback** | 거부/캘린더로 가능한 슬롯 0개 | any | 가장 많은 멤버 가능한 슬롯 3개 vote_card + "전원 가능 시간 없음" narrator | "다수결 vote_card" 분기 — **v1.0 구현 대상 (Q6=A)**, 정렬: 시간 빠른 순 (Q8=A). 별도 우선 구현 PR-Y |
 | **S9. 시간만 결정** | "다음주 화요일 6시" | `direct_request` | `time_only_ready` → maedeup 카드 직행 (vote_card 우회) | `partial_mode="time_only"` |
 | **S10. 결론 자동 감지** | (멤버들이 채팅에서 "그럼 화요일 7시로 ㄱ") | `conclusion_detected` | maedeup 카드 직행 | vote_card 스킵, 결론 합의로 인식 |
+| **S11. place_hint 명시** | "강남에서 모이자" | `direct_request` | 강남 좌표 기반 place_recommendation_payload (≤5 후보) | `place_hint="강남"`, `place_coord` 변환, `preference_source` 표기 (Q7=B) |
+| **S12. place_hint 미지정 fallback** | "다음주에 모이자" (place_hint 없음) | `direct_request` | 선호 장소 다수결 → 동률 시 발화자 → 선호 없으면 방장 home_base 기준 추천 | F5 fallback 순서 (Q2), `preference_source="group"` 기본, 발화자 토글 시 `"speaker"` |
+| **S13. cuisine 자동 감지** | "한식 먹자" | `direct_request` | 한식 카테고리 Kakao 검색 + reranking | `_detect_cuisine_type` → `meeting_type="한식"`, place_recommendation_payload |
+| **S14. 그룹 비선호 음식 페널티** | (방 멤버 중 1명 disliked_food="갑각류") "맛집 추천해줘" | `direct_request` | 갑각류 키워드 포함 후보 score 0.1 강등 | `_contains_disliked_keyword` 패널티 (P4), 익명 합산 prompt |
 
 ### 2.1 비목표 시나리오 (Out of scope, §11)
 - "매주 모이는 정기 모임" (recurring) — MVP에선 단일 약속만
@@ -59,7 +68,11 @@
 
 ---
 
-## 3. 출력 카드 페이로드 형식 (vote_card_payload)
+## 3. 출력 카드 페이로드 형식 (4종)
+
+본 spec은 4종 카드 페이로드를 발행한다: `vote_card` (§3.1), `place_recommendation` (§3.2), `maedeup_card` 확정 (§3.3), `maedeup_card` partial/time_only (§3.4). narrator는 §3.5에 통합.
+
+### 3.1 vote_card_payload (시간 투표)
 
 실제 출력 JSON 스키마 (코드: `nodes/vote_card.py:259~279`).
 
@@ -79,25 +92,132 @@
       "holiday_name": null,
       "is_weekend": false
     }
-    // ... 1~5개
+    // ... 1~5개 (단일 슬롯도 발행 — Q1=B)
   ],
-  "headcount": 4,                         // entity 추출 or 멤버수 fallback
-  "blocker_notification": null,           // 시간 외 이유로 불참 멤버 (e.g. "OOO님 일정 충돌")
-  "calendar_strategy": "natural_language_time_options"
-                                          // multi_date_vote | preference_based | natural_language_time_options
+  "headcount": 4,                         // entity 추출 or 멤버수 fallback (Q3=A, 게스트 포함 Q12=A)
+  "blocker_notification": null,           // F1 fallback 시 차단 멤버 (Q6=A, Q16=C 익명+더보기)
+  "calendar_strategy": "natural_language_time_options",
+                                          // multi_date_vote | preference_based | natural_language_time_options | n_minus_one | all_members_available
+  "preference_source": "group",           // "group" | "speaker" (Q7=B)
+  "preference_toggle_enabled": true       // false 조건 = C1 ∨ C3 ∨ C4 (Q7-c, C2 게스트 제외)
 }
 ```
 
-### 3.1 narrator 메시지 (페이로드와 함께 발행)
-```
-"캘린더 확인 결과, 5/19 (월) 18:00~20:00을(를) 추천드려요. 📅 아래에서 확인해주세요."
-```
-- `date_conflict=true`면: `"날짜가 엇갈리네요 (5/19: 3명, 5/20: 2명). 가장 많이 선택된 날짜 기준으로..."`
+### 3.2 place_recommendation_payload (장소 추천)
 
-### 3.2 페이로드 변경 시 영향 범위
-- 프론트 `MeetingChatRoom.tsx` voteCard 렌더 (mock 컨트랙트)
-- `confirm` 엔드포인트가 `meeting_id` + `slot_id`로 확정 호출
-- maedeup_card_creation이 vote_options 중 선택된 슬롯 참조
+실제 출력 JSON 스키마 (코드: `nodes/place.py:320~329`).
+
+```jsonc
+{
+  "type": "place_recommendation",
+  "room_id": "abc123",
+  "meeting_id": 42,                       // pending MeetingSchedule.id (carry)
+  "place_hint": "강남",                    // 발화 추출 or fallback (F5: 다수결 → 발화자 → 방장 home_base)
+  "recommendations": [                    // ≤5개 (ML/Gemini reranking 결과)
+    {
+      "place_id": "12345",
+      "name": "강남 OO식당",
+      "category": "한식",
+      "distance": 320,
+      "score": 0.92,
+      "address": "서울 강남구 ...",
+      "url": "https://map.kakao.com/..."
+    }
+    // ...
+  ],
+  "group_constraints_summary": {          // 익명 합산
+    "disliked_food": ["갑각류"],
+    "disliked_areas": ["강북"],
+    "transport_mode": "대중교통"
+  },
+  "preference_source": "group",           // "group" | "speaker" (Q7=B)
+  "preference_toggle_enabled": true       // C1 ∨ C3 ∨ C4 시 false (Q7-c)
+}
+```
+
+### 3.3 maedeup_card_payload (확정)
+
+실제 출력 JSON 스키마 (코드: `nodes/maedeup.py:182~197`).
+
+```jsonc
+{
+  "type": "maedeup_card",
+  "room_id": "abc123",
+  "meeting_id": 42,
+  "title": "저녁모임 매듭",
+  "intent": "schedule_decision",
+  "date_hint": "2026-05-19",
+  "place_hint": "강남",
+  "headcount": 4,
+  "meeting_type": "한식",
+  "selected_time": {
+    "label": "2026-05-19 19:00~21:00",
+    "start_at": "2026-05-19T19:00:00",
+    "end_at":   "2026-05-19T21:00:00"
+  },
+  "selected_place": {
+    "name": "강남 OO식당",
+    "place_id": "12345",
+    "url": "https://map.kakao.com/..."
+  },
+  "vote_card": { /* carry */ },
+  "place_recommendation": { /* carry */ },
+  "calendar_registration": {              // 노드는 placeholder, 실제 등록은 confirm 라우터
+    "provider": "google_calendar",
+    "status": "skipped",
+    "reason": "pending_confirmation"
+  }
+}
+```
+
+### 3.4 maedeup_card_payload (partial, time_only)
+
+실제 출력 JSON 스키마 (코드: `nodes/maedeup.py:150~166`, 해결점 I·J·K).
+
+```jsonc
+{
+  "type": "maedeup_card",
+  "meeting_id": 42,
+  "title": "저녁모임 매듭",
+  "meeting_type": "저녁모임",
+  "date_hint": "2026-05-19",
+  "date": "2026-05-19",
+  "time": "19:00~21:00",
+  "selected_time": {
+    "label": "2026-05-19 19:00~21:00",
+    "start_at": "2026-05-19T19:00:00",
+    "end_at":   "2026-05-19T21:00:00"
+  },
+  "selected_place": {},                   // 비어 있음
+  "place": null,
+  "place_pending": true,
+  "place_pending_message": "멤버들이 장소를 정하면 자동으로 정리해드릴게요!",
+  "headcount": 4,
+  "calendar_registered": false
+}
+```
+
+> **시간 번복 불가 (Q9=A)**: partial 카드 발행 후 장소가 채워져도 `selected_time`은 잠긴다. 시간 재선정은 `POST /meetings/{id}/recommendations/refresh` (§9) 명시 호출만 가능.
+
+### 3.5 narrator 메시지 (4종 통합)
+
+페이로드와 함께 발행되는 narrator 메시지.
+
+- **vote_card**:
+  ```
+  "캘린더 확인 결과, 5/19 (월) 18:00~20:00을(를) 추천드려요. 📅 아래에서 확인해주세요."
+  ```
+  - `date_conflict=true`면: `"날짜가 엇갈리네요 (5/19: 3명, 5/20: 2명). 가장 많이 선택된 날짜 기준으로..."`
+- **place_recommendation**: `"강남 근처 5곳을 찾아봤어요"` (`nodes/place.py:346~`)
+- **maedeup_card (확정)**: `"확정됐어요!"`
+- **maedeup_card (partial, time_only)**: `"장소는 멤버들이 정하면 자동으로 정리해드릴게요!"` (`place_pending_message`)
+- **refresh 토글 (Q15=A)**: `"OOO님 선호 기준으로 다시 추천했어요"` — 발화자 실명 명시 (PII 노출 트레이드오프 인지). vote_card·place 양쪽 refresh 시 동일 문구.
+
+### 3.6 페이로드 변경 시 영향 범위
+- 프론트 `MeetingChatRoom.tsx` 카드 4종 렌더 (mock 컨트랙트)
+- `confirm` 엔드포인트가 `meeting_id` + `slot_id`/`place_id`로 확정 호출
+- `maedeup_card_creation`이 vote/place payload carry → `selected_time`/`selected_place` 추출
+- `POST /meetings/{id}/recommendations/refresh` (§9 신설) 시 4종 모두 재발행 가능 (Q7-b 방 전체 broadcast)
 
 ---
 
@@ -114,6 +234,9 @@
 | R4 | 다중 날짜 추출 | "월요일 vs 화요일" | entity_extraction | → `date_hints` (2+개면 multi_date) |
 | R5 | 충돌 옵션 추출 | "A는 X, B는 Y" | entity_extraction | → `conflict_options` |
 | R6 | 채팅 기반 거부 누적 | 채팅에서 멤버가 일정 언급 | conversation_analyzer | TimeBar payload → `rejected_dates` |
+| R7 | `place_hint` 추출 | "강남", "홍대", "강남역" | entity_extraction | Gemini + 패턴 — `nodes/entity.py:66, 256, 366~547` |
+| R8 | `place_coord` 변환 | place_hint → 좌표 | entity_extraction (`_resolve_place_coord`) | Kakao geocode — `nodes/entity.py:340~342, 560~562` |
+| R9 | `cuisine` 추출 | "한식", "맛집", "양식" | entity_extraction / place_node | `helpers/places._detect_cuisine_type`, place 노드 카테고리 매핑 |
 
 ### 4.2 선호 매칭 (Preference Matching)
 | ID | 기능 | 데이터 출처 | 처리 위치 |
@@ -121,6 +244,9 @@
 | P1 | 방 멤버 공통 선호 시간대 | MeetingPreference 교차 | `_load_meeting_preferences` → `preference_common_times` |
 | P2 | 평일/주말 필터 | `preference_common_times`에 "평일~" 포함 | vote_card_creation `weekday_only` 필터 |
 | P3 | 발화자 개인 시간 선호 | User.time_preference (🔧 plumbing 필요) | **P0 plumbing 후 추가** |
+| P4 | 음식 비선호 합집합 | `User.food_restrictions`/`food_preferences` (방 멤버) | `_get_room_member_food_preferences` → place prompt 익명 합산 + `_contains_disliked_keyword` 0.1 페널티 |
+| P5 | 개인 지역 선호 | `User.liked_areas`/`disliked_areas` | `preferences.py:382~419` → place 노드 prompt (`place.py:244~251`) 익명 합산 |
+| P6 | 이동수단 가중치 | `User.transport_mode` ("대중교통"/"도보"/"자차") | place 노드 prompt (`place.py:254~257`) — 역세권/도보 거리 가중치 힌트 |
 
 ### 4.3 탐색 정책 (Search Policy)
 | ID | 기능 | 트리거 | 처리 |
@@ -130,6 +256,9 @@
 | T3 | 멤버 캘린더 합집합 | 항상 | `_load_busy_by_user_for_state` → 모든 멤버 busy 합집합 제외 |
 | T4 | 휴일/주말 라벨 | 항상 | `_get_korean_holiday`, `_is_weekend` → 슬롯 메타 |
 | T5 | 다중 날짜 빌더 | `date_hints` ≥2개 | `_build_multi_date_slots` |
+| T6 | Kakao 장소 검색 | place_hint·place_coord 확정 | `search_place` (Kakao Local Keyword API) → 후보 장소 목록 |
+| T7 | ML 점수화 | `_ML_AVAILABLE` 시 | `_ml_place_search` (LGBMRanker) — top 5 ranking, `nodes/place.py:64~67, 168~181` |
+| T8 | Gemini reranking | 항상 (top candidates 진입 시) | `nodes/place.py:269~283` 점수화 + 비선호 페널티 → 최종 `reranked` 정렬 (score desc) |
 
 ### 4.4 Fallback 정책 (Fallback Policy)
 | ID | 기능 | 트리거 | 출력 |
@@ -138,6 +267,8 @@
 | F2 | headcount=None | entity가 인원 추출 못함 | 방 멤버 수 fallback (**Q3=A**, 게스트 포함 — Q12=A) |
 | F3 | 단일 슬롯도 vote_card | 슬롯 1개만 남음 | 단일 옵션 vote_card 발행 (**Q1=B**, 날짜범위 확정 전제) — skip 폐기 |
 | F4 | 캘린더 권한 없음 | OAuth 미동의 멤버 | 해당 멤버 캘린더 무시 + narrator에 명시 |
+| F5 | place_hint 미지정 fallback | 발화에 place_hint 없음 | **Q2 결정 순서**: ① 멤버 선호 장소 다수결(`pref_data["best_location"]`) → ② 동률 시 발화자 개인 선호 → ③ 선호 정보 없으면 방장(creator) `home_base` |
+| F6 | cuisine 미감지 | `_detect_cuisine_type` 결과 없음 | `meeting_type` fallback (e.g. "저녁모임"→"음식점") 또는 일반 카테고리("맛집") — 카테고리 미특정 시 Kakao 일반 검색 |
 
 ---
 
@@ -186,7 +317,7 @@
 | 발화자 토글 (Q5 hybrid) | 동률 시 트리거 사용자 선호 우선 토글 | (Q5 결정, 미구현) | 5.1.4 place_hint fallback 순위·UI 토글 | — | 🔧 |
 
 > `preference_common_times` ⚠️ 사유: 교차 set 비면 top-3 fallback. 시연 시나리오 한정 검증.
-> **Q5 hybrid 토글 (Q7=B 결정)**: 카드 페이로드에 `preference_source: "group"|"speaker"` + `preference_toggle_enabled: bool` 두 키 (vote_card·place 양쪽). **Q7-b: 방 전체 갱신** — 토글 시 새 페이로드 broadcast (`POST /meetings/{id}/recommendations/refresh` 신설, §9). **권한 (Q13=B)**: 발화자 + 방장만 호출 가능. **Rate limit (Q14=C)**: Redis idempotency 캐시(같은 source/scope 조합 hit) + 일일 100회 상한. **Narrator (Q15=A)**: 재발행 시 "OOO님 선호 기준으로 다시 추천했어요" 실명 명시 — PII 노출 트레이드오프 인지 필요. Q7-c (`preference_toggle_enabled=false` 트리거 조건)는 PR-2 §3 작업 시 결정.
+> **Q5 hybrid 토글 (Q7=B 결정)**: 카드 페이로드에 `preference_source: "group"|"speaker"` + `preference_toggle_enabled: bool` 두 키 (vote_card·place 양쪽). **Q7-b: 방 전체 갱신** — 토글 시 새 페이로드 broadcast (`POST /meetings/{id}/recommendations/refresh` 신설, §9). **권한 (Q13=B)**: 발화자 + 방장만 호출 가능. **Rate limit (Q14=C)**: Redis idempotency 캐시(같은 source/scope 조합 hit) + 일일 100회 상한. **Narrator (Q15=A)**: 재발행 시 "OOO님 선호 기준으로 다시 추천했어요" 실명 명시 — PII 노출 트레이드오프 인지 필요. **Q7-c (`preference_toggle_enabled=false` 트리거 조건)**: C1(발화자 `share_*_data == False`) ∨ C3(그룹 다수결과 발화자 선호 결과 동일) ∨ C4(발화자 본인 정보 비어있음). 게스트(C2 후보)는 채팅방 입장 후 선호 설정 가능하므로 토글 허용.
 
 #### 5.1.4 장소 추출·검색·추천
 
@@ -395,7 +526,7 @@ async def test_S1_basic_next_week_vote_card():
 | Q6 | F1 fallback (전원 불가능 시 다수결) 구현 우선순위 | S8 | **결정: A) v1.0 구현 포함** (정렬 = Q8=A) |
 | Q7 | Q5 hybrid 토글 UI 메타 키 이름·위치 | §3 페이로드 확장 | **결정: B)** `preference_source: "group"\|"speaker"` + `preference_toggle_enabled: bool`, vote_card·place 양쪽 |
 | Q7-b | 토글 동작 범위 | §6 (재발행 흐름), §9 (라우트) | **결정: 방 전체 갱신** (broadcast) — `POST /meetings/{id}/recommendations/refresh` 신설 |
-| Q7-c | `preference_toggle_enabled=false` 트리거 조건 (게스트? 그룹·발화자 일치? 발화자 정보 부재?) | §3 페이로드 보강 | 미결 — PR-2 §3 작업 시 결정 |
+| Q7-c | `preference_toggle_enabled=false` 트리거 조건 (게스트? 그룹·발화자 일치? 발화자 정보 부재?) | §3 페이로드 보강 | **결정: C1 + C3 + C4** (게스트 C2 제외 — 게스트도 채팅방 입장 후 선호 설정 가능). **C1**: 발화자 `share_*_data == False` (PII 동의 안 함). **C3**: 그룹 다수결과 발화자 선호 결과 동일 (의미 없음). **C4**: 발화자 본인 정보(home_base/preferences)가 비어있음 |
 | Q8 | F1 fallback 정렬 (멤버 수 동률 시) | §4.4 F1 명세 | **결정: A) 시간 빠른 순** (후보는 이미 선호·거부 반영된 상태 가정) |
 | Q9 | partial maedeup(time_only) 발행 후 장소 채워졌을 때 시간 번복 가능? | §5.1.6 ↔ 해결점 K | **결정: A) 번복 불가** (확정 후 잠김, 재추천은 별도 경로) |
 | Q10 | 한국 휴일/주말이 장소 추천에도 영향? | §4.3 T·§5.1.4 | **결정: C) Gemini prompt 안내** (Kakao 영업시간 미제공 → 옵션 B 단독 불가, v2 후보) |
@@ -410,3 +541,4 @@ async def test_S1_basic_next_week_vote_card():
 
 ## 변경 이력
 - 2026-05-14: 초안 작성 (§1~§4, §11), §5~§10 scaffolding
+- 2026-05-14 — PR-2: §1~§4 시간+장소 보강 (헤더·§1.1~1.3·§2 S11~S14·§3 페이로드 4종(vote_card / place_recommendation / maedeup_card 확정·partial) + narrator 통합·§4 R/P/T/F 매트릭스 R7~R9·P4~P6·T6~T8·F5~F6 신설). Q7-c 결정 (C1 + C3 + C4, 게스트 C2 제외).

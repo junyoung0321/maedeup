@@ -1,13 +1,16 @@
 # 시간+장소 기능정의서 작성 — 진행 상태 핸드오프 (v3)
 
 작성: 2026-05-14
-최종 갱신: 2026-05-14 (b·c·e·d 후 — **v1.0 완성 + 외부 리뷰·v2 계획·cleanup 종료**)
+최종 갱신: 2026-05-14 (PR-Z2 후 — **Q5 hybrid 인프라 코드 완성**)
 작성자: 본인 + Claude Opus 4.7 (PM 모드)
-브랜치: `docs/spec-time-coordination` (origin 푸시 = `e996bba` 시점까지, 그 후 로컬 `b3d1509`까지 진행)
-대상 문서: `docs/handoff/spec-time-and-place.md` (기능정의서, **1523줄** v1.0, §11 rename·Q11 결정 반영)
+브랜치: `docs/spec-time-coordination` (origin 푸시 = `e996bba` 시점까지, 그 후 로컬 `ea759d1`까지 진행)
+대상 문서: `docs/handoff/spec-time-and-place.md` (기능정의서, **1523줄** v1.0)
 추가 문서:
 - `docs/handoff/2026-05-14-spec-review-guide.md` (외부 리뷰 가이드, 212줄, c)
 - `docs/handoff/2026-05-14-spec-v2-plan.md` (v2 spec 계획, 304줄, e)
+신규 코드 PR (Q5 hybrid 인프라):
+- PR-Z1 백엔드 (`66110e9`): refresh 라우트 + P0-2·3·4 + 메타 키 + Q7-c, 9 files +946
+- PR-Z2 프론트 (`ea759d1`): 토글 UI + refresh API 호출, 3 files +255/-1
 
 > **다음 세션 빠른 컨텍스트 복구**: `cat docs/handoff/2026-05-14-spec-progress.md` 한 줄로 본 문서를 먼저 읽으세요.
 
@@ -17,15 +20,18 @@
 
 - **스코프 확정**: 시간 + 장소 조율을 **한 문서**로 통합
 - **파일**: `docs/handoff/spec-time-and-place.md` (헤더·§1~§5·§11 시간+장소 통합 완료)
-- **작성 진행**: **§1~§13 모두 완성 ✅** (PR-4 종료, spec v1.0 첫 완본)
+- **작성 진행**: **§1~§13 모두 완성 ✅** (spec v1.0)
+- **코드 구현**: spec v1.0의 **핵심 미구현 항목(Q5 hybrid 인프라) 완성 ✅** (PR-Z1·Z2)
 - **결정 누적**: **31건 확정 + 1건 신규 미결** (Q17 F4 narrator 실명/익명)
 - **코드 작업**: PR-X·PR-Y1·PR-Y2 로컬 커밋 완료, **푸시 안 함**
 - **운영 모드**: PM 모드 — 리더는 분배·통합·결정 제안, 깊은 분석은 3담당 에이전트에 위임 (메모리 영구 저장)
 
-## 2. 이번 세션 변경 (커밋 26건)
+## 2. 이번 세션 변경 (커밋 28건)
 
 | # | SHA | 메시지 | 변경 | 상태 |
 |---|---|---|---|---|
+| 28 | `ea759d1` | feat(frontend): Q5 hybrid 토글 UI + refresh API (PR-Z2) | +255 / -1 | 로컬 |
+| 27 | `66110e9` | feat(pipeline): Q5 hybrid refresh 라우트 + P0 plumbing (PR-Z1) | +946 / -4 | 로컬 |
 | 26 | `b3d1509` | docs(handoff): v2 spec 계획서 (e) — 38 항목 / 10 카테고리 | +304 / 0 | 로컬 |
 | 25 | `90f5bb0` | docs(handoff): 외부 리뷰 가이드 (c) — 심사위원·협업자용 | +212 / 0 | 로컬 |
 | 24 | `672f3cd` | docs(handoff): spec d-cleanup — §11 rename + Q11 결정 표 갱신 | +2 / -2 | 로컬 |
@@ -55,7 +61,7 @@
 |   | `494807e` | docs(handoff): spec 파일 rename + 해결점 N 추가 | +29 / 0 | origin |
 |   | `1de2024` | (출발점) 시간 조율 초안 §1~§4·§11 | (기존) | origin |
 
-**푸시 상태**: `origin/docs/spec-time-coordination`은 `e996bba`까지. 그 이후 **로컬 미푸시 21 커밋** (PR-X·Y·2·3·4 + 외부 리뷰·v2 계획·cleanup).
+**푸시 상태**: `origin/docs/spec-time-coordination`은 `e996bba`까지. 그 이후 **로컬 미푸시 23 커밋** (PR-X·Y·Z + 문서 v1.0 + 외부 리뷰·v2 계획·cleanup).
 
 ## 3. 수정한 파일
 
@@ -178,9 +184,17 @@
 
 ### 코드 검증 (b, 사용자 환경 의존)
 - [ ] **Docker Desktop WSL 통합 활성화** (Settings → Resources → WSL Integration → Ubuntu-22.04 토글 ON)
-- [ ] 통합 후 `docker compose up -d --build` (PR-Y2 frontend 반영)
+- [ ] 통합 후 `docker compose up -d --build` (PR-Y2·PR-Z2 frontend 반영)
 - [ ] `docker exec maedeup-api alembic upgrade head` (PR-X 마이그)
-- [ ] `docker exec maedeup-api pytest backend/tests/integration/test_user_consent_default.py backend/tests/unit/test_majority_fallback.py backend/tests/integration/test_f1_fallback_pipeline.py -v`
+- [ ] pytest 실행:
+  ```
+  docker exec maedeup-api pytest \
+    backend/tests/integration/test_user_consent_default.py \
+    backend/tests/unit/test_majority_fallback.py \
+    backend/tests/integration/test_f1_fallback_pipeline.py \
+    backend/tests/unit/test_preference_toggle.py \
+    backend/tests/integration/test_refresh_route.py -v
+  ```
 - [ ] 시연 시나리오 수동 검증 (S1·S2·S4·S8·S11·S12·S15.1·S15.2 = P0 8건)
 
 ### 후속 / 별도 PR

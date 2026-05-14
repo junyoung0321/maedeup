@@ -1280,6 +1280,213 @@ PIPA 의무 또는 정책 일관성을 위해 추가 구현이 필요한 항목:
 
 ---
 
+## 12. 비기능 요구사항
+
+### 12.1 성능
+
+사용자 인식 latency = "발화 → vote_card publish" 종단(end-to-end). 노드별 latency는 §9.4 `[TIMING]` 로그에서 집계.
+
+| 지표 | 목표 (P50 / P95) | 측정 방식 |
+|---|---|---|
+| 사용자 인식 latency (메시지 → `vote_card` 발행) | P50 ≤ 5s / P95 ≤ 10s | §9.4 `[TIMING]` 합산 + WebSocket publish 시각 |
+| 단일 LangGraph 노드 평균 latency | 노드별 P95 ≤ 3s | `[TIMING] {node}: {duration}s` (§9.4) |
+| Gemini API 응답 P95 | ≤ 4s | `services/gemini.py` 호출 메트릭 |
+| Kakao Local Search P95 | ≤ 1s | `services/kakao_maps.py` 메트릭 |
+| Google Calendar freeBusy P95 | ≤ 2s | `services/google_calendar.py` 메트릭 |
+| Memory extraction (fire-and-forget) | 사용자 인식 latency 무영향 | graph 종료 후 비동기 (`nodes/memory.py` 주석 ~4s 절감) |
+
+성능 측정 위치: §9.4 (구조화 로그) — 모든 노드 entry/exit `[TIMING]` 발행.
+
+### 12.2 가용성
+
+졸업 프로젝트 수준 목표 — **99% (시연 통과 기준)**. 외부 의존성 장애 시 graceful degradation 우선:
+
+| 의존성 | 장애 시 동작 | 근거 |
+|---|---|---|
+| Gemini API | 정규식 fallback (`_pattern_extract_entities`) | §9.4 fallback 로그 (`gemini_quota_exceeded`) |
+| Kakao Local API | F5 narrator ("검색 결과가 없어요") | §4.4 F5 |
+| Google Calendar | 캘린더 연동 멤버만 제외 + F4 narrator | §6.7 F4, §9.7 narrator |
+| Redis | 캐시 없이 진행 (silent), 메트릭 alert | §8.4 Redis 캐시 정책 |
+
+§9.8 갭 항목 (외부 의존성 timeout 정책 미명시)은 v2 backlog.
+
+### 12.3 보안
+
+| 영역 | 현황 | 비고 |
+|---|---|---|
+| JWT | HS256 단일 시크릿, 만료 7일, refresh 미구현 | `JWT_SECRET` dev fallback 위험 — prod 배포 시 강제 변경 (§13.3) |
+| Google OAuth 토큰 | `google_access_token` / `google_refresh_token` Text 평문 저장 | `models/user.py` — v2: Fernet 또는 KMS 암호화 |
+| API 키 | 환경변수 (`.env.example`), 로그/응답 마스킹 | CLAUDE.md "Never" 규약 |
+| Rate limit | Redis idempotency + 일일 100회 (refresh) | §9.2, Q14=C |
+| OWASP top 10 | 표준 정책 (CORS·CSRF·XSS·SQLi) | FastAPI/SQLModel 기본 + ORM bind 매개변수 |
+
+알려진 보안 갭: §8.9·§9.8 (RBAC 강제 일관성·OAuth 토큰 암호화) — v2 후보.
+
+### 12.4 프라이버시
+
+§8 데이터 정책에서 본문 명세. 비기능 관점 요약:
+
+- **동의 이력 audit log** (§9.5 위임): `calendar_consent`·`share_*_data` 토글 변경 시 audit row.
+- **삭제 SLA** (§8.5 위임): PIPA 준거 30일 보관·삭제. 계정 삭제 엔드포인트는 v1·v2 후보.
+- **AI 추출 데이터 검토 UI** (§8.2 위임): `is_ai_filled` 마크(✨), 사용자 거부·수정 가능.
+- **PII 노출 정책**:
+  - k-anonymity N≥4 (§8.3) — 소규모 방 보호.
+  - narrator 실명 (Q15=A) — viewer 멤버일 때만 공개 (§7.4·§8.6).
+  - blocker 익명 + 더보기 실명 (Q16=C) — 점진 공개.
+
+### 12.5 접근성 (WCAG 2.1 AA 권고)
+
+| 항목 | 권고 |
+|---|---|
+| 키보드 네비게이션 | 모든 `vote_card` / `place_card` / `maedeup_card` 클릭 영역 Tab 이동 가능 |
+| 색 대비 | 텍스트 ≥ 4.5:1, UI 컴포넌트 ≥ 3:1 |
+| 스크린리더 라벨 | 카드·배지·토글에 `aria-label` |
+| 포커스 표시 | 토글·버튼 포커스 outline 명시 |
+| 검증 도구 | Lighthouse Accessibility 점수 ≥ 90 권고 |
+
+현재 spec은 권고 수준 — 실제 axe-core·Lighthouse 검증은 v2 후보.
+
+### 12.6 다국어
+
+- **현재**: 한국어 only.
+- **거부 발언 한국어 가정**: ko_KR 정규식·키워드 매칭 (`maedeup_keywords.py`) — 영어 거부 발언 fallback narrator는 v2.
+- **시각자료**: 한국 한정 (`_get_korean_holiday` — Q10=C, 휴일 안내).
+- **다국어 전환**: v2 후보.
+
+### 12.7 관측성
+
+§9.4 구조화 로그를 비기능 관점에서 재정렬:
+
+| 카테고리 | 측정 |
+|---|---|
+| latency | `[TIMING] {node}: {duration}s` — 노드별·종단·P50/P95 집계 |
+| Fallback 발동 카운트 | F1·F2·F3·F4 (시간) / F5·F6 (장소) |
+| 해결점 발동 카운트 | N·O·P (시연 사후 보완 추적) |
+| Gemini 메트릭 | quota·실패율·rate-limit hit |
+| Refresh 메트릭 | idempotency hit·daily quota (§9.2) |
+
+**Alert 임계 (권고)**:
+- Gemini 실패율 > 5% → alert (정규식 fallback 폭증 신호)
+- 사용자 인식 latency P95 > 15s → alert
+- F1 fallback 빈도 > 시연 시나리오 임계 → 시나리오 점검
+
+대시보드(Grafana/Datadog): v2 후보 — 현재 미구현.
+
+### 12.8 비기능 acceptance gate (시연 직전 통과 기준)
+
+- §10.7 **P0 테스트 8건** 통과 (S1·S2·S4·S8·S11·S12·S15.1·S15.2).
+- 사용자 인식 latency **P95 < 10s** (메시지 → `vote_card`).
+- 메모리 누수 없음 (시연 30분 부하 후 RSS 안정).
+- Critical 보안 갭 없음 (`JWT_SECRET` prod 변경 완료, 시크릿 평문 노출 없음).
+
+---
+
+## 13. 부록
+
+### 13.1 다이어그램 인덱스
+
+다이어그램 SoT는 `docs/handoff/diagrams/*.mmd` (Mermaid). FigJam은 build artifact — `.mmd` 편집 → diff 승인 → `generate_diagram` MCP 렌더 (CLAUDE.md "다이어그램 작업 규칙").
+
+| 파일 | 다루는 내용 |
+|---|---|
+| `00-overview.mmd` | 전체 시퀀스 (User → SocialWS → Redis → AgentWS → Gemini → LangGraph → DB) |
+| `01-trigger-rules.mmd` | 트리거 규칙 + 4게이트 |
+| `02-langgraph-flow.mmd` | 9노드 체인 상세 + `trigger_reason` 분기 (해결점 C·D·E·F·G·I·J) |
+| `02-langgraph-flow-annotations.md` | 02 노드별 주석 |
+| `03-intent-classifier.mmd` | `classify_intent` 내부 (RAG embed → Gemini → 패턴 3분기) |
+| `04-option-c-routing.mmd` | 트리거별 라우팅 통합 |
+| `05-full-overview.mmd` | 전체 시스템 한 장 (해결점 A~M 통합) |
+| `06-card-update-flow.mmd` | partial 카드 → 수동 입력 → `meeting_id` 갱신 (해결점 J·K) |
+
+### 13.2 마이그레이션 표
+
+`backend/alembic/versions/` (총 22 revisions — PR-X 포함). 모든 마이그레이션 idempotent (`inspector.has_table` / `has_column` 가드, CLAUDE.md "Conventions").
+
+| Revision | 파일명 | 목적 |
+|---|---|---|
+| `5c2d88f8a524` | `add_users_table` | 초기 users 테이블 |
+| `04a69892075f` | `add_sender_to_chat_messages` | 채팅 메시지 sender 필드 |
+| `d1e2f3a4b5c6` | `add_rooms_social_meeting_vote_tables` | 방·소셜·meeting·vote 테이블 |
+| `d2e3f4a5b6c7` | `add_notifications_table` | 알림 테이블 |
+| `d9e0f1a2b3c4` | `add_users_is_guest` | 게스트 사용자 플래그 |
+| `9a8b7c6d5e4f` | `add_unique_constraints_for_memberships` | 멤버십 유니크 제약 |
+| `9a8b7c6d5e50` | `add_friendship_uniqueness_and_event_starts_at_index` | 친구·이벤트 인덱스 |
+| `9a8b7c6d5e51` | `add_meeting_participant_uniqueness_and_schedule_index` | meeting 참가자 유니크·스케줄 인덱스 |
+| `a1b2c3d4e5f6` | `add_meeting_reminder_sent` | 모임 알림 발송 플래그 |
+| `a2b3c4d5e6f7` | `add_vote_reminder_sent` | 투표 알림 발송 플래그 |
+| `b1c2d3e4f5a6` | `add_meeting_vote_fields` | 모임 투표 필드 |
+| `b2c3d4e5f6a7` | `add_meeting_preferences` | 모임 선호 (preference_source 등) |
+| `b3c4d5e6f7a8` | `add_google_tokens_and_consent` | OAuth 토큰 + `calendar_consent` (default=False) |
+| `c1d2e3f4a5b6` | `add_kakao_fields_to_events` | Kakao place_id·place_name |
+| `c4d5e6f7a8b9` | `add_intent_examples_table` | RAG intent examples |
+| `c5d6e7f8a9b0` | `add_chat_visibility_and_sharing` | 채팅 공개·공유 메타 |
+| `e1f2a3b4c5d6` | `add_meeting_google_event_ids` | Google 캘린더 event_id |
+| `e5f6a7b8c9d0` | `add_personal_data_columns` | `home_base`·`share_*_data` |
+| `e7f8a9b0c1d2` | `add_home_base_and_meeting_end_at` | home_base 좌표·meeting end_at |
+| `f4b1c2d3e4f5` | `add_user_food_preferences` | 사용자 음식 선호 |
+| `f6a7b8c9d0e1` | `add_share_consent_columns` | share consent 컬럼 분리 |
+| `e2a3b4c5d6f7` | `set_calendar_consent_default_true` | **PR-X 신규** — default=True + 일괄 UPDATE (Q11·Q-X1=A) |
+
+### 13.3 환경변수 (마스킹)
+
+`.env.example` 기준 — **값은 노출 X, 키 이름만**. CLAUDE.md "Never": API 키/시크릿 전체 출력 금지.
+
+| 변수 | 용도 | 비고 |
+|---|---|---|
+| `APP_ENV` | 환경 분기 (`development` / `production`) | prod에서 시크릿 검증 강제 권고 |
+| `JWT_SECRET` | JWT 서명 키 | dev fallback 값 prod 배포 금지 (§12.3) |
+| `DATABASE_URL` | Postgres 접속 | docker-compose 하드코딩 (CLAUDE.md) |
+| `REDIS_URL` | Redis 접속 | docker-compose 하드코딩 |
+| `GEMINI_API_KEY` | Gemini 2.5 Flash API | rate limit 시 정규식 fallback (§12.2) |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | OAuth 인증 | 테스트 사용자 등록 필요 (CLAUDE.md) |
+| `KAKAO_API_KEY` / `KAKAO_REST_API_KEY` / `NEXT_PUBLIC_KAKAO_MAP_KEY` | Kakao Local·Map API | OPEN_MAP_AND_LOCAL 서비스 활성화 필요 |
+| `FRONTEND_URL` / `BACKEND_URL` | 서비스 간 URL | docker network 명 의존 |
+| `NEXT_PUBLIC_API_URL` / `NEXT_PUBLIC_WS_URL` | 프론트 → 백엔드 endpoint | Next.js 빌드 타임 주입 |
+
+### 13.4 용어집
+
+| 용어 | 정의 |
+|---|---|
+| 매듭 (Maedeup) | 모임 시간·장소 합의 종료 후 발행되는 확정 카드 (도메인 핵심) |
+| 매듭 카드 (`maedeup_card`) | `nodes/maedeup.py` 발행 페이로드 (확정 / partial=time_only) |
+| 슬롯 (slot) | 후보 시간 구간 (예: 5/19 18:00~20:00) |
+| 슬롯 진행 차수 (`slot_filling_turns`) | 같은 정보 재발화 시 acknowledgment 1회 한정 |
+| `trigger_reason` | 자동 트리거 분기 키 (`stalemate` / `conclusion_detected` / `all_members_selected` / `direct_request`) |
+| direct_request | 사용자 명시 요청 (AI 패널 발화) — `quick_classify` fast path |
+| stalemate | 채팅 교착 감지 (`stalemate_judge.py`) |
+| conclusion_detected | 합의 발화 감지 ("그럼 ㄱㄱ" 등 — `maedeup_keywords.py`) |
+| all_members_selected | TimeBar 멤버 전원 시간 선택 완료 |
+| F1~F4 | 시간 fallback (전원 불가 / headcount=None / 단일 슬롯 / 캘린더 권한 없음) |
+| F5~F6 | 장소 fallback (`place_hint` 없음 Q2 / cuisine 미감지) |
+| 해결점 A~P | `audit-findings.md` 누적 이슈 해결 기록 |
+| partial 카드 | `time_only` maedeup (시간만 확정, 장소 pending) |
+| `preference_source` | "group" (다수결) vs "speaker" (발화자) — Q5·Q7 |
+| Q7-c | `preference_toggle_enabled=false` 트리거 조건 (C1+C3+C4) |
+| ACT 0~6 | 시연 시나리오 단계 (`demo-scenario.md`) |
+| viewer_user_id | narrator·payload 렌더 컨텍스트 — PII 노출 게이트 (§7.4·§8.6) |
+
+### 13.5 변경 이력 (spec 작성 진행)
+
+- 2026-05-14 — PR-0: spec rename + 해결점 N (`494807e`)
+- 2026-05-14 — PR-1.5: §5 재구조 (`89571d4`)
+- 2026-05-14 — PR-1.6~1.8: 결정 안건 갱신
+- 2026-05-14 — PR-X: `calendar_consent` 마이그레이션 (`9609bee`, `e2a3b4c5d6f7`)
+- 2026-05-14 — PR-Y1·Y2: F1 fallback 백엔드·프론트
+- 2026-05-14 — PR-2: §1~§4 시간+장소 보강
+- 2026-05-14 — PR-3.1~3.5: §6~§10 본격 작성
+- 2026-05-14 — PR-4: §12·§13 신설 (본 PR — 비기능·부록)
+
+### 13.6 참고 SoT
+
+- `docs/handoff/audit-findings.md` — 해결점 A~P
+- `docs/handoff/demo-scenario.md` — 시연 SoT
+- `docs/handoff/2026-05-13-recommend-input-catalog.md` — 입력 카탈로그
+- `docs/handoff/2026-05-13-pipeline-split-plan.md` — 9노드 분할 계획
+- `docs/handoff/2026-05-14-spec-progress.md` — 본 진행 핸드오프
+- `CLAUDE.md` — 프로젝트 운영 규칙
+
+---
+
 ## 결정 안건 (Open Questions)
 
 | # | 결정 | 영향 시나리오 | 후보 |
@@ -1313,3 +1520,4 @@ PIPA 의무 또는 정책 일관성을 위해 추가 구현이 필요한 항목:
 - 2026-05-14 — PR-3.3: §8 데이터 정책 본문 작성 (§8.1 opt-out 동의 모델·§8.2 is_ai_filled UI 정책·§8.3 k-anonymity 가드·§8.4 Redis 캐시 PII·§8.5 동의 철회 SLA·§8.6 narrator PII 통합(Q15=A·F4·F1)·§8.7 게스트 보관·§8.8 PII 보존 표·§8.9 알려진 갭 8건). Q-X1=A 결정 반영, Q17(F4 narrator 실명/익명) 신규 미결 등록.
 - 2026-05-14 — PR-3.4: §9 API·이벤트·로그 본문 작성 (§9.1 엔드포인트 인벤토리 7개 라우터·§9.2 신규 refresh 라우트 명세 Q13=B·Q14=C·§9.3 WebSocket 채널·이벤트·§9.4 구조화 로그(노드 latency·F1~F5·해결점)·§9.5 audit log·§9.6 에러 응답 형식·§9.7 F4 narrator 권고 A 적용·§9.8 갭 7건). Q13·Q14·Q15·Q7-b·Q7-c 반영, Q17 권고 A 적용(미결 명시).
 - 2026-05-14 — PR-3.5: §10 회귀 테스트 케이스 본문 작성 (§10.1 단위/통합 전략·§10.2 fixture 패턴(신규 fixture 7종)·§10.3 S1~S14 pytest 매핑 표 14행·§10.4 S15 refresh 5종·negative test 5종·§10.5 로그·메트릭 assert·§10.6 동시성·§10.7 P0/P1/P2 우선순위·§10.8 v2 backlog). 모든 결정 사항(Q1·Q2·Q3·Q6·Q7·Q7-b·Q7-c·Q8·Q9·Q12·Q13·Q14·Q15·Q16·Q17 권고 A)을 회귀 검증용으로 명문화.
+- 2026-05-14 — PR-4: §12 비기능 요구사항 + §13 부록 신설 (§12.1 성능 P50/P95 표·§12.2 가용성 graceful degradation·§12.3 보안(JWT·OAuth·API 키·rate limit)·§12.4 프라이버시 요약·§12.5 접근성 WCAG 2.1 AA 권고·§12.6 다국어·§12.7 관측성 메트릭/alert·§12.8 acceptance gate·§13.1 다이어그램 인덱스 8종·§13.2 마이그레이션 22 revisions·§13.3 환경변수 마스킹·§13.4 용어집·§13.5 변경 이력·§13.6 참고 SoT). 기능정의서 v1.0 §1~§13 완성.

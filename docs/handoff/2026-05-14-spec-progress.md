@@ -4,7 +4,11 @@
 최종 갱신: 2026-05-14 (PR-W 후 — **spec 장소 보강 완료, 시간·장소 균형**)
 작성자: 본인 + Claude Opus 4.7 (PM 모드)
 브랜치: `docs/spec-time-coordination` (origin 푸시 = `e996bba` 시점까지, 그 후 로컬 `698793f`까지 진행)
-대상 문서: `docs/handoff/spec-time-and-place.md` (기능정의서, **1633줄** v1.0 + 장소 보강)
+대상 문서 (PR-V로 3분할):
+- `docs/handoff/spec-common.md` — 공통 정책·권한·API·비기능·결정 안건·변경 이력 SoT (~700줄)
+- `docs/handoff/spec-time-coordination.md` — 시간 조율 본문 (~700줄, git mv로 history 보존)
+- `docs/handoff/spec-place-recommendation.md` — 장소 추천 본문 (~500줄, 신규)
+- (구) `docs/handoff/spec-time-and-place.md` 1633줄 → 3-파일 분할 완료
 추가 문서:
 - `docs/handoff/2026-05-14-spec-review-guide.md` (외부 리뷰 가이드, 212줄, c)
 - `docs/handoff/2026-05-14-spec-v2-plan.md` (v2 spec 계획, 304줄, e)
@@ -19,7 +23,7 @@
 ## 1. 현재 상태 (한눈에)
 
 - **스코프 확정**: 시간 + 장소 조율을 **한 문서**로 통합
-- **파일**: `docs/handoff/spec-time-and-place.md` (헤더·§1~§5·§11 시간+장소 통합 완료)
+- **파일**: 구 `docs/handoff/spec-time-and-place.md` (헤더·§1~§5·§11 시간+장소 통합 완료) → PR-V로 3분할 (`spec-common.md`·`spec-time-coordination.md`·`spec-place-recommendation.md`)
 - **작성 진행**: **§1~§13 모두 완성 ✅** (spec v1.0)
 - **코드 구현**: spec v1.0의 **핵심 미구현 항목(Q5 hybrid 인프라) 완성 ✅** (PR-Z1·Z2)
 - **결정 누적**: **31건 확정 + 1건 신규 미결** (Q17 F4 narrator 실명/익명)
@@ -68,7 +72,7 @@
 ## 3. 수정한 파일
 
 ### 스펙·문서
-- `docs/handoff/spec-time-and-place.md` — §5 재구조 + 결정 22건 반영
+- `docs/handoff/spec-common.md` · `spec-time-coordination.md` · `spec-place-recommendation.md` — PR-V 3분할 (기존 `spec-time-and-place.md` git mv → `spec-time-coordination.md`로 history 보존, 공통/장소 신규 작성)
 - `docs/handoff/audit-findings.md` — 해결점 N 정식 추가
 - `docs/handoff/2026-05-14-spec-progress.md` — v1→v3 진행
 
@@ -91,7 +95,7 @@
 | # | 항목 | 결정 |
 |---|---|---|
 | 스코프 | 기능정의서 범위 | **시간 + 장소 통합** (한 문서) |
-| 파일명 | spec 파일 | **`spec-time-and-place.md`** |
+| 파일명 | spec 파일 | **3-파일 분할** (PR-V): `spec-common.md` + `spec-time-coordination.md` + `spec-place-recommendation.md` |
 | 동의 | 공유 동의 모델 | **opt-out 유지** (코드도 일치 — PR-X로 해소) |
 | 게스트 | 게스트 식별 정책 | **방별 이름 기반 pseudo_id** (room_id × name) |
 | 비기능 | 절 위치 | **§12 비기능** / **§13 부록** 분리 |
@@ -279,7 +283,9 @@ docker rebuild + pytest 실행
 
 | 파일 | 역할 |
 |---|---|
-| `docs/handoff/spec-time-and-place.md` | 기능정의서 본문 (작성 중, 412줄) |
+| `docs/handoff/spec-common.md` | 기능정의서 공통 SoT (권한·데이터·API·비기능·결정 안건·변경 이력) |
+| `docs/handoff/spec-time-coordination.md` | 기능정의서 시간 조율 본문 |
+| `docs/handoff/spec-place-recommendation.md` | 기능정의서 장소 추천 본문 |
 | `docs/handoff/audit-findings.md` | 해결점 A~P 누적 (N 추가됨) |
 | `docs/handoff/demo-scenario.md` | 시연 시나리오 SoT |
 | `docs/handoff/2026-05-13-recommend-input-catalog.md` | 입력 카탈로그 6 카테고리, P0/P1/P2 |

@@ -2,7 +2,10 @@
 
 작성: 2026-05-14
 대상: 졸업 심사위원·협업자 (외부 리뷰자)
-본문: [`docs/handoff/spec-time-and-place.md`](./spec-time-and-place.md) (1523줄, §1~§13, v1.0 첫 완본)
+본문 (PR-V로 3분할):
+- [`docs/handoff/spec-common.md`](./spec-common.md) — 공통 정책·권한·API·비기능·부록 (단일 SoT, 결정 안건·변경 이력 포함)
+- [`docs/handoff/spec-time-coordination.md`](./spec-time-coordination.md) — 시간 조율 본문 (§1~§6 시간·§10 회귀)
+- [`docs/handoff/spec-place-recommendation.md`](./spec-place-recommendation.md) — 장소 추천 본문 (§1~§6 장소·§10 회귀)
 진행 핸드오프: [`docs/handoff/2026-05-14-spec-progress.md`](./2026-05-14-spec-progress.md)
 
 > 본 문서는 본문 1523줄을 직접 읽지 않아도 핵심을 파악할 수 있도록 작성한 self-contained 안내서다. 심사위원은 §1~§5만 읽으면 5~10분 안에 전체 그림을 잡을 수 있다. 협업자는 §6~§9에서 필요한 절·테스트·SoT로 빠르게 점프하면 된다.
@@ -11,7 +14,7 @@
 
 ## 1. 한 줄 요약
 
-**매듭(Maedeup)** = AI 모임 조율 플랫폼. 채팅방의 시간·장소 교착을 자동 감지해 투표 카드·장소 추천 카드를 생성한다. **본 spec(spec-time-and-place.md, v1.0)은 그 핵심 흐름 — 시간·장소 조율 기능 — 의 단일 SoT(Source of Truth) 기능정의서**다.
+**매듭(Maedeup)** = AI 모임 조율 플랫폼. 채팅방의 시간·장소 교착을 자동 감지해 투표 카드·장소 추천 카드를 생성한다. **본 spec(spec-common·spec-time-coordination·spec-place-recommendation 3-파일, v1.0)은 그 핵심 흐름 — 시간·장소 조율 기능 — 의 단일 SoT(Source of Truth) 기능정의서**다 (PR-V로 분할).
 
 ---
 
@@ -64,7 +67,7 @@
 ## 4. 핵심 결정 요약 (31건 + 신규 미결 1건)
 
 ### 4.1 스코프·정책 (6건)
-- 시간 + 장소를 **한 문서로 통합** (`spec-time-and-place.md`)
+- 시간·장소·공통을 **3-파일로 분할** (PR-V): `spec-common.md` (공통 정책·SoT) + `spec-time-coordination.md` (시간) + `spec-place-recommendation.md` (장소). 결정 안건·변경 이력은 `spec-common.md`에만 단일 SoT로 유지.
 - 공유 동의 모델 = **opt-out** (코드와 일치 — PR-X로 해소)
 - 게스트 식별 = **방별 이름 기반 pseudo_id** (`room_id` × name)
 - §12 비기능 / §13 부록 절 위치 분리
@@ -198,7 +201,9 @@
 
 | 파일 | 역할 |
 |---|---|
-| [`docs/handoff/spec-time-and-place.md`](./spec-time-and-place.md) | 기능정의서 v1.0 본문 (1523줄, SoT) |
+| [`docs/handoff/spec-common.md`](./spec-common.md) | 기능정의서 v1.0 공통 SoT (권한·데이터·API·비기능·결정 안건·변경 이력) |
+| [`docs/handoff/spec-time-coordination.md`](./spec-time-coordination.md) | 기능정의서 v1.0 시간 조율 본문 |
+| [`docs/handoff/spec-place-recommendation.md`](./spec-place-recommendation.md) | 기능정의서 v1.0 장소 추천 본문 |
 | [`docs/handoff/2026-05-14-spec-progress.md`](./2026-05-14-spec-progress.md) | 본 spec 진행 핸드오프 (결정 31건·코드 PR-X/Y·로컬 커밋 17건 정리) |
 | [`docs/handoff/audit-findings.md`](./audit-findings.md) | 해결점 A~P 누적 기록 (N·O·P가 v1·v2 backlog) |
 | [`docs/handoff/demo-scenario.md`](./demo-scenario.md) | 시연 시나리오 SoT (S1~S14 원본) |

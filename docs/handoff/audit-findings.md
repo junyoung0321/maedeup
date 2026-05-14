@@ -964,7 +964,7 @@
 - **다이어그램**:
   - `02-langgraph-flow.mmd` 노드3·4 분기 라벨에 `expanded_to_next_week` 표시 권장
   - `00-overview.mmd` 시퀀스에 확장 점선 추가 가능 (선택)
-- **명명 기준**: `spec-time-and-place.md` §4.3 T2(탐색 정책) 항목과 1:1 매핑
+- **명명 기준**: `spec-time-coordination.md` §4.3 T2(탐색 정책) 항목과 1:1 매핑 (PR-V로 분할 — 구 `spec-time-and-place.md`)
 
 ---
 

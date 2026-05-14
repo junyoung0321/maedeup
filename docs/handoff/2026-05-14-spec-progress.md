@@ -1,9 +1,9 @@
 # 시간+장소 기능정의서 작성 — 진행 상태 핸드오프 (v3)
 
 작성: 2026-05-14
-최종 갱신: 2026-05-15 (P3 hotfix 후 — **테스트 인프라 완성, 91/91 PASS**)
-작성자: 본인 + Claude Opus 4.7 (PM 모드 + QA 신설)
-브랜치: `docs/spec-time-coordination` (origin 푸시 = `e996bba` 시점까지, 그 후 로컬 `aaec29d`까지 진행)
+최종 갱신: 2026-05-15 (QA 시연 dry-run 후 — **백엔드 OK, 시연 환경 셋업 진행 중**)
+작성자: 본인 + Claude Opus 4.7 (PM 모드 + QA + Playwright MCP)
+브랜치: `docs/spec-time-coordination` (origin 푸시 = `e996bba` 시점까지, 그 후 로컬 `0ffdfbe`까지 진행)
 대상 문서 (PR-V로 3분할):
 - `docs/handoff/spec-common.md` — 공통 정책·권한·API·비기능·결정 안건·변경 이력 SoT (~700줄)
 - `docs/handoff/spec-time-coordination.md` — 시간 조율 본문 (~700줄, git mv로 history 보존)

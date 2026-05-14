@@ -1,10 +1,10 @@
 # 시간+장소 기능정의서 작성 — 진행 상태 핸드오프 (v3)
 
 작성: 2026-05-14
-최종 갱신: 2026-05-14 (PR-Z2 후 — **Q5 hybrid 인프라 코드 완성**)
+최종 갱신: 2026-05-14 (PR-W 후 — **spec 장소 보강 완료, 시간·장소 균형**)
 작성자: 본인 + Claude Opus 4.7 (PM 모드)
-브랜치: `docs/spec-time-coordination` (origin 푸시 = `e996bba` 시점까지, 그 후 로컬 `ea759d1`까지 진행)
-대상 문서: `docs/handoff/spec-time-and-place.md` (기능정의서, **1523줄** v1.0)
+브랜치: `docs/spec-time-coordination` (origin 푸시 = `e996bba` 시점까지, 그 후 로컬 `698793f`까지 진행)
+대상 문서: `docs/handoff/spec-time-and-place.md` (기능정의서, **1633줄** v1.0 + 장소 보강)
 추가 문서:
 - `docs/handoff/2026-05-14-spec-review-guide.md` (외부 리뷰 가이드, 212줄, c)
 - `docs/handoff/2026-05-14-spec-v2-plan.md` (v2 spec 계획, 304줄, e)
@@ -26,10 +26,12 @@
 - **코드 작업**: PR-X·PR-Y1·PR-Y2 로컬 커밋 완료, **푸시 안 함**
 - **운영 모드**: PM 모드 — 리더는 분배·통합·결정 제안, 깊은 분석은 3담당 에이전트에 위임 (메모리 영구 저장)
 
-## 2. 이번 세션 변경 (커밋 28건)
+## 2. 이번 세션 변경 (커밋 30건)
 
 | # | SHA | 메시지 | 변경 | 상태 |
 |---|---|---|---|---|
+| 30 | `698793f` | docs(handoff): spec 장소 보강 (PR-W) — S15~S20·F7~F9·§6.14~6.18 | +115 / -5 | 로컬 |
+| 29 | `b7335ef` | docs(handoff): v12 — PR-Z1·Z2 완료 반영 | +22 / -8 | 로컬 |
 | 28 | `ea759d1` | feat(frontend): Q5 hybrid 토글 UI + refresh API (PR-Z2) | +255 / -1 | 로컬 |
 | 27 | `66110e9` | feat(pipeline): Q5 hybrid refresh 라우트 + P0 plumbing (PR-Z1) | +946 / -4 | 로컬 |
 | 26 | `b3d1509` | docs(handoff): v2 spec 계획서 (e) — 38 항목 / 10 카테고리 | +304 / 0 | 로컬 |
@@ -61,7 +63,7 @@
 |   | `494807e` | docs(handoff): spec 파일 rename + 해결점 N 추가 | +29 / 0 | origin |
 |   | `1de2024` | (출발점) 시간 조율 초안 §1~§4·§11 | (기존) | origin |
 
-**푸시 상태**: `origin/docs/spec-time-coordination`은 `e996bba`까지. 그 이후 **로컬 미푸시 23 커밋** (PR-X·Y·Z + 문서 v1.0 + 외부 리뷰·v2 계획·cleanup).
+**푸시 상태**: `origin/docs/spec-time-coordination`은 `e996bba`까지. 그 이후 **로컬 미푸시 27 커밋** (PR-X·Y·Z·W + 문서 v1.0 + 외부 리뷰·v2 계획·cleanup).
 
 ## 3. 수정한 파일
 

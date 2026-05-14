@@ -672,9 +672,121 @@ async def _slot_filling_conclusion(state, pref_data):
 
 ## 7. 권한 / 접근 조건
 
-(작성 예정 — 짧음)
-- viewer_user_id 기반 privacy boundary (자기 캘린더만 본인 이름으로 표시)
-- 방 멤버가 아닌 사용자는 진입 자체 차단 (router 단에서)
+매듭의 권한 모델은 **`RoomMember` 기반 멤버십**과 **`viewer_user_id` 기반 privacy boundary** 두 축으로 구성된다. 모든 라우터·WebSocket 채널·파이프라인은 진입 시 멤버십을 검증하고, 응답 합성 단계에서 viewer 본인 외 멤버의 민감 정보(캘린더 busy, private agent 메시지)는 제외하거나 익명 처리한다.
+
+### 7.1 사용자 역할 정의
+
+| 역할 | 식별자 | 가입 경로 | calendar_consent |
+|---|---|---|---|
+| 방장 (owner) | `Room.created_by == user.id`<br>혹은 `RoomMember.role == MemberRole.owner` | 방 생성 시 자동 부여 (`rooms.py:119,125`) | True 가능 |
+| 멤버 (member) | `RoomMember.role == MemberRole.member`<br>`User.is_guest == False` | 방장이 명시적으로 추가 (`rooms.py:134`) | True/False |
+| 게스트 (guest) | `RoomMember.role == MemberRole.member`<br>`User.is_guest == True` | 카카오 링크 → 이름 입력 가입 (`rooms.py:235~244`, `models/user.py:45`) | **False 강제** (`rooms.py:239,295`) |
+| 비멤버 (non-member) | `RoomMember` 행 없음 | — | — |
+
+**게스트 pseudo_id**: synthetic email `guest-{uuid12}@maedeup.local` (`rooms.py:234`). 동일 방·동일 이름 재가입 시 신규 row를 만들지 않고 기존 user의 JWT만 재발급 (`rooms.py:202~232`) — `_maybe_emit_proposal`의 `len(availability) >= member_count` 영구 실패를 방지하기 위한 의도적 설계.
+
+### 7.2 권한 매트릭스
+
+| 작업 | 방장 | 멤버 | 게스트 | 비멤버 | 검증 위치 |
+|---|---|---|---|---|---|
+| 방 조회 (`GET /rooms/{id}`) | 있음 | 있음 | 있음 | 없음 | `rooms.py:154` 멤버십 검증 |
+| 방 목록 (`GET /rooms`) | 자기 소속만 | 자기 소속만 | 자기 소속만 | 없음 | `rooms.py:301~319` |
+| 소셜 메시지 발송 (`pane_type=social`) | 있음 | 있음 | 있음 | 없음 | `ws/social.py:509,522` |
+| AI 발화 (`pane_type=agent`, private) | 있음 | 있음 | 있음 | 없음 | `ws/agent.py:871~892` |
+| 카드 발행 트리거 (자동) | 있음 | 있음 | 있음 | 없음 | 파이프라인 `viewer_user_id` 멤버 검증 |
+| 카드 발행 트리거 (`direct_request`) | 있음 | 있음 | 있음 | 없음 | 동일 |
+| 시간 슬롯 투표 | 있음 | 있음 | 있음 | 없음 | `meetings.py` 멤버십 |
+| 장소 추천 클릭 | 있음 | 있음 | 있음 | 없음 | UI only (PII 동의 별도) |
+| 시간 확정 (`POST /meetings/confirm`) | 있음 | 있음 | 있음 (멤버십 동일) | 없음 | `meetings.py:365~372` "멤버라면 누구나 확정 가능" |
+| 장소 확정 (`POST /meetings/confirm` 장소 필드) | 있음 | 있음 | 있음 | 없음 | 동일 |
+| `POST /meetings/{id}/recommendations/refresh` | 있음 | 발화자 본인만 | 발화자 본인만 | 없음 | §7.5 (Q13=B) |
+| 모임 취소 (`POST /meetings/{id}/cancel`) | 있음 | 없음 | 없음 | 없음 | `meetings.py:869` `meeting.created_by` 검증 |
+| 방 나가기 (`DELETE /rooms/{id}/members/me`) | 있음 (위임/삭제 분기) | 있음 | 있음 | — | `rooms.py:565~600` (`is_host = room.created_by == user_id`) |
+| 게스트 초대 링크 생성 | 있음 | 있음 (방 멤버라면) | 있음 | 없음 | 링크는 `room_id`만 필요 (`rooms.py:178`) |
+| 캘린더 불가능 토글 (rejected_dates) | 있음 | 있음 | 있음 (Q12=A) | 없음 | calendar API, 게스트 포함 |
+| Google Calendar OAuth 연결 | 있음 (`calendar_consent=True`) | 있음 | **불가** (`is_guest=True`) | — | OAuth flow guard |
+
+게스트가 시간/장소 confirm을 호출할 수 있는 것은 의도된 동작 — 시연 시나리오에서 게스트도 멤버와 동등한 합의 권한을 가진다. `confirm`은 멤버십만 요구 (`meetings.py:371`).
+
+### 7.3 멤버십 검증 흐름
+
+모든 보호 라우터의 표준 패턴:
+
+1. `Depends(get_current_user)` → JWT 해석 → `current_user.sub` (= `user_id`)
+2. `select(RoomMember).where(user_id == ..., room_id == ...)` 조회
+3. `scalar_one_or_none() is None` → `HTTPException(403)`
+
+예시 (`meetings.py:365~372`):
+```python
+member_result = await session.execute(
+    select(RoomMember).where(
+        RoomMember.user_id == int(current_user.sub),
+        RoomMember.room_id == body.room_id,
+    )
+)
+if member_result.scalar_one_or_none() is None:
+    raise HTTPException(status_code=403, detail="Host is not a room member")
+```
+
+방장 전용 작업은 추가로 `room.created_by != int(current_user.sub)` 또는 `RoomMember.role == MemberRole.owner` 비교. 모임 취소는 `meeting.created_by` (모임 생성자 = 발화자) 기준 (`meetings.py:869`).
+
+### 7.4 viewer_user_id 기반 privacy boundary
+
+LangGraph 파이프라인은 진입 시 JWT의 `user_id`를 `state["viewer_user_id"]`로 주입 (`state.py:113~114` 인근, `agent.py:812,920,976`).
+
+**적용 지점**:
+
+- **AI 메시지 가시성** (`pipeline/helpers/messaging.py:132~138`): `viewer_user_id` 있으면 `visibility=private`, `uid=viewer_user_id`. `shared=True` 명시 시에만 방 전체 broadcast.
+- **WebSocket 라우팅** (`ws/agent.py:1020`): `new_msg["visibility"] == "shared"` → `shared_channel`, 그 외 → `user_channel` (개인 채널). private 메시지는 다른 멤버에게 절대 push되지 않는다.
+- **캘린더 busy 합성**: 그룹 슬롯 계산 시 멤버 busy를 머지하되, 응답 narrator·UI에는 본인 외 멤버의 상세 시간 (`14:00~15:00 회의`) 노출 금지 — 점유 여부(`busy`) bool만 표시.
+
+privacy boundary는 "내 화면에 보이는 정보 = 내 PII + 그룹 합성 결과(익명 카운트)" 원칙.
+
+### 7.5 refresh 라우트 권한 (Q13=B)
+
+`POST /meetings/{id}/recommendations/refresh` (PR-2 §6 도입):
+
+- **허용**: 발화자(`requester_user_id == current_user.sub`) **OR** 방장(`room.created_by == current_user.sub`)
+- **거부**: 멤버지만 비-발화자인 일반 사용자 → 403 `not_authorized_to_refresh`
+- 게스트도 본인이 발화자이면 허용 (게스트 ≠ 비-발화자)
+
+**구현 시 검증 순서**:
+1. 멤버십 (§7.3) → 비멤버 403
+2. `requester_user_id` 일치 또는 owner role → 둘 다 실패 시 403
+3. §7.6 토글 차단 조건 평가 → C1/C3/C4 해당 시 422 `toggle_disabled`
+
+### 7.6 토글 차단 조건 (Q7-c)
+
+페이로드의 `preference_toggle_enabled: false` 산출 규칙 (§3 페이로드 메타). UI에서 토글 비활성화로 표현되며, 우회 호출 시 422로 거부:
+
+- **C1 (PII 미동의)**: 발화자의 `share_food_data == False` AND `share_location_data == False` AND `share_schedule_data == False` → 합성할 PII 없음
+- **C3 (의미 없는 토글)**: `recommendation_payload_group == recommendation_payload_speaker` (동일 결과 산출) → 토글해도 변화 없음
+- **C4 (발화자 정보 부재)**: 발화자의 `home_base IS NULL` AND `MeetingPreference` 행 없음 → 발화자 기준 합성 불가
+- **C2 제외**: 게스트(`is_guest=True`)도 채팅방 입장 후 `MeetingPreference`·`home_base` 설정 가능 → C2는 차단 사유 아님 (Q7-c 결정 명시)
+
+차단 시 narrator는 "현재 선호 기준 전환은 사용할 수 없어요"로 안내 (구체 사유는 노출하지 않음 — PII 누설 방지).
+
+### 7.7 게스트 정책 세부
+
+- **가입 경로**: 카카오톡 공유 링크 → `POST /rooms/{id}/guests/join` (`rooms.py:178~298`)
+- **계정 분리**: synthetic email, `is_guest=True`, `calendar_consent=False` 강제 — Google OAuth 진입 자체가 막힘
+- **선호 설정**: 방 입장 팝업에서 음식/장소/시간/`home_base` 입력 가능 (§8 데이터 정책)
+- **캘린더 불가능 토글**: Q12=A — 게스트 포함. Google busy는 없지만 rejected_dates 입력 경로는 동등 제공 → headcount fallback 분모(`member_count`)에도 포함
+- **합의 권한**: 시간·장소 confirm 호출 가능 (§7.2). 방장 권한은 별도 (modal 취소·refresh 트리거)
+- **부풀림 방지**: 동일 방·동일 이름 재가입 시 기존 row 재사용 (`rooms.py:202~232`) — `member_count` 분모 안정성 보장. 단, 다른 이름으로 재접속하면 새 게스트 생성됨 (알려진 한계, `rooms.py:189` 주석)
+
+### 7.8 WebSocket 채널 권한
+
+- **`pane_type=agent` 채널** (`ws/agent.py`): 사용자별 channel + 방 공유 channel 이원화. private 메시지(`visibility=private`)는 viewer 본인의 user channel로만 push (`ws/agent.py:1020`). shared 메시지(인사말 등, `agent.py:179`)만 shared_channel broadcast.
+- **`pane_type=social` 채널** (`ws/social.py:509,522`): 방 멤버 전체 broadcast. PII 없는 사용자 발화·시스템 알림(`member_joined` `rooms.py:262~268`)만 전송.
+- WS 연결 시 방 멤버십 검증 → 비멤버는 connect 단계에서 close.
+
+### 7.9 데이터 접근 PII 정책 (§8 위임 요약)
+
+- **narrator 실명 정책 (Q15=A)**: 토글 재발행 narrator는 "OOO님 선호 기준으로 다시 추천했어요" — 실명 명시. PII 노출 트레이드오프를 인지하고도 토글 행동 투명성을 우선. 세부 마스킹·opt-out은 **§8 데이터 정책**에서 본격 정의.
+- **F1 blocker 익명/실명 토글 (Q16=C)**: 기본 "1명 불참" 익명 표시 → 사용자 클릭(`더보기`) 시 실명 공개. 점진 공개 원칙. 데이터 흐름·로그 보존 정책은 **§8**.
+- **F4 캘린더 권한 없음 narrator**: 캘린더 미연결 멤버 안내 시 실명 노출 여부 — Q15=A 일관 적용 후보지만, **§8에서 narrator 정책 통합 검토 (open)**.
+- **캘린더 busy 상세 마스킹**: §7.4 원칙(상세 시간 미노출, bool만) — **§8에서 저장·캐시 TTL·삭제 정책 정의**.
 
 ---
 
@@ -753,3 +865,4 @@ async def test_S1_basic_next_week_vote_card():
 ## 변경 이력
 - 2026-05-14: 초안 작성 (§1~§4, §11), §5~§10 scaffolding
 - 2026-05-14 — PR-2: §1~§4 시간+장소 보강 (헤더·§1.1~1.3·§2 S11~S14·§3 페이로드 4종(vote_card / place_recommendation / maedeup_card 확정·partial) + narrator 통합·§4 R/P/T/F 매트릭스 R7~R9·P4~P6·T6~T8·F5~F6 신설). Q7-c 결정 (C1 + C3 + C4, 게스트 C2 제외).
+- 2026-05-14 — PR-3.2: §7 권한·접근 조건 본문 작성 (§7.1 역할 정의·§7.2 권한 매트릭스 15행·§7.3 멤버십 검증·§7.4 viewer_user_id privacy·§7.5 refresh 권한 Q13=B·§7.6 토글 차단 Q7-c·§7.7 게스트 정책·§7.8 WS 채널·§7.9 §8 위임 요약). Q12=A·Q13=B·Q14=C·Q15=A·Q16=C 반영.

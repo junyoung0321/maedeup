@@ -931,11 +931,231 @@ PIPA 의무 또는 정책 일관성을 위해 추가 구현이 필요한 항목:
 
 ## 9. API / 이벤트 / 로그
 
-(작성 예정)
-- 진입 이벤트: `agent_message_received` → run_pipeline
-- 출력 이벤트: WebSocket `vote_card` push
-- 로그 키: `[TIMING] slot_filling`, `[TIMING] vote_card_creation`, `calendar_strategy=*`
-- 메트릭: vote_card 발행 / skip 비율, fallback 트리거 빈도
+§7 권한 매트릭스·§8 데이터 정책의 외부 인터페이스(REST 라우트·WebSocket 이벤트·구조화 로그·audit) 정의. v1 코드 기준 인벤토리 + Q5 hybrid 토글용 신규 라우트(미구현) 명세.
+
+### 9.1 시간+장소 관련 엔드포인트 인벤토리
+
+라우터별 v1 라우트(`backend/app/api/routes/*.py` 기준). 권한 컬럼은 §7.2 매트릭스 행 번호 참조.
+
+**`/api/v1/chat`** (메시지·share)
+
+| 메서드 | 경로 | 인증 | 요청 | 응답 | 권한 | 비고 |
+|---|---|---|---|---|---|---|
+| GET | `/messages` | JWT | `room_id`·`pane_type`·`since` | `ChatMessageRead[]` | 방 멤버 | `chat.py:49` — viewer 필터링 (§7.4) |
+| POST | `/messages` | JWT | `ChatMessageCreate` | `ChatMessageRead` | 방 멤버 | `chat.py:95~117` — `RoomMember` 검증 |
+| POST | `/messages/{id}/share` | JWT | `card_payload?` | `ShareMessageResponse` | 메시지 owner | `chat.py:120` — private→shared 전환 (§7.2 R12) |
+
+**`/api/v1/meetings`** (모임 CRUD·확정·취소)
+
+| 메서드 | 경로 | 인증 | 권한 | 비고 |
+|---|---|---|---|---|
+| GET | `/` | JWT | 본인 모임 | `meetings.py:112` — 사용자 참여 모임 목록 |
+| GET | `/upcoming` | JWT | 본인 모임 | `meetings.py:148` — 다음 예정 모임 |
+| GET | `/rooms/{id}/pending-place` | JWT | 방 멤버 | `meetings.py:189` — partial(time_only) 조회 |
+| GET | `/rooms/{id}/pending-vote` | JWT | 방 멤버 | `meetings.py:223` — pending vote_card 조회 |
+| GET | `/{id}` | JWT | 방 멤버 | `meetings.py:286` — 상세 조회 |
+| POST | `/confirm` | JWT | 방 멤버 (`meetings.py:371`) | 시간·장소 확정 (§7.2 R5) |
+| POST | `/{id}/vote` | JWT | 방 멤버 | `meetings.py:517` — slot 투표 |
+| PATCH | `/{id}/place` | JWT | 방 멤버 | `meetings.py:719` — 장소 수동 입력 (해결점 K, §7.2 R6) |
+| POST | `/{id}/cancel` | JWT | 모임 `created_by` 본인 (`meetings.py:869`) | 취소 — 방 broadcast `meeting_cancelled` |
+| **POST** | **`/{id}/recommendations/refresh`** | **JWT** | **발화자 + 방장 (Q13=B)** | **신규 — §9.2, 현재 미구현** |
+
+**`/api/v1/rooms`** (방·게스트·선호)
+
+| 메서드 | 경로 | 권한 | 비고 |
+|---|---|---|---|
+| POST | `/` | JWT | `rooms.py:104` — 방 생성 (생성자 = owner) |
+| GET | `/` · `/{id}` | JWT, 방 멤버 | 목록·상세 |
+| POST | `/{id}/guest-join` | 토큰 | `rooms.py:176` — 게스트 가입 (§7.7) |
+| POST | `/{id}/preferences` · GET | JWT, 방 멤버 | `MeetingPreference` 입력/조회 (§7.2 R3·R4) |
+| POST | `/{id}/schedule-confirm` | JWT, 방 멤버 | `rooms.py:464` — 스케줄 확정 흐름 |
+| POST | `/{id}/leave` | JWT, 방 멤버 | `rooms.py:554` — 방 나가기 |
+
+**`/api/v1/calendar`** (개인 캘린더)
+
+| 메서드 | 경로 | 권한 | 비고 |
+|---|---|---|---|
+| GET | `/free-slots` | JWT, 본인 | `calendar.py:335` — `calendar_consent=True` 필요 |
+| GET | `/my-events` | JWT, 본인 | `calendar.py:478` — `calendar.py:496` consent 가드 |
+
+> 캘린더 불가능 토글(§7.2 R10)은 현재 별도 라우트 없이 `/rooms/{id}/preferences` 페이로드 안에 임베드 — v1.5 별도 라우트 분리 후보.
+
+**`/api/v1/finalization`** · **`/api/v1/places`** · **`/api/v1/notifications`** · **`/api/v1/auth`** (요약)
+
+| 경로 | 권한 | 비고 |
+|---|---|---|
+| `POST /finalization/{proposal_id}/vote` | JWT, 방 멤버 | `finalization.py:134` — Proposal 별도 흐름 |
+| `GET /finalization/room/{room_id}` | JWT, 방 멤버 | `finalization.py:181` |
+| `POST /places/search` | JWT | `places.py:30` — Kakao Local proxy |
+| `GET /notifications` · `/unread-count` · `POST /{id}/read` · `POST /read-all` | JWT, 본인 | `notifications.py:36~100` |
+| `GET /auth/google` · `/auth/google/callback` | (public) | `auth.py:30~56` — OAuth flow |
+
+### 9.2 신규 라우트: `POST /meetings/{id}/recommendations/refresh` (Q7-b)
+
+**목적**: Q5 hybrid 토글 — 그룹 다수결 ↔ 발화자 선호 기준 전환 시 방 전체에 새 vote_card / place_recommendation broadcast (Q7-b: 방 전체 갱신).
+
+**상태**: v1 코드 미구현. v1.5 backlog (§9.8).
+
+**요청 본문**
+
+```jsonc
+{
+  "scope": "vote_card" | "place_recommendation" | "both",
+  "preference_source": "group" | "speaker",
+  "requester_user_id": 7  // 발화자 (서버측 viewer_user_id와 교차 검증)
+}
+```
+
+**권한 (Q13=B)**
+
+- JWT → `viewer_user_id` 추출 → `RoomMember(room_id=meeting.room_id, user_id=viewer_user_id)` 조회.
+- 허용 조건 (둘 중 하나):
+  1. **발화자**: `requester_user_id == viewer_user_id` AND `RoomMember.user_id == requester_user_id`.
+  2. **방장**: `RoomMember.role == "owner"` (또는 `Room.created_by == viewer_user_id` — 코드 일관성은 §7 매트릭스 R5와 동일 기준).
+- 거부 시 `403 PERMISSION_DENIED`.
+
+**Rate limit (Q14=C)**
+
+- **Idempotency 캐시 (Redis)**: 키 `refresh:{user_id}:{meeting_id}:{scope}:{preference_source}`, TTL 5분.
+  - 같은 조합 재호출 시 캐시 hit 응답 (Gemini 미호출, 비용 절감).
+- **일일 호출 제한**: 키 `refresh_count:{user_id}:{YYYY-MM-DD}`, INCR. 100 초과 시 `429 RATE_LIMITED`.
+
+**응답**
+
+- `200 OK`: 새 페이로드 (`vote_card_payload` / `place_recommendation_payload` / both)를 WebSocket으로 방 전체 broadcast (§9.3).
+- `403 PERMISSION_DENIED`: 발화자·방장 모두 아님.
+- `422 TOGGLE_DISABLED`: `preference_toggle_enabled=false` 조건 (Q7-c C1·C3·C4 중 하나) 위배 — 게스트(C2)는 차단 대상에서 제외.
+- `429 RATE_LIMITED`: 일일 100회 초과.
+- `404 NOT_FOUND`: meeting 없음 or 취소됨.
+
+**부수 효과**
+
+1. 새 페이로드 발행 (`pane_type=social` 채널, 방 멤버 전체 push — §9.3).
+2. narrator 메시지 발행 (Q15=A 실명): `"OOO님 선호 기준으로 다시 추천했어요"`.
+3. Audit log 기록 (§9.5).
+
+### 9.3 발행 이벤트 (WebSocket / 시스템)
+
+**WebSocket 채널 — pane_type 분리**
+
+| `pane_type` | 대상 | 사용처 |
+|---|---|---|
+| `agent` | viewer_user_id별 push (개인 비서 패널) | vote_card private 미리보기, narrator 1:1 |
+| `social` | 방 전체 broadcast (방 채팅) | shared vote_card, place_recommendation, maedeup_card, narrator |
+| `personal_assistant` | viewer_user_id별 push (홈 비서) | 친구/알림 등 방 외부 |
+
+**이벤트 종류**
+
+- `new_assistant_messages` — `helpers/messaging.py:154~167` publish queue. agent.py가 Redis로 fan-out.
+- `vote_card_payload` broadcast — 방 전체 (shared) 또는 viewer별 (private 미리보기).
+- `place_recommendation_payload` broadcast — 동일 채널 정책.
+- `maedeup_card_payload` broadcast — 확정/partial 카드 (§3).
+- `meeting_cancelled` broadcast — `meetings.py:893~906` `_publish_finalization_event`.
+- `notification` event — `notify.py:68` `notifications:user:{user_id}` 채널 (개인 알림 envelope).
+
+**캐시 invalidate 이벤트 (현재 미구현 — §8.4 / §9.8 갭)**
+
+- `meeting_cancelled` → Redis `room_place_rec:{room_id}` 강제 삭제.
+- `user_deleted` → 해당 user 포함 방의 모든 캐시 무효화 (§8.4 위임).
+- `share_*_data=False` 토글 → 해당 user PII 포함 캐시 키 무효화.
+
+### 9.4 구조화 로그 필드
+
+**LangGraph 노드 latency**
+
+형식: `[TIMING] {node_name}: {duration_seconds}s`. 모든 노드 일관 형식.
+
+| 노드 | 로그 키 | 위치 |
+|---|---|---|
+| intent | `[TIMING] intent_detection`·`general_response (template/gemini)` | `nodes/intent.py:130·177·264` |
+| entity | `[TIMING] entity_extraction` (+ 5종 fast-skip variant) | `nodes/entity.py:349·400·435·469·571` |
+| function_call | `[TIMING] function_calling` (+ false_positive·time_only_ready·place-suggestion·multi-date·preference-based variant) | `nodes/function_call.py:51·56·74·100·122·217` |
+| validation | `[TIMING] supervisor_validation` | `nodes/validation.py:118` |
+| vote_card | `[TIMING] vote_card_creation` (+ skipped: no date selection / single slot) | `nodes/vote_card.py:186·210·310` |
+| place | `[TIMING] place_recommendation` (+ confirmed·skipped 변종) | `nodes/place.py:133·141·360` |
+| maedeup | `[TIMING] maedeup_card_creation` | `nodes/maedeup.py:199` |
+| memory | `[TIMING] memory_extraction` (+ users affected count) | `nodes/memory.py:242` |
+
+**Fallback 발동 로그 (§4.4 F1~F6)**
+
+- **F1** (`majority_fallback`): 횟수·정렬 정책(Q8=A 시간 빠른 순)·`unavailable_users` 평균 수.
+- **F2** (`headcount=None` fallback): RoomMember 수 fallback 적용 횟수 (Q3=A·Q12=A 게스트 포함).
+- **F3** (`single_slot_vote_card`): 단일 슬롯 발행 횟수 (Q1=B).
+- **F4** (`calendar_consent=False` 멤버 제외): 제외 횟수·user_id (구조화 로그 마스킹).
+- **F5** (place_hint fallback): 선호 다수결 → 발화자 → 방장 위치 (Q2) 단계별 발동 카운트.
+
+**Gemini API 호출**
+
+- 모델 (`gemini-2.5-flash`)·input/output token·latency·실패율.
+- `quota_exceeded` 시 fallback 발동 카운트 (정규식 fast-skip 경로 — `nodes/entity.py` fast-skip 변종).
+
+**해결점 발동 로그**
+
+- 해결점 N (`expanded_to_next_week=true`): 발동 횟수.
+- 해결점 O (정규식 단축 경로): rejected_dates 누락 케이스 카운트.
+- 해결점 P (자연어 거부 → 캘린더 동기화 갭): 발동 카운트.
+
+### 9.5 Audit log
+
+**Q5 hybrid 토글 audit (Q15=A 실명 narrator와 연동)**
+
+- 키: `{requester_user_id, meeting_id, scope, preference_source, timestamp}`.
+- 저장 위치 (v1 미구현 — backlog §9.8): `audit_log` 테이블 또는 구조화 로그 stream.
+- 보존: PIPA 권고 3년 (legal hold 가능).
+- 사용자 탈퇴 시 익명화 (`requester_user_id` → `"anonymized"`, §8.6과 일관).
+
+**권한 변경 audit**
+
+- 방장 변경 (현재 미구현).
+- 모임 취소 (`meetings.py:869` `created_by` 본인) — 호출 이력 audit log 후보.
+- 게스트 강제 퇴장 (현재 미구현).
+- `calendar_consent` 토글 변화 — F4 narrator 노출과 연계, audit 권장.
+
+### 9.6 API 에러 응답 형식
+
+표준 형식:
+
+```jsonc
+{
+  "error": "권한 없음",
+  "code": "PERMISSION_DENIED",
+  "details": { /* 선택, 디버그용 */ }
+}
+```
+
+주요 에러 코드:
+
+| HTTP | code | 발생 조건 |
+|---|---|---|
+| 401 | `UNAUTHENTICATED` | JWT 부재·만료 |
+| 403 | `PERMISSION_DENIED` | 방 비멤버, 방장 아님, 발화자 아님 (refresh) |
+| 404 | `NOT_FOUND` | meeting/room/proposal 없음 또는 cancelled |
+| 422 | `TOGGLE_DISABLED` | Q7-c C1·C3·C4 위배 (게스트 C2 제외) |
+| 429 | `RATE_LIMITED` | Q14 일일 100회 초과 |
+| 409 | `SUPERSEDED` / `BELOW_MAJORITY` | finalization proposal 상태 위배 (`meetings.py:387~389`) |
+
+### 9.7 F4 narrator 결정 (Q17 권고 A 적용)
+
+§6.7·§8.6에서 미결로 남은 Q17 (F4 캘린더 권한 만료 narrator 실명/익명)에 대한 권고:
+
+**Q17 = A) 실명** 적용 (Q15=A 일관 + 액션 가능성 우선):
+
+- 형식: `"OOO님 캘린더 권한이 만료됐어요. 다시 동의해주세요."`
+- 조건: viewer가 방 멤버일 때만 노출 (§7.3 멤버십 검증). 비멤버는 narrator 자체를 받지 않음.
+- 트레이드오프: Q16=C (F1 blocker 익명+더보기 실명)와 일관성은 다소 어긋나지만, F4는 사용자 액션(재동의)이 필수라 실명 우선.
+- Q17 최종 결정 변경 시 본 절·§6.7·§8.6 동기 갱신.
+
+### 9.8 미구현·갭 (v1.5·v2 backlog)
+
+§8.9와 별도로 §9 범위에서 식별된 갭:
+
+1. **`POST /meetings/{id}/recommendations/refresh` 라우트 미구현** — 현재 코드 미존재. v1.5 신규 라우터 추가 필요 (§9.2).
+2. **`audit_log` 테이블 또는 구조화 로그 통합 미구현** — Q5 토글·권한 변경 audit (§9.5) 보존 부재.
+3. **`DELETE /users/me` 계정 삭제 엔드포인트 미구현** — §8.5·§8.9-1과 일관 (PIPA Right to Erasure).
+4. **Google Calendar revoke 엔드포인트 미구현** — §8.9-2와 일관 (`calendar_consent=False` 시 token 자동 폐기 부재).
+5. **캐시 invalidate 이벤트 미구현** — §9.3 마지막 표 (meeting_cancelled·user_deleted·share toggle).
+6. **캘린더 불가능 토글 별도 라우트 부재** — 현재 `/rooms/{id}/preferences`에 임베드, §7.2 R10 명세와 분리 권장.
+7. **Rate limit 미구현** — Q14=C 기준 (Redis idempotency + 일일 100회) 코드 미반영, refresh 라우트 신설 시 함께.
 
 ---
 
@@ -999,3 +1219,4 @@ async def test_S1_basic_next_week_vote_card():
 - 2026-05-14 — PR-2: §1~§4 시간+장소 보강 (헤더·§1.1~1.3·§2 S11~S14·§3 페이로드 4종(vote_card / place_recommendation / maedeup_card 확정·partial) + narrator 통합·§4 R/P/T/F 매트릭스 R7~R9·P4~P6·T6~T8·F5~F6 신설). Q7-c 결정 (C1 + C3 + C4, 게스트 C2 제외).
 - 2026-05-14 — PR-3.2: §7 권한·접근 조건 본문 작성 (§7.1 역할 정의·§7.2 권한 매트릭스 15행·§7.3 멤버십 검증·§7.4 viewer_user_id privacy·§7.5 refresh 권한 Q13=B·§7.6 토글 차단 Q7-c·§7.7 게스트 정책·§7.8 WS 채널·§7.9 §8 위임 요약). Q12=A·Q13=B·Q14=C·Q15=A·Q16=C 반영.
 - 2026-05-14 — PR-3.3: §8 데이터 정책 본문 작성 (§8.1 opt-out 동의 모델·§8.2 is_ai_filled UI 정책·§8.3 k-anonymity 가드·§8.4 Redis 캐시 PII·§8.5 동의 철회 SLA·§8.6 narrator PII 통합(Q15=A·F4·F1)·§8.7 게스트 보관·§8.8 PII 보존 표·§8.9 알려진 갭 8건). Q-X1=A 결정 반영, Q17(F4 narrator 실명/익명) 신규 미결 등록.
+- 2026-05-14 — PR-3.4: §9 API·이벤트·로그 본문 작성 (§9.1 엔드포인트 인벤토리 7개 라우터·§9.2 신규 refresh 라우트 명세 Q13=B·Q14=C·§9.3 WebSocket 채널·이벤트·§9.4 구조화 로그(노드 latency·F1~F5·해결점)·§9.5 audit log·§9.6 에러 응답 형식·§9.7 F4 narrator 권고 A 적용·§9.8 갭 7건). Q13·Q14·Q15·Q7-b·Q7-c 반영, Q17 권고 A 적용(미결 명시).

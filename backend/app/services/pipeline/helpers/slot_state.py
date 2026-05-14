@@ -90,9 +90,18 @@ def _has_meaningful_slot_progress(previous_missing_slots: list[str], state: Grap
 
 
 def _build_flexible_time_options(state: GraphState) -> list[str]:
-    if not state.get("date_is_flexible"):
-        return []
     if not _is_specific_iso_date(state.get("date_hint")):
+        return []
+
+    # Fix 8a (2026-05-14): 명시 시간 (parsed_time_hint + is_flexible=False) → 단일 슬롯.
+    # "내일 오후 6시" 같은 입력에서 사용자 의도 그대로 vote_card에 반영.
+    # Fix 7과 결합: 정확한 정수 시간이 단일 슬롯으로 카드에 노출.
+    parsed_time_hint = state.get("parsed_time_hint")
+    if parsed_time_hint and not state.get("date_is_flexible"):
+        return [parsed_time_hint]
+
+    # 기존 flexible 시간 → bucket-based 3개 옵션
+    if not state.get("date_is_flexible"):
         return []
 
     bucket = _infer_time_bucket(

@@ -9,6 +9,7 @@ import {
   Clock3,
   MapPin,
   Plus,
+  ChevronRight,
 } from "lucide-react";
 import MobileTabBar from "@/components/ui/MobileTabBar";
 import QuickMatchPopup from "@/components/home/QuickMatchPopup";
@@ -84,9 +85,8 @@ export default function ExplorePage() {
   return (
     <div
       style={{
-        width: 390,
-        height: 1090,
-        overflow: "clip",
+        width: "100%",
+        minHeight: "100svh",
         background: "#ffffffff",
         display: "flex",
         flexDirection: "column",
@@ -192,7 +192,7 @@ export default function ExplorePage() {
                   color: "#ffffff",
                 }}
               >
-                빠른 모임 매칭
+                빠른 모임 합류
               </span>
               <span
                 style={{
@@ -242,6 +242,59 @@ export default function ExplorePage() {
               </span>
             </div>
           </div>
+        </div>
+
+        {/* aiEntry — AI 일정 조율 진입 카드 */}
+        <div
+          onClick={() => router.push("/m/chat")}
+          style={{
+            borderRadius: 16,
+            background: "linear-gradient(-225deg, #4f46e5 0%, #7c3aed 50%, #a855f7 100%)",
+            padding: "14px 16px",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            cursor: "pointer",
+            boxShadow: "0 4px 14px #4f46e520",
+          }}
+        >
+          <div
+            style={{
+              width: 40,
+              height: 40,
+              minWidth: 40,
+              borderRadius: 12,
+              backgroundColor: "rgba(255,255,255,0.15)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Sparkles size={20} color="#ffffff" />
+          </div>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
+            <span
+              style={{
+                fontFamily: "Pretendard, sans-serif",
+                fontSize: 14,
+                fontWeight: 700,
+                color: "#ffffff",
+              }}
+            >
+              AI 일정 조율 시작하기
+            </span>
+            <span
+              style={{
+                fontFamily: "Pretendard, sans-serif",
+                fontSize: 11,
+                fontWeight: 400,
+                color: "#ffffffcc",
+              }}
+            >
+              채팅방에서 AI가 최적 시간을 찾아드려요
+            </span>
+          </div>
+          <ChevronRight size={20} color="#ffffffcc" />
         </div>
 
         {/* B) Upcoming Card */}

@@ -45,7 +45,10 @@ function PlaceRecommendPageContent() {
   }, [authLoading, user, roomId]);
 
   function handlePlaceClick(place: NearbyPlace) {
-    sessionStorage.setItem("selectedPlace", JSON.stringify(place));
+    const placeWithReason: NearbyPlace = placesData?.reason
+      ? { ...place, ai_reason: placesData.reason }
+      : place;
+    sessionStorage.setItem("selectedPlace", JSON.stringify(placeWithReason));
     router.push(`/m/place/detail?roomId=${roomId}`);
   }
 
@@ -55,7 +58,7 @@ function PlaceRecommendPageContent() {
   return (
     <div
       className="relative mx-auto flex flex-col bg-white"
-      style={{ width: 390, height: 844, overflow: "clip" }}
+      style={{ width: "100%", height: "100dvh" }}
     >
       {/* 1. Header */}
       <div

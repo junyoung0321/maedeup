@@ -792,10 +792,140 @@ privacy boundary는 "내 화면에 보이는 정보 = 내 PII + 그룹 합성 �
 
 ## 8. 데이터 정책
 
-(작성 예정)
-- Google Calendar busy 데이터: 메모리 캐시만, 영속 저장 안 함
-- rejected_dates: meeting 단위 누적, 새 meeting 시작 시 초기화
-- MeetingPreference: 방 입장 팝업에서 명시 수집
+본 절은 PII·동의·보존 정책을 정의한다. PIPA(개인정보 보호법) 준수를 1차 기준으로 하고, 미구현 항목은 §8.9에 갭으로 명시한다.
+
+### 8.1 동의 모델 (opt-out)
+
+매듭은 **opt-out 모델**을 채택한다. 사용자가 명시 거부하지 않는 한 데이터 공유에 동의한 것으로 간주한다.
+
+**적용 항목** (`models/user.py:35,40-42`):
+- `calendar_consent: bool = Field(default=True, index=True)` — Google Calendar busy 조회 동의 (PR-X `9609bee` 이후 기본 True 적용)
+- `share_food_data: bool = Field(default=True)` — 음식 선호/제약 그룹 합산 공유
+- `share_location_data: bool = Field(default=True)` — 좋아하는/싫어하는 지역 공유
+- `share_schedule_data: bool = Field(default=True)` — 시간 선호 (선호 시간대) 공유
+
+**확정 결정 (Q-X1=A)**: 마이그레이션 시 기존 명시 거부 사용자(`False`)도 일괄 `True`로 재설정한다. 사용자가 다시 토글하기 전까지 동의 의제.
+
+**사용자 거부 흐름**:
+- 홈 `/m/consent` 페이지의 QuickPreferences 토글 UI
+- `PATCH /users/me/consent` (calendar_consent, `routes/users.py:126~150`)
+- `PATCH /users/me/preferences` (share_*_data, `routes/users.py:164~`)
+- 토글 즉시 다음 API 호출부터 반영 (캐시 무효화는 §8.4)
+
+**PIPA 한계 명시**: opt-out은 한국 PIPA의 "명시적 동의(opt-in)" 원칙과 긴장 관계에 있다. 매듭은 졸업 프로젝트 MVP로서 UX 우선순위를 적용했으며, 상용화 시 opt-in으로 전환 필요. 현재는 가입 시 약관에 "캘린더 자동 연동" 및 "선호 데이터 그룹 합산" 동의 항목 명시로 갈음.
+
+### 8.2 `is_ai_filled` 정책 (AI 추출 데이터 출처 표시)
+
+AI가 chat 메시지에서 자동 추출한 PII와 사용자가 수동 입력한 PII를 구분한다.
+
+**자료 구조** (`models/user.py:28~31`):
+- `is_ai_filled: dict[str, bool]` — 카테고리명(food_restrictions, liked_areas 등) → AI 채움 여부
+- 추출 진입점: `services/pipeline/nodes/memory.py:189~228` (`_persist_personal_data`)
+- 추출 트리거: 모임 종료 시 chat history에서 Gemini가 카테고리별 추출 (`services/personal_data_extractor.py`)
+
+**UI 정책**:
+- 홈 PersonalData 카드에 ✨ 마크로 AI 추출 표시 (`models/user.py:27~28` 주석)
+- 사용자가 수동 수정 시 → `is_ai_filled[category] = False` (✨ 사라짐, `routes/users.py:177~183`)
+- ✨ 클릭 시 receipts 표시 (`PersonalDataSourceResponse`, `routes/users.py:115~123`): 어느 방/메시지에서 추출됐는지 출처 노출
+
+**거부 흐름**: AI 추출 결과를 사용자가 거부하려면 PersonalData 화면에서 해당 카테고리를 수동 수정(빈 값 또는 다른 값)하면 됨. 이 시점에 `is_ai_filled[cat]=False`로 마크되고 후속 AI 추출이 같은 카테고리를 덮어쓰지 못한다(Case A vs Case B 분기, `memory.py:111~112` 주석).
+
+### 8.3 k-anonymity 가드 (소규모 방 보호)
+
+소규모 방(`total_members <= 3`)에서 그룹 합산 PII는 사실상 개별 식별 가능하다. 예: 3인 방에서 `group_constraints_summary: ["갑각류 제외"]`가 노출되면, 본인이 갑각류 제약을 입력하지 않은 멤버는 나머지 1명을 식별할 수 있다.
+
+**권장 정책 (v1.5 후보, 현재 미구현)**:
+- 임계값: `total_members >= 4`일 때만 `group_constraints_summary` 노출
+- 미만일 때: 합산을 마스킹("선호 데이터가 충분하지 않아요") 또는 표시 자체 차단
+- F1 `blocker_notification` 실명 노출(§8.6 점진 공개)도 동일 임계값 적용
+
+**현재 상태**: `place.py:325~328`의 `group_constraints_summary`는 멤버 수 검증 없이 노출됨. v1.5 backlog.
+
+### 8.4 Redis 캐시 PII · 만료
+
+**캐시 위치**: `room_place_rec:{room_id}` (TTL 24h, `nodes/place.py:332~344`)
+
+**저장 내용**: `place_recommendation_payload` 전체 — `recommendations`(장소 후보) + `group_constraints_summary`(익명 합산 문자열). 개별 멤버 PII는 평문으로 저장되지 않으나, 합산 결과 자체가 소규모 방에서는 식별 가능(§8.3).
+
+**정책**:
+- TTL 24h 유지 (새로고침 복구용 UX 우선). 단축 옵션은 v1.5 검토.
+- **모임 취소 시 캐시 즉시 삭제** (현재 미구현 — §8.9 갭)
+- **사용자 탈퇴 시 해당 user_id가 속한 모든 방의 캐시 무효화** (현재 미구현 — §8.9 갭)
+- `share_*_data` 토글 OFF 시 → 다음 추천부터 반영, 기존 24h 캐시는 TTL 만료 대기 (강제 무효화 v1.5)
+
+### 8.5 동의 철회 · 삭제 SLA
+
+**사용자 액션**:
+- `PATCH /users/me/consent` (calendar_consent) — 즉시 반영, 새 JWT 발급
+- `PATCH /users/me/preferences` (share_*_data) — 즉시 반영
+- **계정 삭제**: 현재 미구현 (`DELETE /users/me` 부재 — §8.9 갭)
+
+**SLA 목표**:
+- 토글: 즉시 (다음 API 호출부터)
+- 탈퇴 후 PII 삭제: 30일 내 (PIPA 권고 기준)
+- Redis 캐시 invalidate: 토글/탈퇴 즉시 (현재 미구현)
+- Google 토큰 폐기: `calendar_consent=False` 토글 시 `google_*_token` NULL 처리 (현재 토큰 자체는 유지됨 — 갭)
+
+### 8.6 narrator PII 정책 (Q15=A · F4 · F1 통합)
+
+**확정 결정 (Q15=A): 실명 narrator** — 토글 재발행 narrator는 "OOO님 선호 기준으로 다시 추천했어요" 형태로 실명 노출.
+
+- 적용 조건: viewer가 토글한 사용자와 **같은 방 멤버**일 때만 노출 (멤버십 검증은 §7)
+- 비멤버는 narrator 자체를 수신하지 않음 (WebSocket 채널 분리)
+- 토글 audit: 누가 언제 토글했는지 구조화 로그 또는 `audit_log` 테이블 — §9에 위임
+
+**F4 캘린더 권한 만료 narrator (§6.7 open 항목 해소)**:
+- 옵션 A) 실명: "OOO님 캘린더 권한이 만료됐어요"
+- 옵션 B) 익명: "1명 캘린더 권한 만료"
+- **권고: 옵션 A 실명** — Q15=A 일관성 + 해당 멤버에게 직접 알림이 액션 가능성을 높임
+- **신규 미결 (Q17 후보)**: F4 narrator 실명/익명 — 본 PR에서 권고만 명시, 최종 결정은 §결정 안건으로 이관
+
+**F1 `blocker_notification` (Q16=C 점진 공개)**:
+- 기본 표시: "1명 불참" (익명)
+- 슬롯별 `더보기` 클릭 시 실명 공개 ("OOO, ㅁㅁㅁ")
+- **k-anonymity 결합 (§8.3)**: `total_members >= 4`인 방에서만 실명 공개 허용 권고. 미만에서는 익명 유지.
+
+### 8.7 게스트 데이터 보관 정책
+
+게스트 (`is_guest=True`, `models/user.py:45`) 는 Google 로그인이 없으므로 `calendar_consent`가 강제 `False` (`routes/rooms.py:221,239,295`). 그러나 다음 데이터는 수집된다 (Q12=A 확정 — 게스트 포함):
+- `MeetingPreference` (선호 시간대, 불가 시간)
+- `unavailability` (입력 시)
+- chat 메시지 (방 단위)
+
+**보관 정책**:
+- 모임 종료 후 `MeetingPreference` 30일 보관 (PIPA 권고)
+- 게스트 row 자체: 방별 pseudo identity (synthetic email)로 유지
+- **부풀림 위험** (`rooms.py:185~191` 주석): 동일 인물이 다른 이름으로 재접속 시 새 row 생성 → 누적 가능
+- **권고**: 모임 종료 후 90일 동안 미사용 게스트 row → archive 처리 (현재 미구현, §8.9 갭)
+
+### 8.8 PII 보존 기간 요약 표
+
+| 데이터 | 보존 기간 | 삭제 트리거 |
+|---|---|---|
+| `User` 본인 정보 (email, name, picture, home_base) | 무기한 | 사용자 탈퇴 (현재 미구현) |
+| `User.google_access_token` · `google_refresh_token` | 무기한 | `calendar_consent=False` 토글 또는 Google revoke (현재 자동 NULL 처리 미구현) |
+| `User.is_ai_filled` AI 추출 데이터 (food_restrictions 외) | 무기한 | 사용자 수동 수정 (✨ 해제) 또는 탈퇴 |
+| `User.share_*_data` 토글 상태 | 무기한 | 사용자 탈퇴 |
+| `MeetingPreference` | 모임 종료 후 30일 | 모임 종료 자동 트리거 (현재 미구현) |
+| `MeetingParticipant` · `Notification` | 영구 (audit 목적) | — |
+| `ChatMessage` (private = 1:1) | 영구 | 사용자 탈퇴 시 익명화 (현재 미구현) |
+| `ChatMessage` (shared = 그룹방) | 영구 (방 단위) | 방 삭제 시 cascade |
+| Redis `room_place_rec:{room_id}` | 24h TTL | 모임 취소 / TTL 만료 |
+| `AIMemory` (meeting_record 등) | 무기한 | 사용자 탈퇴 |
+| 게스트 `User` row | 무기한 (방별 pseudo) | 90일 비활성 archive 권고 (미구현) |
+
+### 8.9 알려진 갭 (v1 · v1.5 backlog)
+
+PIPA 의무 또는 정책 일관성을 위해 추가 구현이 필요한 항목:
+
+1. **계정 삭제 엔드포인트 미구현** (`DELETE /users/me`) — PIPA Right to Erasure 의무. v1 또는 별도 PR 우선순위.
+2. **Google calendar revoke 엔드포인트 미구현** — `calendar_consent=False` 토글 시 `google_*_token`이 NULL로 자동 처리되지 않음. 사용자가 토큰을 코드 레벨에서 폐기할 수 없음.
+3. **k-anonymity 가드 미구현** (§8.3) — 소규모 방 PII 노출 위험. `group_constraints_summary` · F1 blocker 실명 노출 양쪽에 임계값 미적용.
+4. **모임 종료 시 자동 보관 트리거 미구현** — `MeetingPreference` 30일 보관 SLA 자동화 부재.
+5. **Redis 캐시 즉시 invalidate 미구현** — 모임 취소 / 사용자 탈퇴 / `share_*_data` 토글 시 `room_place_rec:{room_id}` 강제 삭제 부재.
+6. **chat 메시지 익명화 미구현** — 사용자 탈퇴 후 그룹방 `ChatMessage`의 sender 익명 처리 부재.
+7. **게스트 row archive 미구현** (§8.7) — 90일 비활성 archive 자동화 부재.
+8. **audit_log 미구현** (§8.6) — 토글 narrator 누가/언제 audit 로그 부재. §9에서 정의.
 
 ---
 
@@ -859,6 +989,8 @@ async def test_S1_basic_next_week_vote_card():
 | Q14 | refresh 호출 제한 | §9 API | **결정: C) Redis idempotency 캐시 + 일일 100회** (같은 source/scope 조합은 캐시 hit) |
 | Q15 | 토글 재발행 narrator 문구 | §3 narrator | **결정: A) "OOO님 선호 기준으로 다시 추천했어요"** (실명 명시 — PII 노출 트레이드오프, 사용자 토글 행동의 투명성 우선) |
 | Q16 | F1 `blocker_notification_payload` UI 멤버 식별 | §3 페이로드, UI | **결정: C) 기본 익명 + 더보기 실명** (기본 "1명 불참", 사용자 의도로 클릭 시 실명 — 점진 공개) |
+| Q17 | F4 캘린더 권한 만료 narrator 실명/익명 | §6.7, §8.6 | 미결 — 권고 A) 실명("OOO님 캘린더 권한이 만료됐어요", Q15=A 일관, 액션 가능성 우선) vs B) 익명("1명 권한 만료", Q16=C 일관) |
+| Q-X1 | PR-X 마이그레이션 시 기존 명시 거부 사용자(`calendar_consent=False`) 처리 | PR-X | **결정: A) 일괄 True 재설정** (opt-out 모델 일관성, 사용자가 다시 토글 가능) |
 
 ---
 
@@ -866,3 +998,4 @@ async def test_S1_basic_next_week_vote_card():
 - 2026-05-14: 초안 작성 (§1~§4, §11), §5~§10 scaffolding
 - 2026-05-14 — PR-2: §1~§4 시간+장소 보강 (헤더·§1.1~1.3·§2 S11~S14·§3 페이로드 4종(vote_card / place_recommendation / maedeup_card 확정·partial) + narrator 통합·§4 R/P/T/F 매트릭스 R7~R9·P4~P6·T6~T8·F5~F6 신설). Q7-c 결정 (C1 + C3 + C4, 게스트 C2 제외).
 - 2026-05-14 — PR-3.2: §7 권한·접근 조건 본문 작성 (§7.1 역할 정의·§7.2 권한 매트릭스 15행·§7.3 멤버십 검증·§7.4 viewer_user_id privacy·§7.5 refresh 권한 Q13=B·§7.6 토글 차단 Q7-c·§7.7 게스트 정책·§7.8 WS 채널·§7.9 §8 위임 요약). Q12=A·Q13=B·Q14=C·Q15=A·Q16=C 반영.
+- 2026-05-14 — PR-3.3: §8 데이터 정책 본문 작성 (§8.1 opt-out 동의 모델·§8.2 is_ai_filled UI 정책·§8.3 k-anonymity 가드·§8.4 Redis 캐시 PII·§8.5 동의 철회 SLA·§8.6 narrator PII 통합(Q15=A·F4·F1)·§8.7 게스트 보관·§8.8 PII 보존 표·§8.9 알려진 갭 8건). Q-X1=A 결정 반영, Q17(F4 narrator 실명/익명) 신규 미결 등록.

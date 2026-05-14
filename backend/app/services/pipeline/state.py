@@ -96,7 +96,19 @@ class GraphState(TypedDict, total=False):
     place_recommendation_payload: dict[str, Any] | None
     maedeup_card_payload: dict[str, Any] | None
     calendar_registration: dict[str, Any] | None
+    # PR-Y1: blocker_notification_payload는 vote_card 레벨 요약 (카드당 1회).
+    # 형식 1) {"type": "social_system_message", "room_id", "sender", "content", "blocker_name"}
+    #        — 기존 동작: 일부 슬롯에 충돌이 있을 때 가장 빈번한 blocker 호출.
+    # 형식 2) {"type": "f1_fallback", "reason": "no_full_slot", "missing_count",
+    #          "total_count", "max_available_count"}
+    #        — F1 fallback (spec §4.4): 전원 가능 슬롯 0개 → 다수결 추천 카드와 함께 발행.
     blocker_notification_payload: dict[str, Any] | None
+    # calendar_strategy 값:
+    #   "all_members_available" | "all_members_available_extended"
+    #   | "n_minus_one" | "n_minus_one_extended"
+    #   | "multi_date_vote" | "preference_based"
+    #   | "natural_language_time_options"
+    #   | "majority_fallback"   # PR-Y1 (F1 fallback)
     calendar_strategy: str | None
     summary_message_count: int
     meeting_history_context: str | None

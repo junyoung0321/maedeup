@@ -198,7 +198,14 @@ async def vote_card_creation(state: GraphState) -> GraphState:
 
         # 단일 날짜 + 슬롯 1개 = 투표 불필요 (선호 기반은 항상 투표 카드 생성)
         is_preference_based = state.get("calendar_strategy") == "preference_based"
-        if not is_multi_date and not is_preference_based and len(calendar_slots) <= 1:
+        # PR-Y1 (F1 fallback): majority_fallback 전략은 슬롯 수와 무관하게 항상 투표 카드 발행.
+        is_majority_fallback = state.get("calendar_strategy") == "majority_fallback"
+        if (
+            not is_multi_date
+            and not is_preference_based
+            and not is_majority_fallback
+            and len(calendar_slots) <= 1
+        ):
             state["status"] = "vote_card_skipped"
             logger.info("[TIMING] vote_card_creation: skipped (single slot) %.2fs", time.monotonic() - _t0)
             return state
@@ -270,6 +277,10 @@ async def vote_card_creation(state: GraphState) -> GraphState:
                     "is_holiday": slot.get("is_holiday", False),
                     "holiday_name": slot.get("holiday_name"),
                     "is_weekend": slot.get("is_weekend", False),
+                    # PR-Y1: F1 fallback에서 활용하는 가능 멤버 수 / 불참자 필드.
+                    "available_count": slot.get("available_count"),
+                    "total_count": slot.get("total_count"),
+                    "unavailable_users": slot.get("unavailable_users", []),
                 }
                 for slot in vote_slots
             ],
@@ -282,7 +293,10 @@ async def vote_card_creation(state: GraphState) -> GraphState:
         # ── Narrator 메시지 큐에 넣기 (해결점 L: EARLY-EMIT 제거, 정상 emit 경로 단일화)
         try:
             best_label = state.get("calendar_free_slots", [{}])[0].get("label", "")
-            if state.get("date_conflict"):
+            if state.get("calendar_strategy") == "majority_fallback":
+                # PR-Y1 (F1 fallback, spec §4.4): 전원 가능 슬롯이 없을 때 다수결 추천.
+                narrator = "전원 가능한 시간이 없어 다수결로 추천드려요. 가장 많은 멤버가 가능한 3개 시간 중 골라주세요. 📅"
+            elif state.get("date_conflict"):
                 summary = state.get("date_selection_summary", {})
                 parts = [f"{d}: {c}명" for d, c in sorted(summary.items(), key=lambda x: -x[1])]
                 narrator = f"날짜가 엇갈리네요 ({', '.join(parts)}). 가장 많이 선택된 날짜 기준으로 {best_label}을(를) 추천드려요. 📅"

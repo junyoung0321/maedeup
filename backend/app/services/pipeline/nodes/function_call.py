@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
+from datetime import datetime, timedelta, timezone
 
 from app.services.pipeline.helpers.formatting import _room_id_as_int
 from app.services.pipeline.helpers.messaging import (
@@ -25,6 +27,7 @@ from app.services.pipeline.helpers.messaging import (
 )
 from app.services.pipeline.helpers.places import search_place
 from app.services.pipeline.helpers.slots import (
+    _build_majority_fallback_slots,
     _build_multi_date_slots,
     _build_preference_time_slots,
     _build_time_option_slots,
@@ -147,8 +150,53 @@ async def function_calling(state: GraphState) -> GraphState:
                 _filter_out_blocked(free_slots, blocked_dates),
                 rejected_dates,
             )
+
+            # PR-Y1 (F1 fallback, spec §4.4): 전원 가능 슬롯 0개 → 가능 멤버 수 max top 3 발행.
+            # 0 슬롯 케이스 중 "캘린더 권한 0%", "모든 시간 blocked" 등은 별도 PR이며
+            # 본 분기는 get_free_slots가 busy_by_user 존재 + 전원 가능 슬롯 부재 시.
+            if not state["calendar_free_slots"]:
+                busy_by_user = await _load_busy_by_user_for_state(state)
+                if busy_by_user:
+                    # get_free_slots와 동일한 time_min/time_max 계산 규칙 적용.
+                    date_hint = state.get("date_hint")
+                    now_utc = datetime.now(timezone.utc)
+                    if isinstance(date_hint, str) and re.match(r"\d{4}-\d{2}-\d{2}", date_hint):
+                        hint_date = datetime.fromisoformat(date_hint).replace(tzinfo=timezone.utc)
+                        time_min = hint_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                        time_max = time_min + timedelta(days=1)
+                    else:
+                        time_min = now_utc.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+                        time_max = time_min + timedelta(days=14)
+
+                    fallback_slots = _build_majority_fallback_slots(
+                        busy_by_user=busy_by_user,
+                        time_min=time_min,
+                        time_max=time_max,
+                        blocked_dates=blocked_dates,
+                        rejected_dates=rejected_dates,
+                        preferred_times=state.get("preference_common_times") or [],
+                    )
+                    if fallback_slots:
+                        state["calendar_free_slots"] = fallback_slots
+                        state["calendar_strategy"] = "majority_fallback"
+                        total_members = len(busy_by_user)
+                        max_available = max(
+                            int(s.get("available_count") or 0) for s in fallback_slots
+                        )
+                        state["blocker_notification_payload"] = {
+                            "type": "f1_fallback",
+                            "reason": "no_full_slot",
+                            "missing_count": max(total_members - max_available, 0),
+                            "total_count": total_members,
+                            "max_available_count": max_available,
+                        }
+
             blocker_counts: dict[str, int] = {}
-            if free_slots and any(slot.get("has_conflict") for slot in free_slots):
+            if (
+                state.get("calendar_strategy") != "majority_fallback"
+                and free_slots
+                and any(slot.get("has_conflict") for slot in free_slots)
+            ):
                 for slot in free_slots:
                     for unavailable_user in slot.get("unavailable_users", []):
                         blocker_counts[unavailable_user] = blocker_counts.get(unavailable_user, 0) + 1

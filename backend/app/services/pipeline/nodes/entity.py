@@ -21,6 +21,7 @@ Phase 4 분할 (2026-05-13). 로직 변경 없음 — 순수 이동.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -476,18 +477,21 @@ async def entity_extraction(state: GraphState) -> GraphState:
         extracted["date_is_flexible"] = False
         extracted["date_hint_source_text"] = None
 
-        # Multi-date: resolve each date hint to ISO dates
+        # Multi-date: resolve each date hint to ISO dates (병렬)
+        # Fix 2 (2026-05-14): N개 hint × 1.5s 직렬 → max(1.5s) 병렬.
+        # Fix 1 캐시와 결합 시 같은 hint 반복은 0초.
         if len(raw_date_hints) >= 2:
-            resolved_hints: list[str] = []
-            for hint in raw_date_hints:
+            async def _resolve_one(hint: str) -> str:
                 if _is_iso_date_hint(hint):
-                    resolved_hints.append(hint)
-                else:
-                    parsed = await _parse_natural_date(hint)
-                    if parsed and parsed.get("date"):
-                        resolved_hints.append(parsed["date"])
-                    else:
-                        resolved_hints.append(hint)  # keep raw if can't resolve
+                    return hint
+                parsed = await _parse_natural_date(hint)
+                if parsed and parsed.get("date"):
+                    return parsed["date"]
+                return hint  # keep raw if can't resolve
+
+            resolved_hints = list(
+                await asyncio.gather(*[_resolve_one(h) for h in raw_date_hints])
+            )
             extracted["date_hints"] = resolved_hints
             # Set date_hint to first resolved date for compatibility
             if resolved_hints:

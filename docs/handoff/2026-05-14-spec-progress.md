@@ -1,9 +1,9 @@
 # 시간+장소 기능정의서 작성 — 진행 상태 핸드오프 (v3)
 
 작성: 2026-05-14
-최종 갱신: 2026-05-14 (PR-W 후 — **spec 장소 보강 완료, 시간·장소 균형**)
+최종 갱신: 2026-05-15 (PR-V1.5 후 — **spec v1.0 미구현 12건 + Codex P1·P2 hotfix 통합 커밋**)
 작성자: 본인 + Claude Opus 4.7 (PM 모드)
-브랜치: `docs/spec-time-coordination` (origin 푸시 = `e996bba` 시점까지, 그 후 로컬 `698793f`까지 진행)
+브랜치: `docs/spec-time-coordination` (origin 푸시 = `e996bba` 시점까지, 그 후 로컬 `90131f2`까지 진행)
 대상 문서 (PR-V로 3분할):
 - `docs/handoff/spec-common.md` — 공통 정책·권한·API·비기능·결정 안건·변경 이력 SoT (~700줄)
 - `docs/handoff/spec-time-coordination.md` — 시간 조율 본문 (~700줄, git mv로 history 보존)
@@ -30,10 +30,15 @@
 - **코드 작업**: PR-X·PR-Y1·PR-Y2 로컬 커밋 완료, **푸시 안 함**
 - **운영 모드**: PM 모드 — 리더는 분배·통합·결정 제안, 깊은 분석은 3담당 에이전트에 위임 (메모리 영구 저장)
 
-## 2. 이번 세션 변경 (커밋 30건)
+## 2. 이번 세션 변경 (커밋 35건)
 
 | # | SHA | 메시지 | 변경 | 상태 |
 |---|---|---|---|---|
+| 35 | `90131f2` | feat(pipeline): spec v1.0 미구현 12건 + Codex P1·P2 (PR-V1.5) | +1342 / -54 | 로컬 |
+| 34 | `6769400` | docs(handoff): spec 3 분리 (PR-V) — common·time·place | +1943 / -1646 | 로컬 |
+| 33 | `76d7949` | docs(handoff): v13 — PR-W 장소 보강 완료 반영 | +7 / -5 | 로컬 |
+| 32 | `1921fc7` | docs(handoff): v6 갱신 — PR-3.2 §7 완료 반영 | (보강) | 로컬 |
+| 31 | (PR-V·W 커밋 누적) | | | |
 | 30 | `698793f` | docs(handoff): spec 장소 보강 (PR-W) — S15~S20·F7~F9·§6.14~6.18 | +115 / -5 | 로컬 |
 | 29 | `b7335ef` | docs(handoff): v12 — PR-Z1·Z2 완료 반영 | +22 / -8 | 로컬 |
 | 28 | `ea759d1` | feat(frontend): Q5 hybrid 토글 UI + refresh API (PR-Z2) | +255 / -1 | 로컬 |
@@ -67,7 +72,7 @@
 |   | `494807e` | docs(handoff): spec 파일 rename + 해결점 N 추가 | +29 / 0 | origin |
 |   | `1de2024` | (출발점) 시간 조율 초안 §1~§4·§11 | (기존) | origin |
 
-**푸시 상태**: `origin/docs/spec-time-coordination`은 `e996bba`까지. 그 이후 **로컬 미푸시 27 커밋** (PR-X·Y·Z·W + 문서 v1.0 + 외부 리뷰·v2 계획·cleanup).
+**푸시 상태**: `origin/docs/spec-time-coordination`은 `e996bba`까지. 그 이후 **로컬 미푸시 32 커밋** (PR-X·Y·Z·W·V·V1.5 + 문서 v1.0 + 외부 리뷰·v2 계획·cleanup).
 
 ## 3. 수정한 파일
 

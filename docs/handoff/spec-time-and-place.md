@@ -186,7 +186,7 @@
 | 발화자 토글 (Q5 hybrid) | 동률 시 트리거 사용자 선호 우선 토글 | (Q5 결정, 미구현) | 5.1.4 place_hint fallback 순위·UI 토글 | — | 🔧 |
 
 > `preference_common_times` ⚠️ 사유: 교차 set 비면 top-3 fallback. 시연 시나리오 한정 검증.
-> **Q5 hybrid 토글 (Q7=B 결정)**: 카드 페이로드에 `preference_source: "group"|"speaker"` + `preference_toggle_enabled: bool` 두 키 (vote_card·place 양쪽). **Q7-b: 방 전체 갱신** — 토글 시 새 페이로드 broadcast (`POST /meetings/{id}/recommendations/refresh` 신설, §9). Q7-c (`preference_toggle_enabled=false` 트리거 조건)는 PR-2 §3 작업 시 결정.
+> **Q5 hybrid 토글 (Q7=B 결정)**: 카드 페이로드에 `preference_source: "group"|"speaker"` + `preference_toggle_enabled: bool` 두 키 (vote_card·place 양쪽). **Q7-b: 방 전체 갱신** — 토글 시 새 페이로드 broadcast (`POST /meetings/{id}/recommendations/refresh` 신설, §9). **권한 (Q13=B)**: 발화자 + 방장만 호출 가능. **Rate limit (Q14=C)**: Redis idempotency 캐시(같은 source/scope 조합 hit) + 일일 100회 상한. **Narrator (Q15=A)**: 재발행 시 "OOO님 선호 기준으로 다시 추천했어요" 실명 명시 — PII 노출 트레이드오프 인지 필요. Q7-c (`preference_toggle_enabled=false` 트리거 조건)는 PR-2 §3 작업 시 결정.
 
 #### 5.1.4 장소 추출·검색·추천
 
@@ -218,7 +218,7 @@
 | `blocker_notification_payload` | n-1 차단 멤버 안내 (F1 fallback, Q6=A v1.0 구현 대상) | `function_call.py:160~`·소비 `vote_card.py:277` | UX 표시 — **정렬: 시간 빠른 순 (Q8=A)** | 추정: `{"blocked_user":"수현","blocked_dates":["2026-05-15"]}` | ⚠️ |
 
 > **단일 슬롯도 vote_card 발행 (Q1=B)**: 날짜범위 확정 상태에서 후보 슬롯이 1개로 좁혀져도 vote_card 페이로드 생성 — `calendar_strategy="all_members_available"` 단일 옵션.
-> `blocker_notification_payload` ⚠️ 사유: payload 생성 일부, UI 미연결. Q6=A 결정으로 v1.0 구현 대상.
+> `blocker_notification_payload` ⚠️ 사유: payload 생성 일부, UI 미연결. Q6=A 결정으로 v1.0 구현 대상. **UI 형식 (Q16=C)**: 기본 익명 ("1명 불참") + 사용자 클릭 시 실명 노출 — 점진 공개.
 
 #### 5.1.6 확정·부분 카드 발행
 
@@ -401,6 +401,10 @@ async def test_S1_basic_next_week_vote_card():
 | Q10 | 한국 휴일/주말이 장소 추천에도 영향? | §4.3 T·§5.1.4 | **결정: C) Gemini prompt 안내** (Kakao 영업시간 미제공 → 옵션 B 단독 불가, v2 후보) |
 | Q11 | 기존 사용자 `calendar_consent` 마이그레이션 전략 (default False → True) | PR-X (별도 마이그레이션) | 미결 — PR-X 진행 시 결정 |
 | Q12 | `headcount` 방 멤버 수 fallback에 게스트 포함 여부 | §5.1.5 headcount | **결정: A) 게스트 포함** (게스트도 매듭 캘린더 불가능 토글로 거부일 입력 가능) |
+| Q13 | `recommendations/refresh` 라우트 권한 | §9 API | **결정: B) 발화자 + 방장만** (트리거 최소 권한) |
+| Q14 | refresh 호출 제한 | §9 API | **결정: C) Redis idempotency 캐시 + 일일 100회** (같은 source/scope 조합은 캐시 hit) |
+| Q15 | 토글 재발행 narrator 문구 | §3 narrator | **결정: A) "OOO님 선호 기준으로 다시 추천했어요"** (실명 명시 — PII 노출 트레이드오프, 사용자 토글 행동의 투명성 우선) |
+| Q16 | F1 `blocker_notification_payload` UI 멤버 식별 | §3 페이로드, UI | **결정: C) 기본 익명 + 더보기 실명** (기본 "1명 불참", 사용자 의도로 클릭 시 실명 — 점진 공개) |
 
 ---
 

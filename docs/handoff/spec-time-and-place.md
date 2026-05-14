@@ -134,7 +134,7 @@
 ### 4.4 Fallback 정책 (Fallback Policy)
 | ID | 기능 | 트리거 | 출력 |
 |---|---|---|---|
-| F1 | 0 슬롯 → 다수결 | 전원 가능 슬롯 0개 | (**v1.0 구현 대상**, Q6=A 결정) 가능 멤버 max인 슬롯 3개 + blocker_notification — 정렬 정책 Q8 미결 |
+| F1 | 0 슬롯 → 다수결 | 전원 가능 슬롯 0개 | (**v1.0 구현 대상**, Q6=A) 가능 멤버 max인 슬롯 3개 + blocker_notification — **정렬: 시간 빠른 순 (Q8=A)**, 후보는 이미 선호·거부 반영된 상태 가정 |
 | F2 | headcount=None | entity가 인원 추출 못함 | (현재) supervisor가 에러 — Q3 결정 필요 |
 | F3 | single slot skip | 슬롯 1개만 남음 | `vote_card_skipped` 상태 → maedeup 직행 — Q1 결정 필요 |
 | F4 | 캘린더 권한 없음 | OAuth 미동의 멤버 | 해당 멤버 캘린더 무시 + narrator에 명시 |
@@ -186,7 +186,7 @@
 | 발화자 토글 (Q5 hybrid) | 동률 시 트리거 사용자 선호 우선 토글 | (Q5 결정, 미구현) | 5.1.4 place_hint fallback 순위·UI 토글 | — | 🔧 |
 
 > `preference_common_times` ⚠️ 사유: 교차 set 비면 top-3 fallback. 시연 시나리오 한정 검증.
-> Q5 hybrid 토글은 P1 plumbing — **Q7 UI 메타 키 미결** (다음 결정 라운드).
+> **Q5 hybrid 토글 (Q7=B 결정)**: 카드 페이로드에 `preference_source: "group"|"speaker"` + `preference_toggle_enabled: bool` 두 키 (vote_card·place 양쪽). **Q7-b: 방 전체 갱신** — 토글 시 새 페이로드 broadcast (`POST /meetings/{id}/recommendations/refresh` 신설, §9). Q7-c (`preference_toggle_enabled=false` 트리거 조건)는 PR-2 §3 작업 시 결정.
 
 #### 5.1.4 장소 추출·검색·추천
 
@@ -204,6 +204,7 @@
 | `place_search_results` | 최종 후보 리스트 | `nodes/place.py` (state set) | maedeup `selected_place` (`maedeup.py:178`) | `[{"name":"...","score":0.9,"place_id":"..."}]` | ✅ |
 
 > `creator_home_base` ⚠️ 사유: state set 경로 plumbing 필요 (P0-3). Q2 결정에 따라 fallback 순서 = 선호 장소 다수결 → 동률 시 발화자 → 선호 없으면 방장 위치.
+> **휴일·주말 안내 (Q10=C)**: Kakao Local API는 영업시간 미제공 → Gemini prompt(`nodes/place.py:220-230` `time_context`)에 요일·주말·한국 공휴일 라벨 추가. `helpers/dates.py:40-47` 헬퍼(`_get_korean_holiday`/`_is_weekend`) import → `confirmed_date`로 호출. 옵션 B(Kakao 필터)는 v2 후보 (Google Places 전환 시).
 
 #### 5.1.5 투표 카드 발행
 
@@ -211,10 +212,10 @@
 |---|---|---|---|---|:---:|
 | `calendar_free_slots` | 후보 슬롯 리스트 | `nodes/function_call.py:92,114,134,146` | `vote_card.py:197~275` `time_options` | `[{"slot_id":"slot-1","label":"5/15(목) 19:00~21:00","start_at":"...","end_at":"...","is_holiday":false,"is_weekend":false}]` | ✅ |
 | `vote_card_payload` | 최종 투표 카드 페이로드 | `vote_card.py:259~279` | publish + maedeup carry | `{"type":"vote_card","meeting_id":42,"time_options":[...],"headcount":4,"calendar_strategy":"all_members_available","blocker_notification":null}` | ✅ |
-| `headcount` | 참가 인원 (None 시 방 멤버수 fallback — Q3=A) | `nodes/entity.py:114~116`·`slot._enrich:78~79` | vote_card 페이로드·UX | `4` | ✅ |
+| `headcount` | 참가 인원 (None 시 방 멤버수 fallback — Q3=A, **게스트 포함 — Q12=A**) | `nodes/entity.py:114~116`·`slot._enrich:78~79` | vote_card 페이로드·UX | `4` | ✅ |
 | `meeting_type` | 카드 타이틀 prefix | `nodes/entity.py:119~123`·`slot.py:81` | `vote_card.py:207~209` 타이틀 | `"맛집"` | ✅ |
 | `calendar_strategy` | 슬롯 선정 전략 | `helpers/slots.py:458,474,500,547`·`function_call.py:93,115,138` | vote_card·validation·UX 분기 | `"all_members_available"` / `"n_minus_one"` / `"multi_date_vote"` / `"preference_based"` / `"natural_language_time_options"` | ✅ |
-| `blocker_notification_payload` | n-1 차단 멤버 안내 (F1 fallback, Q6=A v1.0 구현 대상) | `function_call.py:160~`·소비 `vote_card.py:277` | UX 표시 (정렬 정책=Q8 미결) | 추정: `{"blocked_user":"수현","blocked_dates":["2026-05-15"]}` | ⚠️ |
+| `blocker_notification_payload` | n-1 차단 멤버 안내 (F1 fallback, Q6=A v1.0 구현 대상) | `function_call.py:160~`·소비 `vote_card.py:277` | UX 표시 — **정렬: 시간 빠른 순 (Q8=A)** | 추정: `{"blocked_user":"수현","blocked_dates":["2026-05-15"]}` | ⚠️ |
 
 > **단일 슬롯도 vote_card 발행 (Q1=B)**: 날짜범위 확정 상태에서 후보 슬롯이 1개로 좁혀져도 vote_card 페이로드 생성 — `calendar_strategy="all_members_available"` 단일 옵션.
 > `blocker_notification_payload` ⚠️ 사유: payload 생성 일부, UI 미연결. Q6=A 결정으로 v1.0 구현 대상.
@@ -233,6 +234,7 @@
 | `calendar_registration` | GCal 등록 결과 (현재 placeholder) | `maedeup.py:43~50, 181` | 카드 `calendar_registered` 필드 | `{"provider":"google_calendar","status":"placeholder"}` | ⚠️ |
 
 > `calendar_registration` ⚠️ 사유: 노드는 `status="skipped"` placeholder만 반환. 실제 등록은 `routes/meetings.py` confirm 라우터 (§5.2.3 참조).
+> **시간 확정 후 번복 불가 (Q9=A)**: time_only maedeup 발행 후 사용자가 장소를 채워도 **시간은 잠김 (immutable)**. 시간 재선정은 명시적 재추천 요청(`POST /meetings/{id}/recommendations/refresh`, §9)으로만 가능 — `partial_mode` 분기와 별개의 경로.
 
 #### 5.1.7 공통 진입·상태
 
@@ -384,15 +386,17 @@ async def test_S1_basic_next_week_vote_card():
 |---|---|---|---|
 | Q1 | 슬롯 1개만 남으면? | S5, S9 | **결정: B) 단일 슬롯도 vote_card** (날짜범위 확정 상태 전제) |
 | Q2 | `place_hint` 없을 때 fallback 순서 | §4.4 F5 (예정), §5.3 P0-3 | **결정**: 선호 장소 다수결 → 동률 시 발화자 → 선호 없으면 방장 위치 (§4.4 F5 신설은 PR-2) |
-| Q3 | headcount=None 시 기본값 | F2 | **결정: A) 방 멤버 수 사용** (게스트 포함 여부 = Q12 미결) |
-| Q5 | 발화자 선호 vs 그룹 선호 충돌 시 | P3 | **결정: 다수결 기본 + 발화자 토글 hybrid** (UI 메타 키 = Q7 미결) |
-| Q6 | F1 fallback (전원 불가능 시 다수결) 구현 우선순위 | S8 | **결정: A) v1.0 구현 포함** (정렬 정책 = Q8 미결) |
-| Q7 | Q5 hybrid 토글 UI 메타 키 이름·위치 (vote_card·place 양쪽?) | §3 페이로드 확장 | 미결 — 다음 결정 라운드 |
-| Q8 | F1 fallback 정렬 (멤버 수 동률 시 시간 빠른 순? 평일 우선?) | §4.4 F1 명세 | 미결 — 다음 결정 라운드 |
-| Q9 | partial maedeup(time_only) 발행 후 장소 채워졌을 때 시간 번복 가능? | §5.1.6 ↔ 해결점 K | 미결 — 다음 결정 라운드 |
-| Q10 | 한국 휴일/주말이 장소 추천에도 영향? (일요일 휴무 매장 제외) | §4.2 P 매트릭스 | 미결 — 다음 결정 라운드 |
+| Q3 | headcount=None 시 기본값 | F2 | **결정: A) 방 멤버 수 사용** (게스트 포함 — Q12=A) |
+| Q5 | 발화자 선호 vs 그룹 선호 충돌 시 | P3 | **결정: 다수결 기본 + 발화자 토글 hybrid** (UI 메타 = Q7=B) |
+| Q6 | F1 fallback (전원 불가능 시 다수결) 구현 우선순위 | S8 | **결정: A) v1.0 구현 포함** (정렬 = Q8=A) |
+| Q7 | Q5 hybrid 토글 UI 메타 키 이름·위치 | §3 페이로드 확장 | **결정: B)** `preference_source: "group"\|"speaker"` + `preference_toggle_enabled: bool`, vote_card·place 양쪽 |
+| Q7-b | 토글 동작 범위 | §6 (재발행 흐름), §9 (라우트) | **결정: 방 전체 갱신** (broadcast) — `POST /meetings/{id}/recommendations/refresh` 신설 |
+| Q7-c | `preference_toggle_enabled=false` 트리거 조건 (게스트? 그룹·발화자 일치? 발화자 정보 부재?) | §3 페이로드 보강 | 미결 — PR-2 §3 작업 시 결정 |
+| Q8 | F1 fallback 정렬 (멤버 수 동률 시) | §4.4 F1 명세 | **결정: A) 시간 빠른 순** (후보는 이미 선호·거부 반영된 상태 가정) |
+| Q9 | partial maedeup(time_only) 발행 후 장소 채워졌을 때 시간 번복 가능? | §5.1.6 ↔ 해결점 K | **결정: A) 번복 불가** (확정 후 잠김, 재추천은 별도 경로) |
+| Q10 | 한국 휴일/주말이 장소 추천에도 영향? | §4.3 T·§5.1.4 | **결정: C) Gemini prompt 안내** (Kakao 영업시간 미제공 → 옵션 B 단독 불가, v2 후보) |
 | Q11 | 기존 사용자 `calendar_consent` 마이그레이션 전략 (default False → True) | PR-X (별도 마이그레이션) | 미결 — PR-X 진행 시 결정 |
-| Q12 | `headcount` 방 멤버 수 fallback에 게스트 포함 여부 | §5.1.5 headcount | 미결 — 다음 결정 라운드 |
+| Q12 | `headcount` 방 멤버 수 fallback에 게스트 포함 여부 | §5.1.5 headcount | **결정: A) 게스트 포함** (게스트도 매듭 캘린더 불가능 토글로 거부일 입력 가능) |
 
 ---
 

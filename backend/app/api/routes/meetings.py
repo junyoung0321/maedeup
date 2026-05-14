@@ -1,11 +1,11 @@
 from datetime import datetime, timezone
 import json
 import logging
-from typing import Optional
+from typing import Any, Literal, Optional
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -19,6 +19,7 @@ from app.db.session import get_session
 from app.models.meeting import MeetingSchedule, MeetingStatus
 from app.models.room import Room, RoomMember
 from app.models.user import User
+from app.repositories.messages import MessageReader
 from app.schemas.meetings import PlacePatchRequest, PlacePatchResponse
 from app.services import scheduling_round as sr
 from app.services.google_calendar import (
@@ -26,8 +27,16 @@ from app.services.google_calendar import (
     sync_events_for_meeting_members,
 )
 from app.services.kakao_maps import search_address, search_keyword
-from app.services.langgraph_pipeline import memory_extraction, suggest_alternative_slots
+from app.services.langgraph_pipeline import (
+    memory_extraction,
+    run_pipeline,
+    suggest_alternative_slots,
+)
 from app.services.meeting_history import save_meeting_record
+from app.services.pipeline.helpers.preference_toggle import (
+    compute_preference_toggle_enabled,
+)
+from app.services.pipeline.helpers.preferences import load_requester_context
 from app.db.session import AsyncSessionLocal
 import asyncio as _asyncio
 
@@ -926,3 +935,262 @@ async def cancel_meeting(
         id=meeting.id,
         **_calendar_response_fields(meeting, int(current_user.sub)),
     )
+
+
+# ---------------------------------------------------------------------------
+# PR-Z1: POST /{meeting_id}/recommendations/refresh
+# Q5/Q7 hybrid 토글 — 그룹 다수결 ↔ 발화자 선호 재추천.
+# Decisions: Q7=B (preference_source + preference_toggle_enabled),
+#            Q13=B (발화자 or 방장만 권한),
+#            Q14=C (Redis idempotency 5분 + 일일 100회),
+#            Q15=A (narrator 실명 안내).
+# ---------------------------------------------------------------------------
+
+
+REFRESH_DAILY_LIMIT = 100
+REFRESH_IDEMPOTENCY_TTL_SECONDS = 300  # 5분
+
+
+class RefreshRequest(BaseModel):
+    scope: Literal["vote_card", "place_recommendation", "both"]
+    preference_source: Literal["group", "speaker"]
+    requester_user_id: int = Field(
+        ...,
+        description="발화자(speaker) user id — viewer가 본인이거나 viewer가 방장일 때만 허용 (Q13=B).",
+    )
+
+
+class RefreshResponse(BaseModel):
+    vote_card: Optional[dict[str, Any]] = None
+    place_recommendation: Optional[dict[str, Any]] = None
+    narrator: str
+    cached: bool = False
+
+
+def _today_kst_date_str() -> str:
+    """Q14=C 일일 카운트 키에 박는 날짜. KST 기준 — 한국 사용자 시연 시점 일치."""
+    from datetime import timedelta
+    now_utc = datetime.now(timezone.utc)
+    kst = (now_utc + timedelta(hours=9)).date()
+    return kst.isoformat()
+
+
+def _refresh_count_key(viewer_user_id: int) -> str:
+    return f"refresh_count:{viewer_user_id}:{_today_kst_date_str()}"
+
+
+def _refresh_idem_key(
+    viewer_user_id: int, meeting_id: int, scope: str, preference_source: str
+) -> str:
+    return (
+        f"refresh:{viewer_user_id}:{meeting_id}:{scope}:{preference_source}"
+    )
+
+
+@router.post("/{meeting_id}/recommendations/refresh", response_model=RefreshResponse)
+async def refresh_recommendations(
+    meeting_id: int,
+    body: RefreshRequest,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+    redis: aioredis.Redis = Depends(get_finalization_redis),
+) -> RefreshResponse:
+    """Q5 hybrid refresh — 추천 페이로드를 group ↔ speaker 기준으로 재발행.
+
+    1) 멤버십 검증, 2) 권한 검증 (Q13=B: 발화자 OR 방장),
+    3) Q7-c 차단 검증, 4) Q14=C rate limit / idempotency,
+    5) run_pipeline 재호출 with trigger_reason="preference_toggle",
+    6) WS broadcast, 7) narrator(Q15=A), 8) Redis 캐시.
+    """
+    viewer_user_id = int(current_user.sub)
+
+    # ── 1) Meeting + room 조회
+    meeting_row = await session.execute(
+        select(MeetingSchedule).where(MeetingSchedule.id == meeting_id)
+    )
+    meeting = meeting_row.scalar_one_or_none()
+    if meeting is None:
+        raise HTTPException(status_code=404, detail="meeting_not_found")
+
+    room_id = meeting.room_id
+
+    # ── 2) 멤버십 검증 (viewer가 방 멤버)
+    member_row = await session.execute(
+        select(RoomMember).where(
+            RoomMember.room_id == room_id,
+            RoomMember.user_id == viewer_user_id,
+        )
+    )
+    viewer_membership = member_row.scalar_one_or_none()
+    if viewer_membership is None:
+        raise HTTPException(status_code=403, detail="not_a_room_member")
+
+    # ── 3) 권한 검증 (Q13=B): viewer == requester OR viewer가 방장
+    is_requester = viewer_user_id == body.requester_user_id
+    is_owner = (viewer_membership.role or "").lower() == "owner"
+    if not (is_requester or is_owner):
+        raise HTTPException(
+            status_code=403,
+            detail="permission_denied: requester or room owner only",
+        )
+
+    # ── 4) 발화자 본인 정보 lookup → state plumbing
+    requester_ctx = await load_requester_context(session, body.requester_user_id)
+
+    # ── 5) Q7-c 차단 검증 — toggle_enabled=False면 422
+    probe_state: dict[str, Any] = {
+        "requester_home_base": requester_ctx.get("requester_home_base"),
+        "requester_preferences": requester_ctx.get("requester_preferences"),
+        "preference_source": body.preference_source,
+    }
+    if not compute_preference_toggle_enabled(probe_state):  # type: ignore[arg-type]
+        raise HTTPException(
+            status_code=422,
+            detail="toggle_disabled: 발화자 선호 정보 부족 또는 공유 동의 미설정",
+        )
+
+    # ── 6) Q14=C rate limit + idempotency
+    daily_key = _refresh_count_key(viewer_user_id)
+    idem_key = _refresh_idem_key(
+        viewer_user_id, meeting_id, body.scope, body.preference_source
+    )
+
+    # Idempotency hit?
+    try:
+        cached_raw = await redis.get(idem_key)
+    except Exception:
+        cached_raw = None
+        logger.warning(
+            "Redis GET failed for refresh idempotency key=%s", idem_key, exc_info=True
+        )
+    if cached_raw:
+        try:
+            cached_payload = json.loads(cached_raw)
+            return RefreshResponse(**cached_payload, cached=True)
+        except Exception:
+            logger.warning(
+                "Cached refresh payload parse failed key=%s — recomputing",
+                idem_key,
+                exc_info=True,
+            )
+
+    # Daily limit (INCR + EXPIRE on first hit)
+    try:
+        count = await redis.incr(daily_key)
+        if count == 1:
+            # 26h TTL so a refresh just before midnight KST still expires next day.
+            await redis.expire(daily_key, 26 * 3600)
+        if count > REFRESH_DAILY_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail=f"daily_limit_exceeded: {REFRESH_DAILY_LIMIT}/day",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning(
+            "Redis INCR failed for refresh daily key=%s — proceeding without limit",
+            daily_key,
+            exc_info=True,
+        )
+
+    # ── 7) run_pipeline 재호출
+    slot_context: dict[str, Any] = {
+        "trigger_reason": "preference_toggle",
+        "preference_source": body.preference_source,
+        "is_preference_refresh": True,
+        "requester_user_id": requester_ctx["requester_user_id"],
+        "requester_home_base": requester_ctx.get("requester_home_base"),
+        "requester_preferences": requester_ctx.get("requester_preferences"),
+        # graph._route_from_start 가 scope 매핑에 사용.
+        # vote_card / both → slot_filling 진입, place_recommendation → entity_extraction.
+        "partial_mode": "place_only" if body.scope == "place_recommendation" else None,
+    }
+    # 확정된 meeting의 시간을 reuse — entity 재추출 비용 절감.
+    if meeting.scheduled_at:
+        slot_context["confirmed_date"] = meeting.scheduled_at.date().isoformat()
+        slot_context["confirmed_time"] = meeting.scheduled_at.strftime("%H:%M")
+
+    context = await MessageReader.load_agent_context(
+        session=session,
+        room_id=room_id,
+        viewer_user_id=viewer_user_id,
+        limit=30,
+    )
+
+    result = await run_pipeline(
+        room_id=str(room_id),
+        context=context,
+        db=session,
+        slot_context=slot_context,
+    )
+
+    # ── 8) narrator (Q15=A: 발화자 실명)
+    requester_user_row = await session.execute(
+        select(User).where(User.id == body.requester_user_id)
+    )
+    requester_user = requester_user_row.scalar_one_or_none()
+    requester_name = (requester_user.name if requester_user else None) or "발화자"
+    if body.preference_source == "speaker":
+        narrator = f"{requester_name}님 선호 기준으로 다시 추천했어요"
+    else:
+        narrator = "그룹 다수결 기준으로 다시 추천했어요"
+
+    vote_payload = (
+        result.get("vote_card_payload")
+        if body.scope != "place_recommendation"
+        else None
+    )
+    place_payload = (
+        result.get("place_recommendation_payload")
+        if body.scope != "vote_card"
+        else None
+    )
+
+    # ── 9) WS broadcast (Q7-b: 방 전체 broadcast)
+    channel = f"agent:{room_id}"
+    try:
+        if vote_payload:
+            await redis.publish(channel, json.dumps(vote_payload, ensure_ascii=False))
+        if place_payload:
+            await redis.publish(channel, json.dumps(place_payload, ensure_ascii=False))
+        await redis.publish(
+            channel,
+            json.dumps(
+                {
+                    "type": "preference_refresh_narrator",
+                    "room_id": str(room_id),
+                    "meeting_id": meeting_id,
+                    "preference_source": body.preference_source,
+                    "requester_user_id": body.requester_user_id,
+                    "content": narrator,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    except Exception:
+        logger.warning(
+            "Redis publish failed for refresh meeting_id=%s", meeting_id, exc_info=True
+        )
+
+    response_payload = {
+        "vote_card": vote_payload,
+        "place_recommendation": place_payload,
+        "narrator": narrator,
+    }
+
+    # ── 10) Redis idempotency 캐시 (TTL 5분)
+    try:
+        await redis.set(
+            idem_key,
+            json.dumps(response_payload, ensure_ascii=False),
+            ex=REFRESH_IDEMPOTENCY_TTL_SECONDS,
+        )
+    except Exception:
+        logger.warning(
+            "Redis SET failed for refresh idempotency key=%s",
+            idem_key,
+            exc_info=True,
+        )
+
+    return RefreshResponse(cached=False, **response_payload)

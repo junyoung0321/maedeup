@@ -38,6 +38,10 @@ from app.services.pipeline.helpers.messaging import (
     _handle_node_exception,
     _has_node_error,
 )
+from app.services.pipeline.helpers.preference_toggle import (
+    compute_preference_source,
+    compute_preference_toggle_enabled,
+)
 from app.services.pipeline.helpers.slot_state import _normalize_preferred_times
 from app.services.pipeline.helpers.slots import _filter_out_rejected
 from app.services.pipeline.state import GraphState
@@ -287,6 +291,9 @@ async def vote_card_creation(state: GraphState) -> GraphState:
             "headcount": state.get("headcount"),
             "blocker_notification": state.get("blocker_notification_payload"),
             "calendar_strategy": state.get("calendar_strategy"),
+            # PR-Z1 (Q7=B): hybrid 그룹/발화자 토글 메타.
+            "preference_source": compute_preference_source(state),
+            "preference_toggle_enabled": compute_preference_toggle_enabled(state),
         }
         state["status"] = "vote_card_created"
 

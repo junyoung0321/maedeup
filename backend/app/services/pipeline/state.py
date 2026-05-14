@@ -43,7 +43,10 @@ class GraphState(TypedDict, total=False):
     # intent_detection이 latest_user_message 대신 이 값을 우선 사용 → race condition 방지.
     trigger_message_text: str | None
     # 자동 트리거 분기용 (해결점 C). LangGraph entry conditional edge가 이걸 보고 시작 노드 결정.
-    # 값: "stalemate_judged" | "conclusion_detected" | "all_members_selected" | "direct_request" | None
+    # 값: "stalemate_judged" | "conclusion_detected" | "all_members_selected"
+    #     | "direct_request" | "preference_toggle" | None
+    # PR-Z1 (2026-05-14): "preference_toggle" — recommendations/refresh 라우트가
+    #   group↔speaker 선호 기준 전환을 위해 vote_card/place 재호출할 때 박는 값.
     trigger_reason: str | None
     # 부분 카드 발행 모드. 값: "time_only" | None
     partial_mode: str | None
@@ -125,6 +128,21 @@ class GraphState(TypedDict, total=False):
     # 프라이버시 경계 (docs/ai-separation.md §9.4)
     viewer_user_id: int | None  # None = auto-trigger (shared), int = private viewer
 
+    # PR-Z1 (Q5/Q7 hybrid refresh) — recommendations/refresh 라우트가 주입.
+    # P0-2·3·4 plumbing: 발화자(요청자) 본인의 personal data lookup 결과.
+    #   - vote_card / place 페이로드의 preference_source/preference_toggle_enabled 계산
+    #   - 후속 PR에서 group↔speaker 추천 비교 시 사용
+    requester_user_id: int | None
+    requester_home_base: str | None
+    # 형식: {food_preferences, food_restrictions, liked_areas, disliked_areas,
+    #        transport_mode, time_preference, share_food_data,
+    #        share_location_data, share_schedule_data, is_guest}
+    requester_preferences: dict[str, Any] | None
+    # Q7 hybrid 토글 상태. "group" (기본) | "speaker".
+    preference_source: str | None
+    # refresh 라우트 재호출 여부 (audit/logging용).
+    is_preference_refresh: bool
+
 
 def _default_state(
     room_id: str,
@@ -202,6 +220,12 @@ def _default_state(
         "pre_extracted_signals": ctx.get("pre_extracted_signals"),
         "preference_common_times": [],
         "status": "initialized",
+        # PR-Z1: refresh 라우트가 slot_context로 주입.
+        "requester_user_id": ctx.get("requester_user_id"),
+        "requester_home_base": ctx.get("requester_home_base"),
+        "requester_preferences": ctx.get("requester_preferences"),
+        "preference_source": ctx.get("preference_source") or "group",
+        "is_preference_refresh": bool(ctx.get("is_preference_refresh", False)),
     }
 
 

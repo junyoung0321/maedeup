@@ -57,9 +57,21 @@ def _route_from_start(state: GraphState) -> Literal["entity_extraction", "slot_f
     - stalemate_judged / conclusion_detected: 의도 자명 → 노드3 entity_extraction부터 (~1s 절약)
     - all_members_selected: TimeBar 데이터 주입됨 → 노드4 slot_filling부터 (~3s 절약)
     - direct_request: quick_classify가 이미 general을 걸렀으므로 노드3 entity_extraction부터
+    - preference_toggle (PR-Z1): refresh 라우트 재호출. intent/entity 재추출 불필요 —
+        confirmed slot · place_hint · preference_source 가 이미 박혀 있음.
+        → vote_card scope면 slot_filling부터 (function_calling/validation 재실행),
+          place scope면 entity_extraction부터 (place_hint 보존하면서 재추천).
+        scope는 slot_context["partial_mode"]에 매핑됨.
     - 미지정: 기존 노드1 intent_detection 경로
     """
     trigger = state.get("trigger_reason")
+    if trigger == "preference_toggle":
+        # refresh 라우트는 partial_mode = "place_only" | "vote_only" | None(both) 형태로 전달.
+        partial = state.get("partial_mode")
+        if partial == "place_only":
+            return "entity_extraction"
+        # vote_only / both — slot_filling 진입해 function_calling→validation→vote_card 흐름.
+        return "slot_filling"
     if trigger in {"stalemate_judged", "conclusion_detected", "direct_request"}:
         return "entity_extraction"
     if trigger == "all_members_selected":

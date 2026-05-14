@@ -44,6 +44,10 @@ from app.services.pipeline.helpers.places import (
     _contains_disliked_keyword,
     _resolve_place_hint,
 )
+from app.services.pipeline.helpers.preference_toggle import (
+    compute_preference_source,
+    compute_preference_toggle_enabled,
+)
 from app.services.pipeline.helpers.preferences import (
     _build_group_constraints_summary,
     _build_named_constraints_summary,
@@ -326,6 +330,9 @@ async def place_recommendation(state: GraphState) -> GraphState:
             # 익명 group constraint 요약 (디자인 P2). 누가 어떤 값을 가졌는지는
             # 식별되지 않음. 프론트는 추천 카드 옆에 이 문장을 reasoning으로 노출.
             "group_constraints_summary": group_constraints_summary,
+            # PR-Z1 (Q7=B): hybrid 그룹/발화자 토글 메타.
+            "preference_source": compute_preference_source(state),
+            "preference_toggle_enabled": compute_preference_toggle_enabled(state),
         }
         state["status"] = "place_recommended"
 

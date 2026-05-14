@@ -1161,16 +1161,108 @@ PIPA 의무 또는 정책 일관성을 위해 추가 구현이 필요한 항목:
 
 ## 10. 회귀 테스트 케이스
 
-§2의 S1~S10을 pytest 시그니처로 변환 (작성 예정).
+§2의 골든 시나리오 S1~S14를 pytest 케이스로 1:1 매핑한다. 본 절은 회귀 검증용 명세 — 모든 결정 사항은 §2·§3·§4·§5·§6·§7·§8·§9에 이미 반영되어 있다.
 
-```python
-# 예시
-async def test_S1_basic_next_week_vote_card():
-    """다음주 모이자 발화 → 평일 저녁 3~5개 슬롯 vote_card 발행."""
-    result = await run_pipeline(...)
-    assert result["vote_card_payload"]["type"] == "vote_card"
-    assert 3 <= len(result["vote_card_payload"]["time_options"]) <= 5
-```
+### 10.1 테스트 전략 개요
+
+- **골든 회귀**: §2의 시나리오 S1~S14 (14개) → 1 시나리오 = 1 pytest 모듈 또는 ≥1 함수.
+- **단위 vs 통합**:
+  - **단위**: 노드 단위 헬퍼·함수 (`nodes/entity.py`, `nodes/slot.py`, `nodes/vote_card.py`, `nodes/place.py`, `nodes/maedeup.py`, `helpers/slots.py`)를 직접 호출 — 외부 의존 monkeypatch (`backend/tests/unit/`).
+  - **통합**: `run_pipeline()` 전체 흐름 + WebSocket publish 검증 — Google Calendar·Kakao·DB pending meeting은 monkeypatch로 격리 (`backend/tests/integration/`).
+- **추가 영역**:
+  - §9.2 신규 라우트 `POST /meetings/{id}/recommendations/refresh` (Q7-b·Q13=B·Q14=C·Q7-c) → S15 신규 시나리오.
+  - §9.6 에러 응답 코드 negative test (401·403·404·409·422·429).
+- **Async**: `pytest-asyncio` (기존 `conftest.py:42` `db_session` 패턴 일관).
+
+### 10.2 Fixture 패턴
+
+기존 `backend/tests/conftest.py` 의 fixture를 그대로 활용:
+
+- `event_loop` (session scope, `conftest.py:19~23`)
+- `db_engine` / `db_session` — sqlite+aiosqlite in-memory + SQLModel create_all (`conftest.py:26~46`)
+- `fake_redis` — `fakeredis.aioredis.FakeRedis` (`conftest.py:49~56`)
+
+신규 권고 fixture (`conftest.py` 또는 모듈별 fixture 파일에 추가):
+
+| 이름 | 목적 | 사용 시나리오 |
+|---|---|---|
+| `room_with_n_members(n)` | n명 멤버 방 + RoomMembership seed | S1·S2·S3·S4 |
+| `room_with_guest` | 게스트 1명(`is_guest=True`) 포함 방 — Q12=A 검증 | S15.5 (C2 제외 토글), §7.7 |
+| `busy_by_user_full_conflict` | 전원 가능 슬롯 0개 (F1 fallback trigger용) | S8 |
+| `meeting_with_partial_card` | `partial_mode="time_only"` `MeetingSchedule` 사전 발행 | S9, Q9 (번복 불가) |
+| `mock_gemini` | Gemini API stub (rate-limit 시 패턴 fallback 분기 검증) | S5·S11·S13 |
+| `mock_kakao` | Kakao Local 검색 결과 stub | S11·S12·S13·S14 |
+| `mock_google_calendar` | free/busy + Calendar create/delete stub | S1~S8·F4 만료 |
+
+### 10.3 골든 시나리오 pytest 매핑 (S1~S14)
+
+| S# | 시나리오 (§2 인용) | pytest 파일·함수 | 핵심 assertion |
+|---|---|---|---|
+| S1 | 기본 케이스 "다음주에 모이자" (`direct_request`) | `integration/test_vote_card_basic.py::test_default_weekday_evening` | `payload["type"]=="vote_card"`, `3 <= len(time_options) <= 5`, `calendar_strategy=="natural_language_time_options"` |
+| S2 | 거부 누적 "월요일은 안돼" | `unit/test_rejected_dates.py::test_monday_excluded` | `state["rejected_dates"]`에 "월요일" 포함, 후속 vote_card `time_options`에 월요일 슬롯 0 |
+| S3 | 선호 매칭 (방 설정: 평일 오전) | `integration/test_preference_matching.py::test_weekday_morning_only` | `calendar_strategy=="preference_based"`, 모든 슬롯이 평일·09~12 KST |
+| S4 | 다음주 자동 확장 (해결점 N) | `integration/test_expanded_next_week.py::test_auto_expand` | `expanded_to_next_week is True`, narrator 메시지에 "다음주" 단어 포함 |
+| S5 | 명시 단일 시간 "내일 6시 어때" (Q1=B) | `integration/test_single_slot.py::test_single_time_vote_card` | `len(time_options)==1`, vote_card skip 안 함 (Q1=B 단일도 발행) |
+| S6 | TimeBar 전원 선택 완료 | `integration/test_all_members_selected.py::test_trigger` | `trigger_reason=="all_members_selected"`, slot_filling 노드 진입 로그 |
+| S7 | conflict_options "A는 토요일·B는 일요일" | `unit/test_conflict_options.py::test_a_vs_b_date` | `conflict_options==["토요일","일요일"]`, `calendar_strategy=="multi_date_vote"` |
+| S8 | F1 fallback (Q6=A·Q8=A) | `unit/test_majority_fallback.py` + `integration/test_f1_fallback_pipeline.py` (PR-Y1 기존) | `calendar_strategy=="majority_fallback"`, 슬롯 3개, `available_count desc` 정렬, `blocker_notification_payload` 발행 |
+| S9 | time_only partial maedeup | `integration/test_partial_maedeup.py::test_time_only_skip_vote` | `partial_mode=="time_only"`, vote_card 우회, maedeup_card payload 직행 |
+| S10 | conclusion 자동 감지 | `integration/test_conclusion.py::test_auto_detect` | `trigger_reason=="conclusion_detected"`, vote_card skip, maedeup 발행 |
+| S11 | place_hint 명시 "강남에서" | `integration/test_place_recommendation.py::test_hint_extracted` | `place_hint=="강남"`, `place_coord` 좌표 변환, `recommendations` ≤ 5 |
+| S12 | place_hint fallback (Q2 F5) | `integration/test_place_fallback.py::test_creator_home_base` | 순서 검증: 선호 다수결 → 동률 시 발화자 → 둘 다 비면 방장 `home_base` |
+| S13 | cuisine 감지 "한식 먹자" | `unit/test_cuisine.py::test_korean_food` | `_detect_cuisine_type` 반환 "한식", Kakao 검색 쿼리에 cuisine 포함 |
+| S14 | 비선호 음식 페널티 (P4) | `unit/test_disliked_food.py::test_penalty` | `_contains_disliked_keyword` True, 후보 score `-= 0.1`, 익명 합산 prompt에 실명 미노출 |
+
+### 10.4 추가 시나리오 (refresh·negative test)
+
+**S15 — refresh 토글 (PR-3.4 §9.2, Q7-b·Q13=B·Q14=C·Q7-c)**:
+
+| 케이스 | pytest 파일·함수 | 핵심 assertion |
+|---|---|---|
+| S15.1 | `integration/test_refresh_toggle.py::test_speaker_broadcast` | 발화자가 토글 → 방 전체 broadcast (Q7-b), `preference_source=="speaker"` |
+| S15.2 | `integration/test_refresh_toggle.py::test_non_speaker_403` | 비발화자·비방장 호출 → HTTP 403 (Q13=B) |
+| S15.3 | `integration/test_refresh_toggle.py::test_idempotency_cache_hit` | 같은 source/scope 연속 호출 → Redis 캐시 hit, 재발행 1회 (Q14=C) |
+| S15.4 | `integration/test_refresh_toggle.py::test_daily_limit_429` | 일일 100회 초과 → HTTP 429 (Q14=C) |
+| S15.5 | `integration/test_refresh_toggle.py::test_q7c_blocked_422` | Q7-c C1·C3·C4 위배 (`share_*_data=False`·결과 동일·발화자 정보 부재) → HTTP 422 |
+
+**Negative test (§9.6 에러 코드)**:
+
+| 케이스 | 라우터 | 기대 응답 |
+|---|---|---|
+| 비멤버 호출 | 모든 `/rooms/{id}/*` | 403 (§7.3 멤버십 검증) |
+| JWT 부재 | 모든 보호 라우터 | 401 |
+| 존재하지 않는 `meeting_id` | `/meetings/{id}/*` | 404 |
+| 이미 finalized된 모임 confirm 재시도 | `/meetings/{id}/confirm` | 409 SUPERSEDED (§9.6) |
+| 요청 body 검증 실패 | 모든 POST | 422 |
+
+### 10.5 로그·메트릭 assert
+
+- `[TIMING] {node}: {duration}s` 로그 형식 (§9.4) — caplog 으로 노드별 latency 라인 1회 이상 발견.
+- F1·F2·F3·F4·F5 fallback 발동 카운트 — 각 분기 진입 시 구조화 로그 키 (`calendar_strategy`, `fallback_reason`) 존재 검증.
+- 해결점 N (`expanded_to_next_week`) / O (정규식 단축 사각지대) / P (번복·게스트 정책) 발동 로그 — 진입 시 식별자 키 발견 검증 (P·O는 v2, §10.8 참조).
+
+### 10.6 동시성 테스트 (§6.6 race condition)
+
+- 같은 슬롯에 2명 사용자 동시 투표 (`asyncio.gather`) — `Vote` 테이블 UNIQUE 제약 + 멱등성 검증.
+- partial maedeup(`time_only`) 발행 직후 동시 confirm 시도 → 1건만 성공·나머지 409 (Q9=A 번복 불가).
+- refresh 라우트 동시 호출 (같은 source·scope) → 1건만 실제 재발행 (Q14=C 캐시 hit).
+- 도구 권고: `pytest-asyncio` + `asyncio.gather` (외부 라이브러리 추가 불필요, 기존 stack 재사용).
+
+### 10.7 회귀 우선순위 (시연 직전 필수 케이스)
+
+| 우선순위 | 목적 | 케이스 |
+|---|---|---|
+| **P0** (시연 영향 큼) | 핵심 흐름 — 골든 데모 | S1, S2, S4, S8, S11, S12, S15.1, S15.2 |
+| **P1** (시연 통과 권고) | 분기·partial·도메인 | S3, S5, S7, S9, S13, S14 |
+| **P2** (운영 단계) | edge·내부·동시성 | S6, S10, S15.3, S15.4, S15.5, §10.6 동시성, §10.4 negative test |
+
+### 10.8 미구현 / v2 backlog
+
+- 신규 fixture (`room_with_guest`, `busy_by_user_full_conflict`, `meeting_with_partial_card`) — 코드 미존재, S15.5·S8·S9 작성 시 함께 도입.
+- §6.11·§6.12 해결점 P (번복 처리·게스트 정책 정교화) 회귀 테스트 — v2 spec과 함께.
+- 해결점 O (정규식 단축 사각지대) 회귀 — v2.
+- 부하 테스트 (rate limit 일일 100회·broadcast 다중 사용자 fan-out) — v2 (외부 도구 locust 등 도입 검토).
+- Q17 F4 narrator 실명/익명 결정 후 회귀 케이스 추가 — 권고 A 적용 가정 (Q15=A 일관, §9.7 반영).
 
 ---
 
@@ -1220,3 +1312,4 @@ async def test_S1_basic_next_week_vote_card():
 - 2026-05-14 — PR-3.2: §7 권한·접근 조건 본문 작성 (§7.1 역할 정의·§7.2 권한 매트릭스 15행·§7.3 멤버십 검증·§7.4 viewer_user_id privacy·§7.5 refresh 권한 Q13=B·§7.6 토글 차단 Q7-c·§7.7 게스트 정책·§7.8 WS 채널·§7.9 §8 위임 요약). Q12=A·Q13=B·Q14=C·Q15=A·Q16=C 반영.
 - 2026-05-14 — PR-3.3: §8 데이터 정책 본문 작성 (§8.1 opt-out 동의 모델·§8.2 is_ai_filled UI 정책·§8.3 k-anonymity 가드·§8.4 Redis 캐시 PII·§8.5 동의 철회 SLA·§8.6 narrator PII 통합(Q15=A·F4·F1)·§8.7 게스트 보관·§8.8 PII 보존 표·§8.9 알려진 갭 8건). Q-X1=A 결정 반영, Q17(F4 narrator 실명/익명) 신규 미결 등록.
 - 2026-05-14 — PR-3.4: §9 API·이벤트·로그 본문 작성 (§9.1 엔드포인트 인벤토리 7개 라우터·§9.2 신규 refresh 라우트 명세 Q13=B·Q14=C·§9.3 WebSocket 채널·이벤트·§9.4 구조화 로그(노드 latency·F1~F5·해결점)·§9.5 audit log·§9.6 에러 응답 형식·§9.7 F4 narrator 권고 A 적용·§9.8 갭 7건). Q13·Q14·Q15·Q7-b·Q7-c 반영, Q17 권고 A 적용(미결 명시).
+- 2026-05-14 — PR-3.5: §10 회귀 테스트 케이스 본문 작성 (§10.1 단위/통합 전략·§10.2 fixture 패턴(신규 fixture 7종)·§10.3 S1~S14 pytest 매핑 표 14행·§10.4 S15 refresh 5종·negative test 5종·§10.5 로그·메트릭 assert·§10.6 동시성·§10.7 P0/P1/P2 우선순위·§10.8 v2 backlog). 모든 결정 사항(Q1·Q2·Q3·Q6·Q7·Q7-b·Q7-c·Q8·Q9·Q12·Q13·Q14·Q15·Q16·Q17 권고 A)을 회귀 검증용으로 명문화.

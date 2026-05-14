@@ -55,7 +55,11 @@ async def slot_filling(state: GraphState) -> GraphState:
             return state
 
         _update_slot_state(state, state.get("extracted_entities", {}))
-        pref_data = await _load_meeting_preferences(state)
+        # Fix 6 (2026-05-14): state 캐싱 — 같은 run에서 재호출 시 0초.
+        # GraphState는 total=False TypedDict라 추가 key 안전.
+        if "_meeting_preferences_cache" not in state:
+            state["_meeting_preferences_cache"] = await _load_meeting_preferences(state)
+        pref_data = state["_meeting_preferences_cache"]
         _enrich_with_preferences(state, pref_data)
 
         trigger = state.get("trigger_reason")

@@ -32,7 +32,7 @@ class User(SQLModel, table=True):
 
     google_access_token: Optional[str] = Field(default=None, sa_column=Column(Text(), nullable=True))
     google_refresh_token: Optional[str] = Field(default=None, sa_column=Column(Text(), nullable=True))
-    calendar_consent: bool = Field(default=False, index=True)
+    calendar_consent: bool = Field(default=True, index=True)
 
     # QuickPreferences 카테고리별 공유 토글. 사용자가 OFF하면 해당 카테고리 데이터는
     # group recommendation 합성(_get_room_member_constraints)에서 제외됨.

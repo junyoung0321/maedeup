@@ -13,7 +13,33 @@ export interface VoteCardTimeOption {
   is_holiday?: boolean;
   holiday_name?: string | null;
   is_weekend?: boolean;
+  // PR-Y1 (F1 fallback): 슬롯별 가능자 수 + 불참자 명단 (다수결 추천 시).
+  available_count?: number;
+  total_count?: number;
+  unavailable_users?: string[];
 }
+
+export type VoteCardCalendarStrategy =
+  | "all_members_available"
+  | "n_minus_one"
+  | "multi_date_vote"
+  | "preference_based"
+  | "natural_language_time_options"
+  | "majority_fallback";
+
+export type VoteCardBlockerNotification =
+  | {
+      type: "social_system_message";
+      reason?: string;
+      [key: string]: unknown;
+    }
+  | {
+      type: "f1_fallback";
+      reason: string;
+      missing_count: number;
+      total_count: number;
+      max_available_count: number;
+    };
 
 export interface VoteCardPayload {
   type: "vote_card";
@@ -22,7 +48,8 @@ export interface VoteCardPayload {
   meeting_id?: number;
   time_options: VoteCardTimeOption[];
   headcount: number | null;
-  calendar_strategy?: string | null;
+  calendar_strategy?: VoteCardCalendarStrategy | string | null;
+  blocker_notification?: VoteCardBlockerNotification | null;
 }
 
 export interface VoteUpdatePayload {

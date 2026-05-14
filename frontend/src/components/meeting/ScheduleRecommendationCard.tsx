@@ -72,6 +72,8 @@ export default function ScheduleRecommendationCard({
   const [isConfirmed, setIsConfirmed] = useState(false);
   const [confirmedLabel, setConfirmedLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // PR-Y2 (Q16=C): F1 fallback 시 슬롯별 불참자 토글. 한 번에 하나만 펼침 (다른 슬롯 열면 현재 슬롯 닫힘).
+  const [expandedUnavailableSlotId, setExpandedUnavailableSlotId] = useState<string | null>(null);
 
   const [hostUserId, setHostUserId] = useState<number | null>(null);
   const [hostLoading, setHostLoading] = useState(true);
@@ -96,6 +98,7 @@ export default function ScheduleRecommendationCard({
     setIsConfirmed(false);
     setConfirmedLabel(null);
     setError(null);
+    setExpandedUnavailableSlotId(null);
   }, [voteCard]);
 
   const handleConfirm = useCallback(async () => {
@@ -162,8 +165,73 @@ export default function ScheduleRecommendationCard({
   const isMultiDate =
     voteCard.calendar_strategy === "multi_date_vote" &&
     Object.keys(dateGroups).length > 1;
+  const isMajorityFallback = voteCard.calendar_strategy === "majority_fallback";
   const headcount = voteCard.headcount;
   const selectedSlot = voteCard.time_options.find((o) => o.slot_id === selectedSlotId);
+
+  // PR-Y2 (F1 fallback): 슬롯별 가능자 배지 색상 — 비율이 낮을수록 더 강한 경고색.
+  const renderAvailabilityBadge = (opt: VoteCardPayload["time_options"][number]) => {
+    if (typeof opt.available_count !== "number" || typeof opt.total_count !== "number" || opt.total_count <= 0) {
+      return null;
+    }
+    const ratio = opt.available_count / opt.total_count;
+    // 전원 가능: 초록 / 1명 부족: 주의(앰버) / 그 외: 경고(레드톤)
+    let bg = "#dcfce7";
+    let color = "#166534";
+    if (ratio < 1 && ratio >= 0.66) {
+      bg = "#fef3c7";
+      color = "#92400e";
+    } else if (ratio < 0.66) {
+      bg = "#fee2e2";
+      color = "#991b1b";
+    }
+    return (
+      <span style={{
+        fontSize: 11, padding: "2px 6px", borderRadius: 6,
+        background: bg, color, fontWeight: 600, whiteSpace: "nowrap",
+      }}>
+        {opt.available_count}/{opt.total_count}명 가능
+      </span>
+    );
+  };
+
+  // PR-Y2 (Q16=C): 슬롯별 불참자 토글. 익명 카운트 → 클릭 시 실명 펼침.
+  const renderUnavailableToggle = (opt: VoteCardPayload["time_options"][number]) => {
+    const unavailable = opt.unavailable_users ?? [];
+    if (unavailable.length === 0) return null;
+    const isExpanded = expandedUnavailableSlotId === opt.slot_id;
+    return (
+      <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpandedUnavailableSlotId((prev) => (prev === opt.slot_id ? null : opt.slot_id));
+          }}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 4,
+            background: "transparent", border: "none", padding: 0,
+            color: "#64748b", fontSize: 11, fontWeight: 500, cursor: "pointer",
+            fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+            alignSelf: "flex-start",
+          }}
+          aria-expanded={isExpanded}
+        >
+          <span aria-hidden="true">👤</span>
+          <span>{unavailable.length}명 불참</span>
+          {isExpanded
+            ? <ChevronUp style={{ width: 12, height: 12 }} />
+            : <ChevronDown style={{ width: 12, height: 12 }} />
+          }
+        </button>
+        {isExpanded && (
+          <span style={{ fontSize: 11, color: "#475569", lineHeight: 1.5 }}>
+            불참: {unavailable.join(", ")}
+          </span>
+        )}
+      </div>
+    );
+  };
 
   if (isConfirmed) {
     return (
@@ -192,6 +260,22 @@ export default function ScheduleRecommendationCard({
         <CalendarDays style={{ width: 18, height: 18, color: "#4f46e5" }} />
         <span style={{ fontSize: 13, fontWeight: 600, color: "#4f46e5" }}>AI 일정 추천</span>
       </div>
+
+      {/* PR-Y2 (F1 fallback): 다수결 추천 안내 배너 */}
+      {isMajorityFallback && (
+        <div
+          role="status"
+          style={{
+            display: "flex", alignItems: "flex-start", gap: 8,
+            padding: "10px 12px", borderRadius: 10,
+            background: "#fffbeb", border: "1px solid #fcd34d",
+            fontSize: 12, fontWeight: 500, color: "#92400e", lineHeight: 1.5,
+          }}
+        >
+          <span aria-hidden="true" style={{ fontSize: 14, lineHeight: 1 }}>⚠️</span>
+          <span>전원 가능한 시간이 없어요. 가장 많이 가능한 시간 3개를 보여드려요.</span>
+        </div>
+      )}
 
       {/* Multi-date: show per-date availability */}
       {isMultiDate && (
@@ -228,7 +312,7 @@ export default function ScheduleRecommendationCard({
         border: selectedSlotId === best.slot_id ? "1.5px solid #4f46e5" : "1px solid #e2e8f0",
         cursor: "pointer",
       }} onClick={() => setSelectedSlotId(best.slot_id)}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
           <span style={{ fontSize: 15, fontWeight: 700, color: "#1e293b" }}>
             {(() => {
               const parts = splitLabelParts(best.label);
@@ -249,12 +333,15 @@ export default function ScheduleRecommendationCard({
               );
             })()}
           </span>
-          <span style={{
-            fontSize: 11, padding: "3px 8px", borderRadius: 8,
-            background: "#4f46e5", color: "#fff", fontWeight: 600,
-          }}>
-            추천
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+            {renderAvailabilityBadge(best)}
+            <span style={{
+              fontSize: 11, padding: "3px 8px", borderRadius: 8,
+              background: "#4f46e5", color: "#fff", fontWeight: 600,
+            }}>
+              추천
+            </span>
+          </div>
         </div>
         {best.is_holiday && (
           <span style={{ fontSize: 11, color: "#dc2626", fontWeight: 600 }}>{best.holiday_name || "공휴일"}</span>
@@ -262,6 +349,7 @@ export default function ScheduleRecommendationCard({
         {best.is_weekend && !best.is_holiday && (
           <span style={{ fontSize: 11, color: "#2563eb", fontWeight: 600 }}>주말</span>
         )}
+        {renderUnavailableToggle(best)}
       </div>
 
       {/* Alternatives toggle */}
@@ -294,9 +382,15 @@ export default function ScheduleRecommendationCard({
                     cursor: "pointer", fontSize: 14, fontWeight: 500, color: "#334155",
                   }}
                 >
-                  {opt.label}
-                  {opt.is_holiday && <span style={{ marginLeft: 6, fontSize: 11, color: "#dc2626" }}>{opt.holiday_name || "공휴일"}</span>}
-                  {opt.is_weekend && !opt.is_holiday && <span style={{ marginLeft: 6, fontSize: 11, color: "#2563eb" }}>주말</span>}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <span>
+                      {opt.label}
+                      {opt.is_holiday && <span style={{ marginLeft: 6, fontSize: 11, color: "#dc2626" }}>{opt.holiday_name || "공휴일"}</span>}
+                      {opt.is_weekend && !opt.is_holiday && <span style={{ marginLeft: 6, fontSize: 11, color: "#2563eb" }}>주말</span>}
+                    </span>
+                    {renderAvailabilityBadge(opt)}
+                  </div>
+                  {renderUnavailableToggle(opt)}
                 </div>
               ))}
             </div>

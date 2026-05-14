@@ -197,8 +197,16 @@ async def vote_card_creation(state: GraphState) -> GraphState:
         calendar_slots = state.get("calendar_free_slots") or []
 
         # 단일 날짜 + 슬롯 1개 = 투표 불필요 (선호 기반은 항상 투표 카드 생성)
+        # Fix 8b (2026-05-14): direct_request인 경우 단일 슬롯도 카드 발행.
+        # "내일 오후 6시 잡아줘"처럼 사용자가 명시 시간 지정한 케이스 — 카드 보장.
         is_preference_based = state.get("calendar_strategy") == "preference_based"
-        if not is_multi_date and not is_preference_based and len(calendar_slots) <= 1:
+        is_direct_request = state.get("trigger_reason") == "direct_request"
+        if (
+            not is_multi_date
+            and not is_preference_based
+            and not is_direct_request
+            and len(calendar_slots) <= 1
+        ):
             state["status"] = "vote_card_skipped"
             logger.info("[TIMING] vote_card_creation: skipped (single slot) %.2fs", time.monotonic() - _t0)
             return state

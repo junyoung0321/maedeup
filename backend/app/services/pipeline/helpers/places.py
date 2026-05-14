@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 # 한국 지명 추출을 위한 잘 알려진 지역명
+# Fix 9 (2026-05-14): 광역시 + 주요 도시 확장 (천안, 청주, 광주, 울산, 제주 등).
 _WELL_KNOWN_PLACES = [
     "강남", "홍대", "건대", "이태원", "명동", "합정", "신촌", "연남", "망원",
     "성수", "잠실", "여의도", "광화문", "종로", "을지로", "혜화", "대학로",
@@ -40,6 +41,9 @@ _WELL_KNOWN_PLACES = [
     "신림", "구로", "영등포", "용산", "마포", "서울숲", "왕십리", "한양대",
     "동대문", "남대문", "북촌", "삼청", "안국", "경복궁", "이수", "노량진",
     "가산", "판교", "분당", "일산", "수원", "인천", "부산", "대구", "대전",
+    # Fix 9: 광역시 + 주요 도시 보강
+    "천안", "청주", "광주", "울산", "제주", "춘천", "포항", "전주", "원주",
+    "안산", "안양", "성남", "용인", "고양", "파주", "김포", "의정부", "남양주",
 ]
 
 # 한국 지명 패턴: XX동, XX구, XX역, XX로, XX길, XX리, XX면, XX읍
@@ -108,6 +112,19 @@ def _resolve_place_hint(state: GraphState) -> str:
     if isinstance(place_hint, str) and place_hint.strip():
         return place_hint.strip()
 
+    # Fix 10 (2026-05-14): direct_request로 place 요청한 경우 "서울 강남" default 강제 적용 금지.
+    # 사용자가 명시했는데 못 추출한 거면 default보다 차라리 발화자 home_base 또는 skip.
+    # auto-trigger (stalemate/conclusion 등)는 영향 없음 — direct_request 한정.
+    trigger_reason = state.get("trigger_reason")
+    direct_kind = state.get("direct_request_kind")
+    if trigger_reason == "direct_request" and direct_kind in ("place", "schedule+place"):
+        requester_hb = state.get("requester_home_base")
+        if isinstance(requester_hb, str) and requester_hb.strip():
+            resolved = requester_hb.strip()
+            state["place_hint"] = resolved
+            return resolved
+        return ""  # 빈 string → place_recommendation에서 skip (default 강제 안 함)
+
     default_place_hint = state.get("default_place_hint")
     if isinstance(default_place_hint, str) and default_place_hint.strip():
         resolved = default_place_hint.strip()
@@ -161,6 +178,19 @@ def _extract_korean_place_keyword(text: str) -> str | None:
     if matches:
         # 가장 긴 매칭을 반환 (더 구체적인 지명일 가능성)
         return max(matches, key=len)
+
+    # 3. Fix 9 (2026-05-14): 자유 텍스트 fallback.
+    #    "천안 터미널", "을지로 입구" 같은 미등록 지명을 Kakao Local에 그대로 전달.
+    #    의도/조사 단어 제거 후 남는 명사 덩어리가 2~20자면 fallback.
+    cleaned = re.sub(
+        r"(근처|주변|쪽|에서|에|는|이|가|을|를|"
+        r"추천해줘|추천해|추천|찾아줘|알려줘|보여줘|"
+        r"맛집|식당|음식점|카페|술집|먹을곳|먹을\s*곳|"
+        r"\s+)",
+        "", text
+    ).strip()
+    if 2 <= len(cleaned) <= 20:
+        return cleaned
 
     return None
 

@@ -6,8 +6,13 @@ from google.api_core.exceptions import GoogleAPICallError, ResourceExhausted
 from app.core.config import settings
 
 
-async def call_gemini(content: str) -> str:
-    """Gemini API를 호출하고 응답 텍스트를 반환합니다."""
+async def call_gemini(content: str, timeout: float = 15.0) -> str:
+    """Gemini API를 호출하고 응답 텍스트를 반환합니다.
+
+    Fix 5 (2026-05-14): 기본 15s timeout 추가.
+      SDK가 hang하면 백엔드 전체 멈춤 위험. asyncio.wait_for로 worst case 차단.
+      호출처에서 timeout 명시 가능 (quick_classify는 자체 1.5s wait_for 사용 중 — 호환).
+    """
     if not settings.GEMINI_API_KEY.strip():
         return ""
     genai.configure(api_key=settings.GEMINI_API_KEY)
@@ -20,7 +25,12 @@ async def call_gemini(content: str) -> str:
         ),
     )
     try:
-        response = await asyncio.to_thread(model.generate_content, content)
+        response = await asyncio.wait_for(
+            asyncio.to_thread(model.generate_content, content),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        return ""
     except (ResourceExhausted, GoogleAPICallError):
         return ""
     except Exception:

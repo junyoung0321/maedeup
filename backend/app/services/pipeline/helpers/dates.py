@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from typing import Any
 
 import holidays
@@ -288,18 +289,41 @@ def _normalize_parsed_natural_date(
     }
 
 
+@lru_cache(maxsize=256)
+def _parse_natural_date_sync(text: str, today_iso: str) -> dict[str, Any] | None:
+    """동기 fallback 결과를 캐시. today_iso 키로 날짜 바뀌면 자동 invalidate.
+
+    Returns: fallback_result if matched (date 키 보유), else None.
+    Gemini 호출은 캐시 외부에서 처리.
+
+    Fix 1 (2026-05-14): 자주 호출되는 자연어 표현 ("내일", "다음주", "5월 14일")
+      반복 시 fallback 매칭을 캐싱해 -O(1) lookup.
+    """
+    try:
+        # KST 기준 자정 datetime 생성
+        now_kst = datetime.strptime(today_iso, "%Y-%m-%d").replace(tzinfo=KST)
+    except ValueError:
+        return None
+    result = _fallback_parse_natural_date(text, now_kst)
+    return result if (result and result.get("date")) else None
+
+
 async def _parse_natural_date(text: str) -> dict[str, Any] | None:
     normalized = str(text or "").strip()
     if not normalized:
         return None
 
-    now_kst = datetime.now(KST)
+    today_iso = datetime.now(KST).date().isoformat()
 
-    # --- OPTIMIZATION: Try pattern-based parsing first, skip Gemini if successful ---
+    # --- OPTIMIZATION: Cached pattern-based parsing first, skip Gemini if successful ---
+    cached = _parse_natural_date_sync(normalized, today_iso)
+    if cached:
+        logger.info("[OPT] _parse_natural_date resolved by cached pattern fallback")
+        return cached
+
+    # 캐시 miss + fallback 못 잡음 → Gemini 호출 진행
+    now_kst = datetime.now(KST)
     fallback_result = _fallback_parse_natural_date(normalized, now_kst)
-    if fallback_result and fallback_result.get("date"):
-        logger.info("[OPT] _parse_natural_date resolved by pattern fallback, skipping Gemini")
-        return fallback_result
 
     today = now_kst.strftime("%Y-%m-%d")
     prompt = (

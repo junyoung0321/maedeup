@@ -55,7 +55,11 @@ async def slot_filling(state: GraphState) -> GraphState:
             return state
 
         _update_slot_state(state, state.get("extracted_entities", {}))
-        pref_data = await _load_meeting_preferences(state)
+        # Fix 6 (2026-05-14): state 캐싱 — 같은 run에서 재호출 시 0초.
+        # GraphState는 total=False TypedDict라 추가 key 안전.
+        if "_meeting_preferences_cache" not in state:
+            state["_meeting_preferences_cache"] = await _load_meeting_preferences(state)
+        pref_data = state["_meeting_preferences_cache"]
         _enrich_with_preferences(state, pref_data)
 
         trigger = state.get("trigger_reason")
@@ -380,6 +384,37 @@ async def _slot_filling_default_with_defaults(state: GraphState, has_headcount: 
 
 
 async def _slot_filling_default_partial(state: GraphState, has_date: bool, has_place: bool) -> GraphState:
+    # Fix 4 (2026-05-14): direct_request는 부분 정보로도 카드 생성.
+    # 사용자가 명시적으로 요청했기 때문 — "내일 6시 잡아줘" 같은 입력에서
+    # ack 메시지만 emit하고 카드 안 만드는 기존 동작을 해결.
+    # auto-trigger (stalemate/conclusion/all_members)는 영향 없음.
+    if state.get("trigger_reason") == "direct_request":
+        if has_date:
+            # date만 있어도 단일 슬롯 카드로 진행 (기본값으로 채움)
+            if not state.get("headcount"):
+                state["headcount"] = 2  # 보수적 기본값
+            if not state.get("meeting_type"):
+                state["meeting_type"] = "모임"
+            state["all_slots_filled"] = True
+            state["missing_slots"] = []
+            state["awaiting_user_reply"] = False
+            state["wait_timed_out"] = False
+            state["message_count_since_last_trigger"] = 0
+            state["status"] = "slots_filled_with_defaults"
+            logger.info("[FIX-4] direct_request with date-only → forcing card creation")
+            return state
+        if has_place:
+            # place만 있어도 location_first로 진행 (place_recommendation 보장)
+            state["is_location_first"] = True
+            state["all_slots_filled"] = True
+            state["missing_slots"] = []
+            state["awaiting_user_reply"] = False
+            state["wait_timed_out"] = False
+            state["message_count_since_last_trigger"] = 0
+            state["status"] = "location_first_ready"
+            logger.info("[FIX-4] direct_request with place-only → forcing card creation")
+            return state
+
     if has_date and not has_place:
         state["slot_filling_turns"] += 1
         if state["slot_filling_turns"] <= 1:

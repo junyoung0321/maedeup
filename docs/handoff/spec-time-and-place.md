@@ -1266,7 +1266,7 @@ PIPA 의무 또는 정책 일관성을 위해 추가 구현이 필요한 항목:
 
 ---
 
-## 11. 비기능 (Out of scope)
+## 11. Out of scope + 알려진 한계
 
 - 반복 모임 (recurring meeting)
 - 비-Google 캘린더 (Outlook, Naver 등)
@@ -1502,7 +1502,7 @@ PIPA 의무 또는 정책 일관성을 위해 추가 구현이 필요한 항목:
 | Q8 | F1 fallback 정렬 (멤버 수 동률 시) | §4.4 F1 명세 | **결정: A) 시간 빠른 순** (후보는 이미 선호·거부 반영된 상태 가정) |
 | Q9 | partial maedeup(time_only) 발행 후 장소 채워졌을 때 시간 번복 가능? | §5.1.6 ↔ 해결점 K | **결정: A) 번복 불가** (확정 후 잠김, 재추천은 별도 경로) |
 | Q10 | 한국 휴일/주말이 장소 추천에도 영향? | §4.3 T·§5.1.4 | **결정: C) Gemini prompt 안내** (Kakao 영업시간 미제공 → 옵션 B 단독 불가, v2 후보) |
-| Q11 | 기존 사용자 `calendar_consent` 마이그레이션 전략 (default False → True) | PR-X (별도 마이그레이션) | 미결 — PR-X 진행 시 결정 |
+| Q11 | 기존 사용자 `calendar_consent` 마이그레이션 전략 (default False → True) | PR-X (별도 마이그레이션) | **결정: A) 일괄 True 자동** (PR-X `9609bee` Alembic `e2a3b4c5d6f7` 적용 완료, 게스트 보호 `WHERE is_guest = FALSE`) |
 | Q12 | `headcount` 방 멤버 수 fallback에 게스트 포함 여부 | §5.1.5 headcount | **결정: A) 게스트 포함** (게스트도 매듭 캘린더 불가능 토글로 거부일 입력 가능) |
 | Q13 | `recommendations/refresh` 라우트 권한 | §9 API | **결정: B) 발화자 + 방장만** (트리거 최소 권한) |
 | Q14 | refresh 호출 제한 | §9 API | **결정: C) Redis idempotency 캐시 + 일일 100회** (같은 source/scope 조합은 캐시 hit) |

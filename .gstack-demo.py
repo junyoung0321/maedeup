@@ -325,6 +325,20 @@ async def wait_for_button(page: Page, contains: str, timeout_s: float = 30.0, po
     return False
 
 
+async def wait_for_enabled_button(page: Page, contains: str, timeout_s: float = 30.0, poll: float = 0.5) -> bool:
+    """contains 포함 + !disabled + visible 버튼이 나타날 때까지 폴링."""
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    while asyncio.get_event_loop().time() < deadline:
+        found = await js_eval(
+            page,
+            f"Array.from(document.querySelectorAll('button')).some(b => b.innerText && b.innerText.includes({json.dumps(contains)}) && !b.disabled && b.offsetParent)",
+        )
+        if found:
+            return True
+        await asyncio.sleep(poll)
+    return False
+
+
 async def wait_for_text(page: Page, contains: str, timeout_s: float = 10.0, poll: float = 0.4) -> bool:
     """버튼/링크가 아닌 일반 텍스트 노드 폴링 (모달/배너 등)."""
     deadline = asyncio.get_event_loop().time() + timeout_s
@@ -768,11 +782,13 @@ async def run_demo(flags: DemoFlags) -> None:
                         if not host_vote_clicked:
                             log("[BACKUP] 방장 '투표하기' 미발견 — host_token 직접 vote")
                             vote_as_user(meeting_id, host_token, 0, name_hint="지민(방장)")
-                        await asyncio.sleep(pace["act_3_after_change"])
+                        # 방장 vote API 응답 → votedOptionIndex 갱신 + isHost 확인 대기
+                        await asyncio.sleep(pace["act_3_after_change"] + 1.5)
 
                         # step 4: "일정 확정하기" 클릭 (방장만 활성) → 팝업 → "확정하기"
-                        log("step 4 — '일정 확정하기' 클릭 → 팝업 대기")
-                        finalize_ok = await wait_for_button(page, "일정 확정하기", timeout_s=10.0)
+                        # wait_for_enabled_button: disabled 속성까지 검사 (단순 visible 체크 미흡)
+                        log("step 4 — '일정 확정하기' 활성 대기 (최대 30s)")
+                        finalize_ok = await wait_for_enabled_button(page, "일정 확정하기", timeout_s=30.0)
                         if not finalize_ok:
                             log("[BACKUP] '일정 확정하기' 버튼 미활성 — ACT 4로 fallback")
                         else:

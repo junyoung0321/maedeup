@@ -511,6 +511,7 @@ async def social_ws(
                     content=content,
                     sender=sender,
                     room_id=room_pk,
+                    user_id=authed_user_id,
                 )
                 session.add(msg)
                 await session.commit()

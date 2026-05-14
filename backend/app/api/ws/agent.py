@@ -762,9 +762,27 @@ async def agent_ws(
             manual_time = trigger.get("manual_chosen_time")
             if isinstance(manual_time, dict):
                 sc["manual_chosen_time"] = manual_time
+
+            # P1 fix: viewer_user_id = 실제 trigger 발화자.
+            # trigger_message_id가 있으면 해당 ChatMessage.user_id 조회 (stalemate / conclusion).
+            # 없으면 (all_members_selected 등) lock winner인 user_id_check로 fallback.
+            trigger_author_id: Optional[int] = user_id_check
+            trigger_msg_id = trigger.get("trigger_message_id")
+            if trigger_msg_id is not None:
+                try:
+                    async with AsyncSessionLocal() as _sess:
+                        _msg = await _sess.get(ChatMessage, int(trigger_msg_id))
+                        if _msg is not None and _msg.user_id is not None:
+                            trigger_author_id = _msg.user_id
+                except Exception:
+                    logger.debug(
+                        "[AUTO_TRIGGER] could not resolve trigger_message_id=%s, using lock-winner",
+                        trigger_msg_id,
+                    )
+
             logger.info(
-                "[AUTO_TRIGGER] passed filter: room=%s intent=%s reason=%s",
-                room_id, trigger_intent, trigger_reason,
+                "[AUTO_TRIGGER] passed filter: room=%s intent=%s reason=%s viewer=%s",
+                room_id, trigger_intent, trigger_reason, trigger_author_id,
             )
             try:
                 task = asyncio.create_task(
@@ -774,7 +792,7 @@ async def agent_ws(
                         trigger_intent,
                         trigger_reason,
                         sc,
-                        viewer_user_id=user_id_check,
+                        viewer_user_id=trigger_author_id,
                     )
                 )
                 task.add_done_callback(_log_detached_task_result)

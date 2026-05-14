@@ -56,25 +56,33 @@ def _date_label(d: datetime, with_weekday: bool = False) -> str:
     return base
 
 def _build_act2_messages() -> dict:
-    """ACT 2 발화 4건을 실행 시점 기준 동적 날짜로 생성."""
+    """ACT 2 발화 4건을 실행 시점 기준 동적 날짜로 생성.
+
+    금요일·주말 실행 시 today+N이 다음주로 spill되는 문제를 방지하기 위해
+    이번주 월요일을 anchor로 사용한다.
+    과거 날짜 거부 발화는 backend가 rejected_dates에 추가하지만 후보 선정에는
+    미래 슬롯만 쓰이므로 시연 흐름에 영향 없음.
+    """
     today = datetime.now()
-    # 이번주 거부 날짜 오프셋 (1~5일 후)
-    d1 = today + timedelta(days=1)   # 이번주 가장 가까운 날 (MT)
-    d2 = today + timedelta(days=2)   # 시험 기간 시작
-    d3 = today + timedelta(days=3)
-    d4 = today + timedelta(days=4)
-    d5 = today + timedelta(days=5)   # 시험 기간 끝
-    # 다음주 거부 날짜 오프셋 (7~12일 후)
-    d6 = today + timedelta(days=7)   # 다음주 초 (발표 준비)
-    d7 = today + timedelta(days=8)
-    # 민수 거부: 이번주 중간
-    d_minsu = today + timedelta(days=3)
-    # 예린 거부: 이번주 1일 (토 느낌)
-    d_yerin_this = today + timedelta(days=2)
-    # 예린 다음주 예외 (바쁘지 않은 1일)
-    d_yerin_free = today + timedelta(days=7)
-    # 예린 다음주 바쁨 기준 (free 빼고 다 바쁨)
-    d_yerin_busy_start = today + timedelta(days=8)
+    # 이번주 월요일 anchor (월=0, ..., 일=6)
+    this_monday = today - timedelta(days=today.weekday())
+
+    # 이번주 요일별 날짜
+    d1 = this_monday + timedelta(days=4)   # 이번주 금 — MT
+    d2 = this_monday + timedelta(days=1)   # 이번주 화 — 시험기간 시작
+    d3 = this_monday + timedelta(days=2)   # 이번주 수
+    d4 = this_monday + timedelta(days=3)   # 이번주 목
+    d5 = this_monday + timedelta(days=5)   # 이번주 토 — 시험기간 끝
+    # 다음주 거부
+    d6 = this_monday + timedelta(days=8)   # 다음주 화 — 발표 준비
+    d7 = this_monday + timedelta(days=9)   # 다음주 수
+    # 민수 거부: 이번주 목
+    d_minsu = this_monday + timedelta(days=3)
+    # 예린 거부: 이번주 토
+    d_yerin_this = this_monday + timedelta(days=5)
+    # 예린 다음주 예외 (바쁘지 않은 1일): 다음주 월
+    d_yerin_free = this_monday + timedelta(days=7)
+    # (d_yerin_busy_start 변수는 발화에 미사용, 제거)
 
     suhyun_msg = (
         f"{_date_label(d1, with_weekday=True)}은 동아리 MT라 안 되고, "

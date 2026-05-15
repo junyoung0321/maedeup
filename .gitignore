@@ -26,6 +26,9 @@
 .gstack-shots/
 qa-v2-*.png
 demo-act5-*.png
+# 시연 자동화 스크린샷 산출물 (.gstack-demo.py / Playwright)
+live-demo-*.png
+requalify-*.png
 .playwright-mcp/
 playwright.config.ts
 tests/

@@ -333,8 +333,12 @@ export function MeetingProvider({
       // A3: 새 vote_card 수신 시 (같은 meeting이든 다른 meeting이든) awaiting 해제.
       // "시간대 변경" 요청 후 새 카드가 도착했다면 = 다른 옵션 받음 = 정상 vote 흐름 복귀.
       // Don't reset phase if already past time confirmation (prevents
-      // pipeline re-triggering from resetting the flow)
+      // pipeline re-triggering from resetting the flow).
+      // 호스트가 이미 날짜를 확정하고 TimeBar에 진입한 후
+      // vote_card identity 재발행(setCardsByMeetingId 새 reference)으로 setVoteCard가 재호출되어도
+      // phase를 idle로 되돌리지 않도록 dateConfirmed도 advance로 인정. (라운드 6 fix)
       const phaseAlreadyAdvanced =
+        prev.infoPanePhase === "dateConfirmed" ||    // ← R6 fix: TimeBar unmount 방지
         prev.infoPanePhase === "timeConfirmed" ||
         prev.infoPanePhase === "placeConfirmed" ||
         prev.infoPanePhase === "done";

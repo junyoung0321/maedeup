@@ -30,6 +30,8 @@ demo-act5-*.png
 live-demo-*.png
 requalify-*.png
 qa-runtime-*.png
+calendar-badge-verify-*.png
+calendar-closeup-*.png
 .codex
 .playwright-mcp/
 playwright.config.ts

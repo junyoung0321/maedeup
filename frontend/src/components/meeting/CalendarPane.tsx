@@ -471,45 +471,6 @@ export default function CalendarPane() {
                     {avail.count}/{avail.total}
                   </span>
                 )}
-                {(() => {
-                  if (blockedCount <= 0) return null;
-                  const total = avail?.total ?? null;
-                  const available = total !== null ? total - blockedCount : null;
-                  const label =
-                    available !== null
-                      ? `${available}/${total}`
-                      : `${blockedCount - (isMyBlocked ? 1 : 0)}`;
-                  const ariaLabel =
-                    available !== null
-                      ? `${available}/${total}명 가능`
-                      : `${blockedCount - (isMyBlocked ? 1 : 0)}명 불가능`;
-                  return (
-                    <span
-                      aria-label={ariaLabel}
-                      title={ariaLabel}
-                      style={{
-                        position: "absolute",
-                        top: 2,
-                        right: 2,
-                        minWidth: 14,
-                        height: 14,
-                        padding: "0 3px",
-                        borderRadius: 7,
-                        background: "#ef4444",
-                        color: "#ffffff",
-                        fontSize: 9,
-                        fontWeight: 700,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        lineHeight: 1,
-                        fontFamily: "Inter, sans-serif",
-                      }}
-                    >
-                      {label}
-                    </span>
-                  );
-                })()}
                 {peersForDay.length > 0 && (
                   <div
                     style={{

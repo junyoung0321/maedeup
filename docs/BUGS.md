@@ -1,7 +1,7 @@
 # BUGS — 매듭 프로젝트 발견 버그 인벤토리
 
-**최종 갱신**: 2026-05-15 ~ 2026-05-16
-**기준**: 자동 루프 run12 GREEN 후
+**최종 갱신**: 2026-05-16
+**기준**: Option C R8 GREEN + CalendarPane 빨간 배지 제거. 시연 D-6 (2026-05-22 금 점심)
 
 ---
 
@@ -25,6 +25,16 @@
 | all_members_selected debounce 묵음 | 파이프라인 미발동 | NX lock + local debounce 예외 | `7fd7daa` |
 | TimeBar availability 무시 | vote_card best slot 사용 (개인 선호 기반) | compute_majority_slot → manual_chosen_time 주입 | `7fd7daa` |
 | AUTO_CALENDAR_PUSH 누수 | 시연 반복 시 실제 캘린더 이벤트 생성 | gate 2곳 (confirm + place-confirm) + AUTO_CALENDAR_PUSH=false | `f56271b` |
+
+## 시연 차단 해소됨 (Option C 라운드 1~9, 2026-05-16)
+
+| 버그 | 증상 | 해소 방법 | commit |
+|---|---|---|---|
+| TS build error 잠재 (`7fd7daa` 시점부터) | `docker compose build` 매번 실패 → stale image(`7ffb7c4821a9`) 재사용 → R1~R7 fake RED | InfoPanePhase 없는 "placeRecommendation" 비교 제거 + maedeup_card union narrowing guard | `ad22516` + `cb0acee` |
+| hostLoading API race | ScheduleRecommendationCard에서 isHost=false 낙관적 렌더 실패 → 호스트 버튼 미노출 | isHost state 낙관적 초기화 | `8a7c7d5` |
+| AiAssistantPane maedeup_card auto phase-advance | maedeup_card WS 수신 시 phaseAlreadyAdvanced 미체크 → Option C 건너뜀 | maedeup_card type 가드 추가 | `cdf727b` |
+| setVoteCard phaseAlreadyAdvanced dateConfirmed 누락 | dateConfirmed 상태에서도 phase reset → TimeBar 재마운트 | phaseAlreadyAdvanced 조건에 dateConfirmed 추가 | `1fe9b17` |
+| CalendarPane 빨간 배지 중복 | "안 되는 사람 수" 빨간 배지가 기존 X/Y 카운트와 동일 정보 중복 표시 | 빨간 배지 블록 통째 제거 | `bc315f1` |
 
 ---
 
@@ -107,6 +117,13 @@
 
 ## P3 (cosmetic)
 
+### LIMIT-10 — 장소 추천 호스트 단독 확정 (v2 spec 후보, 사용자 제안)
+- **위치**: ACT 5 `frontend/src/components/meeting/` 장소 카드 클릭 핸들러
+- **증상**: 시간 합의(vote_card + TimeBar + Option C)는 투표 기반인데, 장소 확정은 호스트 첫 카드 클릭으로 단독 결정 → 합의 흐름 불일치
+- **해소 방법**: 장소 카드에도 vote_card 패턴 적용 (vote_card + WS protocol + frontend + demo.py 변경 필요)
+- **우선순위**: 시연 후 P1 (TODO #5 참조)
+- **심각도**: P2 (시연 차단 없음, v2 spec PR-v2.1 후보)
+
 ### LIMIT-8 — favicon.ico 404
 - **위치**: `localhost:3000/favicon.ico`
 - **해소 방법**: `frontend/public/favicon.ico` 추가
@@ -125,9 +142,9 @@
 
 ---
 
-## 시연 차단 현황
+## 시연 차단 현황 (2026-05-16 기준, 시연 D-6)
 
 - **P0**: 0건 (시연 차단 없음)
 - **P1**: 1건 (WSL venv 의존 — 현재 해소 상태, 재발 주의)
-- **P2**: 8건 (모두 시연 영향 미미)
+- **P2**: 9건 (모두 시연 영향 미미) — LIMIT-10 추가
 - **P3**: 1건 (cosmetic)

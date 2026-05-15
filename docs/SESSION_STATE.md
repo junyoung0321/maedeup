@@ -1,9 +1,9 @@
 # SESSION_STATE — 매듭(Maedeup) 프로젝트
 
-**최종 갱신**: 2026-05-15 ~ 2026-05-16
-**세션 컨텍스트**: 자동 루프 12 라운드 — TimeBar 합의 흐름 완성 + run12 GREEN 확정
-**브랜치**: `docs/spec-time-coordination` (origin/main 대비 10 ahead, origin 동기됨)
-**HEAD**: `558c57c`
+**최종 갱신**: 2026-05-16
+**세션 컨텍스트**: Option C (TimeBar in-card 호스트 확정) + CalendarPane 빨간 배지 제거 — 라운드 8~9 GREEN
+**브랜치**: `docs/spec-time-coordination` (origin/main 대비 86 ahead, origin/docs/spec-time-coordination 동기됨)
+**HEAD**: `e8a10c4`
 
 ---
 
@@ -13,7 +13,7 @@
 - **종류**: 졸업 프로젝트 — AI 모임 조율 플랫폼
 - **핵심 가치**: 채팅으로 흩어진 시간·장소 의사를 자동으로 모아 vote_card / place_recommendation / maedeup_card로 마무리
 - **스택**: Next.js 14 + FastAPI + SQLModel + asyncpg + Redis + LangGraph + Gemini 2.5 Flash + Kakao Local API
-- **현재 상태**: MVP — spec v1.0 완성, ACT 3 TimeBar 합의 흐름 완성, **시연 직전 (5/19~20)**
+- **현재 상태**: MVP — spec v1.0 완성, Option C TimeBar in-card 확정 완성, **시연 D-6 (2026-05-22 금)**
 
 ---
 
@@ -22,11 +22,11 @@
 | 항목 | 값 |
 |---|---|
 | 현재 브랜치 | `docs/spec-time-coordination` |
-| HEAD | `558c57c` |
-| origin 대비 | origin/main 대비 10 ahead (origin/docs/spec-time-coordination 동기) |
+| HEAD | `e8a10c4` |
+| origin 대비 | origin/main 대비 86 ahead (origin/docs/spec-time-coordination 동기) |
 | 별도 로컬 브랜치 | `chore/claude-subagents` (main 기반, 2 commit — sub-agents 5개 + .gitattributes) |
 
-### 오늘 세션 10 commit (최신순)
+### 어제 세션 10 commit (최신순, cfaaf68 기준)
 | SHA | 메시지 |
 |---|---|
 | `558c57c` | fix(timebar+toggle): restore race + 시연 toggle dormant (run12 GREEN) |
@@ -40,9 +40,30 @@
 | `1de7794` | docs: refresh stale CLAUDE.md/HANDOVER.md/TODOS.md |
 | `c8a4a7d` | chore: EOL + .gitignore PNG ignore |
 
+### 오늘 세션 15 commit (최신순, e8a10c4 기준)
+| SHA | 메시지 |
+|---|---|
+| `e8a10c4` | chore(gitignore): option-c-*.png 시각 증거 스크린샷 패턴 추가 |
+| `aac6303` | feat(demo): ACT 3 step 4 호스트 버튼 노출 시점 5초 대기 (Option C 시각 인지) |
+| `0df31ae` | chore(gitignore): qa-runtime 검증 스크린샷 패턴 추가 |
+| `bc315f1` | fix(calendar): 빨간 배지 제거 — avail.count는 이미 채팅 blocked 반영 |
+| `8ce6b46` | feat(calendar): 셀 배지 "안 되는 사람 수" → "가능한 사람/전체" 형식 (잘못된 중간 단계) |
+| `cb0acee` | fix(frontend): TS union narrowing — card.type maedeup_card guard 추가 |
+| `ad22516` | fix(frontend): TS build error — InfoPanePhase에 없는 "placeRecommendation" 비교 제거 |
+| `1fe9b17` | fix(frontend): R6 — setVoteCard phaseAlreadyAdvanced에 dateConfirmed 포함 |
+| `cdf727b` | fix(frontend): Option C 보존 — maedeup_card auto phase-advance 가드 |
+| `8a7c7d5` | fix(frontend): ScheduleRecommendationCard isHost 낙관적 렌더 — hostLoading race 해소 |
+| `3528f19` | chore(docker): .pytest_cache dockerignore 추가 |
+| `ffd4e1f` | feat(demo): ACT 3 TimeBar in-card 확정 셀렉터 갱신 (Option C) |
+| `ecee744` | feat(timebar): Option C — 호스트 in-card "이 시간으로 확정" 버튼 도입 |
+| `fc348dd` | chore(gitignore): qa-runtime 스크린샷 + .codex 마커 ignore |
+| `cfaaf68` | docs(recovery): compact 직전 복구 4 파일 갱신 (run12 GREEN 시점) |
+
 ---
 
-## 3. 자동 루프 12 라운드 흐름 요약
+## 3. 자동 루프 흐름 요약
+
+### run1~run12 (어제, TimeBar 합의 흐름 완성)
 
 | 라운드 | 상태 | 핵심 내용 |
 |---|---|---|
@@ -70,10 +91,25 @@
 | - | - | frontend restore guard + backend single-slot 제외 + PREFERENCE_TOGGLE_ENABLED=false |
 | **run12** | **GREEN** | TimeBar 16초 mount 유지, 확정 2026-06-01 19:30 |
 
+### Option C 라운드 1~9 (오늘 2026-05-16)
+
+| 라운드 | 상태 | 핵심 내용 |
+|---|---|---|
+| R1~R7 | **fake RED** | TS build error 잠재 (`7fd7daa` 시점부터) — stale image(`7ffb7c4821a9`) 로 컨테이너 실행 → `docker compose build` 매번 실패 → 7 라운드 모두 stale bundle로 RED 보고 fix 시도 |
+| fix1 | - | `ecee744` Option C frontend (TimeBar 유지 + "이 시간으로 확정" 버튼 + onHostFinalize) |
+| fix2 | - | `8a7c7d5` ScheduleRecommendationCard isHost 낙관적 렌더 (hostLoading race) |
+| fix3 | - | `cdf727b` AiAssistantPane maedeup_card auto phase-advance 가드 |
+| fix4 | - | `1fe9b17` setVoteCard phaseAlreadyAdvanced에 dateConfirmed 추가 |
+| fix5 | - | `ad22516` TS build error — "placeRecommendation" 비교 제거 |
+| fix6 | - | `cb0acee` TS union narrowing — maedeup_card guard 추가 |
+| **R8** | **GREEN** | TS fix 2건 후 build 통과 → 진짜 GREEN. ACT 3 "이 시간으로 확정" 즉시 클릭 성공 |
+| R9 | GREEN | CalendarPane 빨간 배지 제거 검증 — 배지 0개, X/Y 카운트 31개 정상 |
+
 ---
 
-## 4. run12 GREEN 핵심 증거
+## 4. GREEN 핵심 증거
 
+### run12 GREEN (어제)
 - TimeBar 16초간 mount 유지 (호스트 1st 클릭 후 사라짐 X)
 - 2nd 클릭 (range 완성) 후만 unmount → consensus
 - 확정 시간: **2026-06-01 (월) 19:30 (오후 7:30)**
@@ -81,9 +117,20 @@
 - ERROR 0건, AUTO_CALENDAR_PUSH skip, PREFERENCE_TOGGLE_ENABLED dormant
 - 시뮬 시나리오: 게스트 수현 오전(0-5), 민수 7-8:30(20-23), 예린 7:30-9:30(21-25), 호스트 7-9(20-24) → 4명 중 3명 겹침 slot 21-23 = 오후 7:30~8:30 → backend 19:30 확정
 
+### Option C R8 GREEN (오늘)
+- ACT 3 step 4: "이 시간으로 확정" 버튼 즉시 클릭 (FALLBACK 없음, primary 경로)
+- 확정 시간: 2026-05-27 (수) 19:30 또는 2026-06-01 (월) 19:30 (demo 실행 시점 기준)
+- 확정 장소: 수담한정식 강남점 또는 진미평양냉면 별관 (시점 기준)
+- 시각 증거: `option-c-timebar-visible.png` (TimeBar 유지 + "이 시간으로 확정" 버튼 노출)
+
+### CalendarPane R9 검증 (오늘)
+- 빨간 배지 0개 (DOM 조사 + 스크린샷 확인)
+- X/Y 카운트 (`#22c55e`/`#eab308`/`#ef4444`) 31개 정상
+- 시각 증거: `calendar-badge-verify-124.png`, `calendar-closeup-124.png`
+
 ---
 
-## 5. 적용된 fix 누적 (15+ 변경)
+## 5. 적용된 fix 누적 (25+ 변경)
 
 ### Backend
 - `backend/app/api/routes/meetings.py:323-334,636` — pending-vote.current_user_vote + vote_update.user_votes
@@ -95,7 +142,7 @@
 - `backend/app/services/pipeline/helpers/preference_toggle.py:72-99` — PREFERENCE_TOGGLE_ENABLED 환경변수 검사
 - `backend/scripts/seed_demo_personal_data.py` — 방장 home_base "신촌" + food 차별화 (C1·C3·C4 회피)
 
-### Frontend
+### Frontend (run12 이전)
 - `frontend/src/contexts/MeetingContext.tsx:333-369` — setVoteCard 무조건 awaiting 해제 + setVoteUpdate same meeting 시 해제
 - `frontend/src/components/meeting/InfoPane.tsx:341` — TimeBar mount 조건 `!scheduleConsensus`
 - `frontend/src/components/meeting/InfoPane.tsx:388-392` — A3-2 클릭 시 setInfoPanePhase("timeConfirmed")
@@ -105,7 +152,21 @@
 - `frontend/src/components/meeting/TimeBarSelector.tsx:105-213` — restoredFromServer ref guard + selectionEnd null 시 broadcast 보류
 - `frontend/src/hooks/useAgentWebSocket.ts:57-67` — VoteCardPayload.current_user_vote + VoteUpdatePayload.user_votes 타입
 
-### Demo
+### Frontend (Option C, 오늘 — `ecee744`~`cb0acee`)
+- `frontend/src/components/meeting/TimeBarSelector.tsx` — 호스트 전용 "이 시간으로 확정" 버튼 + onHostFinalize 콜백
+- `frontend/src/components/meeting/InfoPane.tsx` — 호스트 확정 전 TimeBar unmount 차단 (Option C mount 조건 갱신)
+- `frontend/src/components/meeting/ScheduleRecommendationCard.tsx` — isHost 낙관적 렌더 (hostLoading API race 해소)
+- `frontend/src/components/meeting/AiAssistantPane.tsx` — maedeup_card auto phase-advance 가드 + TS union narrowing (maedeup_card guard)
+- `frontend/src/contexts/MeetingContext.tsx` — setVoteCard phaseAlreadyAdvanced에 dateConfirmed 포함
+- TS build error 2건 (`ad22516` + `cb0acee`): "placeRecommendation" 비교 제거 + maedeup_card guard
+
+### Frontend (CalendarPane, 오늘 — `bc315f1`)
+- `frontend/src/components/meeting/CalendarPane.tsx` — 빨간 배지 ("안 되는 사람 수") 통째 제거
+
+### Demo (오늘)
+- `.gstack-demo.py` ACT 3: "이 시간으로 확정" 버튼 셀렉터 갱신 (`ffd4e1f`) + step 4 5초 대기 (`aac6303`)
+
+### Demo (run12 이전)
 - `.gstack-demo.py` ACT 3 통째 재작성 (5단계: 게스트 WS + 호스트 Playwright + WS 송신 best-effort + A3-2 확정)
 - 페이스: act_3_vote_gap 2.5s, act_3_after_votes 4s, act_3_host_click_gap 2.5s, act_3_after_host_vote 5s, act_3_after_confirm_click 5s
 
@@ -141,11 +202,12 @@
 ### Frontend
 | 파일 | 역할 |
 |---|---|
-| `frontend/src/contexts/MeetingContext.tsx` | setVoteCard awaiting 해제 + voteUpdate 구독 |
-| `frontend/src/components/meeting/InfoPane.tsx` | TimeBar mount 조건 + timeConfirmed phase |
-| `frontend/src/components/meeting/AiAssistantPane.tsx` | vote_card phase 검사 렌더 조건 |
-| `frontend/src/components/meeting/ScheduleRecommendationCard.tsx` | vote count 시각화 + hideConfirmAction 제거 |
-| `frontend/src/components/meeting/TimeBarSelector.tsx` | restore guard + selectionEnd null 보류 |
+| `frontend/src/contexts/MeetingContext.tsx` | setVoteCard awaiting 해제 + voteUpdate 구독 + phaseAlreadyAdvanced dateConfirmed |
+| `frontend/src/components/meeting/InfoPane.tsx` | TimeBar mount 조건 + timeConfirmed phase + Option C 호스트 unmount 차단 |
+| `frontend/src/components/meeting/AiAssistantPane.tsx` | vote_card phase 검사 렌더 조건 + maedeup_card guard + TS union narrowing |
+| `frontend/src/components/meeting/ScheduleRecommendationCard.tsx` | vote count 시각화 + hideConfirmAction 제거 + isHost 낙관적 렌더 |
+| `frontend/src/components/meeting/TimeBarSelector.tsx` | restore guard + selectionEnd null 보류 + 호스트 "이 시간으로 확정" 버튼 |
+| `frontend/src/components/meeting/CalendarPane.tsx` | 빨간 배지 제거 (채팅 blocked 중복 표시 해소) |
 | `frontend/src/hooks/useAgentWebSocket.ts` | VoteCardPayload / VoteUpdatePayload 타입 |
 
 ### Demo / 시연
@@ -221,11 +283,12 @@ sg docker -c "docker exec maedeup-api alembic upgrade head"
 
 ## 9. 시연 정보
 
-- **시연 일정**: 5/19 ~ 5/20 (졸업 발표)
+- **시연 일정**: 2026-05-22 (금) 점심 (D-6, 오늘 = 2026-05-16)
+- **D-1 준비일**: 2026-05-21 (목)
 - **시나리오 SoT**: `docs/handoff/demo-scenario-v3.md`
-- **ACT 구조**: ACT 0(소개) → 1(방 생성) → 2(채팅 stalemate + vote_card) → 3(TimeBar 합의 → 19:30 확정) → 4(partial confirm) → 5(장소 추천·확정) → 5.5(preference_toggle dormant) → 6(extractor)
-- **확정 시간**: 2026-06-01 (월) 오후 7:30
-- **핵심 장면**: TimeBar 4인 겹침 시각화 → 호스트 range 선택 → "일정 확정" 클릭
+- **ACT 구조**: ACT 0(소개) → 1(방 생성) → 2(채팅 stalemate + vote_card) → 3(TimeBar 합의 → "이 시간으로 확정" → 19:30 확정) → 4(partial confirm) → 5(장소 추천·확정) → 5.5(preference_toggle dormant) → 6(extractor)
+- **확정 시간**: 2026-06-01 (월) 오후 7:30 (demo 실행 시점 동적 변동)
+- **핵심 장면**: TimeBar 4인 겹침 시각화 → 호스트 "이 시간으로 확정" 클릭 (Option C) → 확정
 
 ---
 

@@ -1,7 +1,7 @@
 # TODO — 매듭 프로젝트
 
-**최종 갱신**: 2026-05-15 ~ 2026-05-16
-**기준 시점**: 자동 루프 run12 GREEN 완료 후. 시연 D-3~4 (5/19~20)
+**최종 갱신**: 2026-05-16
+**기준 시점**: Option C R8 GREEN + CalendarPane 배지 제거 완료. 시연 D-6 (2026-05-22 금 점심)
 
 ---
 
@@ -9,11 +9,12 @@
 
 | # | 항목 | 담당 |
 |---|---|---|
-| D1 | JWT 유효 확인 (`.gstack-demo-token` 401 여부) | 사용자 |
-| D2 | `seed_demo_personal_data --room <ID>` 실행 (방장 신촌 + food) | 사용자 |
+| D1 | JWT 유효 확인 (`.gstack-demo-token` 401 여부) — **D-1 = 2026-05-21 (목)** | 사용자 |
+| D2 | `seed_demo_personal_data --room <ID>` 실행 (방장 신촌 + food) — 5/21 준비 | 사용자 |
 | D3 | Docker 4 컨테이너 healthy 확인 | 사용자 |
 | D4 | chromium pid 확인 + CDP 9222 응답 확인 | 사용자 |
-| D5 | 시연 dry-run 1회 (run12 재현) | 사용자 |
+| D5 | 시연 dry-run 1회 (Option C R8 재현, ACT 3 "이 시간으로 확정" 경로) | 사용자 |
+| D6 | `docker exec maedeup-frontend ls -la /app/.next/BUILD_ID` — BUILD_ID 타임스탬프 갱신 확인 (stale image 차단) | 사용자 |
 
 ---
 
@@ -21,8 +22,7 @@
 
 ### A. 푸시
 - 브랜치 `docs/spec-time-coordination` → origin 동기화
-- 명령: `git push`
-- 현재 정책: 사용자 명시 승인 후
+- **완료**: 오늘 세션 15 commit push 완료 (HEAD `e8a10c4`, origin/docs/spec-time-coordination 동기됨)
 
 ### B. chore/claude-subagents 브랜치 처리
 - 옵션 1: main으로 PR (5 sub-agents 공식화)
@@ -54,7 +54,14 @@
 - `pipeline/graph.py` quick_classify 분기 정교화
 - 담당: analyst → code-writer
 
-### 5. LIMIT-9 — F4 narrator 백엔드 미구현 (Q17=A)
+### 5. 장소 추천 투표 시스템 검토 (사용자 제안, v2 spec 후보)
+- **현재**: ACT 5 = 호스트 단독 첫 번째 장소 카드 클릭 확정
+- **가치**: 시간·장소 합의 흐름 일관성 (vote_card 패턴 재사용), 게스트 참여 공평성, 시연 임팩트
+- **위험**: vote_card + WS protocol + frontend + demo.py 변경 필요, 자동 루프 새 라운드, 시연 안정성
+- **권고**: 시연 후 retro에서 사용자 피드백 받고 v2 spec PR-v2.1 (시연 후 보완) 항목으로 정식화
+- **담당**: 시연 후 — analyst → code-writer
+
+### 6. LIMIT-9 — F4 narrator 백엔드 미구현 (Q17=A)
 - `meetings.py` 캘린더 sync 분기에 `"{name}님 캘린더 권한이 만료됐어요"` emit
 - spec-common.md §9.7 / Q17=A 결정과 코드 불일치 해소
 - 담당: code-writer
@@ -134,7 +141,9 @@
 
 ## 다음 세션 진입 우선순위
 
-1. **시연 dry-run** — run12 재현 확인 (D-1 또는 D-0)
-2. **JWT 갱신 필요 시** — 5/13 생성, 5/19까지 만료 여부 확인
-3. 시연 후: 해결점 O·P + ACT 4·5 보강
-4. 시연 후: v2 spec PR-v2.0부터 순차 작업
+1. **시연 dry-run** — Option C R8 재현 확인 (D-1 = 2026-05-21 목, 또는 D-0 = 2026-05-22 금 직전)
+2. **JWT 갱신 필요 시** — 5/13 생성, 5/22 금까지 만료 여부 확인 (약 9일)
+3. BUILD_ID 갱신 확인 (stale image 차단 — DECISIONS §3 Build cache stale 검증 정책 참조)
+4. 시연 후: 해결점 O·P + ACT 4·5 보강
+5. 시연 후: 장소 추천 투표 시스템 검토 (P1 §5)
+6. 시연 후: v2 spec PR-v2.0부터 순차 작업

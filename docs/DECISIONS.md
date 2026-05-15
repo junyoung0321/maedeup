@@ -1,7 +1,7 @@
 # DECISIONS — 매듭 프로젝트 결정 사항
 
-**최종 갱신**: 2026-05-15 ~ 2026-05-16
-**기준**: spec v1.0 + PR-X·Y·Z·V·V1.5·V1.5.1·V1.5.2 + 자동 루프 12 라운드 (run12 GREEN)
+**최종 갱신**: 2026-05-16
+**기준**: spec v1.0 + PR-X·Y·Z·V·V1.5·V1.5.1·V1.5.2 + 자동 루프 run12 GREEN + Option C R8 GREEN + 시연 D-6 (2026-05-22 금)
 
 ---
 
@@ -94,6 +94,30 @@
 - **근거**: ACT 2.5 echo back이 single-slot으로 수신되어 majority 오염
 - **주의**: 30분 미팅 단일 슬롯 use case에서 false negative 가능 (TODO #9)
 - **구현**: `social.py:81-92`
+
+### Option C — TimeBar in-card 호스트 확정 (라운드 8 GREEN, 2026-05-16)
+- **결정**: 호스트 끝 슬롯 클릭 즉시 unmount 대신 TimeBar 유지 + 호스트 전용 "이 시간으로 확정" 버튼 + 호스트 명시 클릭 후 확정
+- **근거**: 호스트 실수 방지 (재선택 가능) + UX 안전장치. ACT 3에서 "이 시간으로 확정" 버튼이 핵심 시연 장면
+- **구현**: 9 commit (`ecee744`~`cb0acee`):
+  - `ecee744` — Option C frontend (InfoPane mount 조건 + TimeBarSelector 호스트 버튼 + onHostFinalize)
+  - `ffd4e1f` — demo.py ACT 3 셀렉터 갱신
+  - `8a7c7d5` — ScheduleRecommendationCard isHost 낙관적 렌더 (hostLoading race 해소)
+  - `cdf727b` — AiAssistantPane maedeup_card auto phase-advance 가드
+  - `1fe9b17` — setVoteCard phaseAlreadyAdvanced에 dateConfirmed 추가
+  - `ad22516` + `cb0acee` — TS build error 2건 해소
+  - `aac6303` — demo.py ACT 3 step 4 5초 대기
+- **부수 효과**: A3-2 카드 "추천 시간 그대로 확정" 버튼 유지 (이중 진입점 일시 공존, 시연 후 정리 예정)
+
+### CalendarPane 빨간 배지 제거 (정합성, 2026-05-16)
+- **결정**: 캘린더 셀에서 채팅 발화 "X일 안돼" 표시 빨간 배지 제거. 기존 `{count}/{total}` X/Y 표시(`#22c55e`/`#eab308`/`#ef4444`)가 이미 backend `_compute_day_avail`에서 `blocked` 반영
+- **근거**: 중복 표시 해소. 정보 손실 없음 — 셀 클릭 시 detail panel "🚫" 섹션에서 채팅 발화자 이름 표시
+- **구현**: `bc315f1` — `CalendarPane.tsx` 빨간 배지 블록 제거
+- **검증**: qa-runtime DOM 조사 — 빨간 배지 0개, X/Y 카운트 31개 정상. 스크린샷: `calendar-badge-verify-124.png`
+
+### Build cache stale 검증 정책 (2026-05-16)
+- **결정**: 시연 D-1 이전 매 commit 후 `docker exec maedeup-frontend ls -la /app/.next/BUILD_ID`로 BUILD_ID 갱신 확인
+- **근거**: 오늘 라운드 R1~R7 fake RED — TS build error로 인해 stale image(`7ffb7c4821a9`, `7fd7daa` 시점 SHA) 7번 재사용. BUILD_ID 타임스탬프 갱신 안 됨이 빌드 실패 신호
+- **적용**: rebuild 후 항상 BUILD_ID timestamp 검증 → 갱신 안 되면 `docker compose build` 출력에서 `Type error` / `Failed to compile` 검색
 
 ---
 

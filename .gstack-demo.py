@@ -43,74 +43,38 @@ import sys
 import time
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime
 
-# ─── ACT 2 동적 날짜 계산 ─────────────────────────────────────────────────────
-# 실행 시점 기준 미래 날짜만 사용 → supervisor_validation "slot in the past" 방지
-WEEKDAYS_KO = ["월", "화", "수", "목", "금", "토", "일"]
+# ─── ACT 2 하드코딩 발화 (5/18 기준) ─────────────────────────────────────────
+# DEMO_TARGET_DATE = 2026-05-18 (월) 촬영일.
+# 발화는 5/18 기준 자연 한국어 표현으로 고정.
+# backend는 실행 당일 날짜 기준으로 슬롯을 처리하므로,
+# 촬영일(5/18)이 아닌 날 dry-run 시 아래 경고가 출력됨.
+DEMO_TARGET_DATE = date(2026, 5, 18)  # 영상 촬영일 (월요일)
 
-def _date_label(d: datetime, with_weekday: bool = False) -> str:
-    base = f"{d.month}/{d.day}"
-    if with_weekday:
-        return f"{base} {WEEKDAYS_KO[d.weekday()]}요일"
-    return base
+# 5/18 기준 날짜 환산:
+#   수현 거부: 5/19(화) MT, 5/20·21·22(수·목·금) 시험기간, 5/25·26(다음주 월·화) 발표 준비
+#   민수 거부: 5/27(다음주 수) 본가
+#   예린 거부: 5/26(다음주 화) 쉬고싶음, "다음주 토요일 빼고 다 바빠"
+ACT2_MSGS = {
+    "suhyun": "내일은 동아리 MT라 안 되고, 이번주 수·목·금도 시험 기간이라 다 안 돼. 다음주 월·화도 발표 준비 때문에 일정 잡혀있어",
+    "minsu": "다음주 수요일은 본가 내려가야 해서 패스",
+    "yerin": "다음주 화요일은 좀 쉬고 싶다… 다음주 토요일 빼고 다 바빠",
+}
 
-def _nth_upcoming_weekday(today: datetime, n: int) -> datetime:
-    """today 이후 n번째 평일 (월~금). n=1이면 오늘 다음 평일.
+def _check_demo_date() -> None:
+    """실행 날짜가 DEMO_TARGET_DATE와 다를 때 경고 로그 출력."""
+    today = date.today()
+    if today != DEMO_TARGET_DATE:
+        _ts = time.strftime("%H:%M:%S")
+        print(
+            f"[{_ts}] [NOTE] DEMO_TARGET_DATE({DEMO_TARGET_DATE}) ≠ 오늘({today})"
+            " — 발화는 5/18 기준 자연 표현이지만 backend는 오늘 기준 처리."
+            " 영상 촬영 후 dry-run은 OK",
+            flush=True,
+        )
 
-    오늘 요일 무관 항상 미래 날짜를 반환 → backend 'slot in the past' 거부 방지.
-    """
-    d = today
-    count = 0
-    while count < n:
-        d += timedelta(days=1)
-        if d.weekday() < 5:  # 토(5)·일(6) skip
-            count += 1
-    return d
-
-
-def _build_act2_messages() -> dict:
-    """ACT 2 발화 4건을 실행 시점 기준 미래 평일로 생성.
-
-    _nth_upcoming_weekday 헬퍼를 사용해 오늘 요일 무관 항상 미래 날짜만 생성.
-    금요일·주말 실행 시 과거 날짜가 포함되던 J2 회귀를 해소.
-    """
-    today = datetime.now()
-
-    # 수현 거부: next upcoming 1(MT) + 2·3·4·5(시험기간) + 6·7(발표 준비)
-    d1 = _nth_upcoming_weekday(today, 1)   # MT
-    d2 = _nth_upcoming_weekday(today, 2)   # 시험기간 시작
-    d3 = _nth_upcoming_weekday(today, 3)
-    d4 = _nth_upcoming_weekday(today, 4)
-    d5 = _nth_upcoming_weekday(today, 5)   # 시험기간 끝
-    d6 = _nth_upcoming_weekday(today, 6)   # 발표 준비
-    d7 = _nth_upcoming_weekday(today, 7)
-    # 민수 거부: next upcoming 3
-    d_minsu = _nth_upcoming_weekday(today, 3)
-    # 예린 거부: next upcoming 2 (쉬고싶다)
-    d_yerin_this = _nth_upcoming_weekday(today, 2)
-    # 예린 다음주 예외 (바쁘지 않은 1일): next upcoming 7
-    d_yerin_free = _nth_upcoming_weekday(today, 7)
-    # (d_yerin_busy_start 변수는 발화에 미사용, 제거)
-
-    suhyun_msg = (
-        f"{_date_label(d1, with_weekday=True)}은 동아리 MT라 안 되고, "
-        f"{_date_label(d2)}·{_date_label(d3)}·{_date_label(d4)}·{_date_label(d5)}도 시험 기간이라 다 안 돼. "
-        f"다음주 {_date_label(d6)}·{_date_label(d7)}도 발표 준비 때문에 일정 잡혀있어"
-    )
-    minsu_msg = f"{_date_label(d_minsu)}은 본가 내려가야 해서 패스"
-    yerin_msg = (
-        f"{_date_label(d_yerin_this, with_weekday=True)}은 좀 쉬고 싶다… "
-        f"다음주도 사실 {_date_label(d_yerin_free)} 빼고 다 바빠"
-    )
-    return {
-        "suhyun": suhyun_msg,
-        "minsu": minsu_msg,
-        "yerin": yerin_msg,
-    }
-
-# 시연 시작 시점에 한 번만 계산 → 진행 중 일관성 유지
-ACT2_MSGS = _build_act2_messages()
+_check_demo_date()
 # ──────────────────────────────────────────────────────────────────────────────
 
 import websockets

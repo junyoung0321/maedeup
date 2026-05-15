@@ -533,7 +533,6 @@ export default function AiAssistantPane() {
             if (
               card.type === "vote_card" &&
               currentPhaseCtx !== "timeConfirmed" &&
-              currentPhaseCtx !== "placeRecommendation" &&
               currentPhaseCtx !== "placeConfirmed" &&
               currentPhaseCtx !== "done"
             ) {

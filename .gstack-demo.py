@@ -862,6 +862,10 @@ async def run_demo(flags: DemoFlags) -> None:
                         log("step 4 — TimeBar in-card '이 시간으로 확정' 버튼 활성 대기 (최대 30s)")
                         finalize_ok = await wait_for_enabled_button(page, "이 시간으로 확정", timeout_s=30.0)
                         if finalize_ok:
+                            # Option C 시각 인지: TimeBar 유지 + 호스트 "이 시간으로 확정" 버튼 노출 시점을
+                            # 관객이 인지하도록 5초 대기 (시연 발표용 페이스).
+                            log("step 4 — '이 시간으로 확정' 버튼 활성 (TimeBar 유지 + 호스트 확정 진입)")
+                            await asyncio.sleep(5.0)
                             log("step 4 — 호스트 TimeBar 내부 '이 시간으로 확정' 클릭")
                             await click_button_by_text(page, "이 시간으로 확정", contains=True)
                             await asyncio.sleep(pace["act_3_after_confirm_click"])

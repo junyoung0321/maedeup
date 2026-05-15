@@ -2,7 +2,7 @@
 
 ## 진행 중인 작업
 세션 시작 시 `docs/handoff/` 폴더의 가장 최근 문서를 먼저 확인하세요.
-**현재 task**: spec v1.0 (§1~§13) 완성 + PR-V1.5 머지 + QA dry-run v2 PASS + `.gstack-demo.py` v3 풀 자동화 완료. **다음**: v2 spec 본문 작성 (`docs/handoff/2026-05-14-spec-v2-plan.md` 38 항목 기반) + 해결점 O·P 구현.
+**현재 task**: spec v1.0 + PR-V1.5 + QA v2 PASS + v3 자동화 + **자동 루프 라운드 4 GREEN** (ACT 3 confirm 자동화 복구 + ACT 5.5 토글 enable, `0f3802b` + `a2e9b16`, run3 2m13s exit 0). **다음**: v2 spec 본문 작성 (`docs/handoff/2026-05-14-spec-v2-plan.md` 38항목 기반) + 코덱스 P1 backlog 5건 (`docs/handoff/2026-05-15-round4-green.md` §6) + 해결점 O·P 구현.
 시연 자동화 (WSL venv v2, 2026-05-15):
 - 터미널 1: `~/.venv-maedeup-demo/bin/python3 .gstack-browser-launch.py`
 - 터미널 2: `~/.venv-maedeup-demo/bin/python3 .gstack-demo.py` (또는 `--fast`)
@@ -14,8 +14,10 @@
 3. ACT 4 confirm 후속 메시지 / ACT 5 quick_classify 보강
 4. LIMIT-7 (free-slots 캐싱), LIMIT-8
 5. F4 narrator (Q17 후속)
+6. 코덱스 P1 backlog (라운드 4 후속, TODOS.md §10) — vote_update 좁히기·VoteCardSection 회귀 테스트·timeConfirmed mount·seed 주석·refresh state 통일
 참고:
-- `docs/handoff/2026-05-14-spec-progress.md` (최신 v19, 2026-05-15 갱신 — spec v1.0 + PR-V1.5 + QA v2 + v3 자동화 통합 보고)
+- `docs/handoff/2026-05-15-round4-green.md` (자동 루프 5라운드 + GREEN 도달, 2026-05-15)
+- `docs/handoff/2026-05-14-spec-progress.md` (v19 — spec v1.0 + PR-V1.5 + QA v2 + v3 자동화 통합 보고)
 - `docs/handoff/2026-05-14-spec-v2-plan.md` (v2 spec 38 항목 계획서)
 - `docs/handoff/demo-scenario-v3.md` (시연 시나리오 SoT, 2026-05-15 갱신)
 - `docs/handoff/spec-time-coordination.md` (619줄, v1.0)

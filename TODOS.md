@@ -112,10 +112,27 @@
 
 ---
 
+## 10. 코덱스 P1 backlog (자동 루프 라운드 4 후속) [P1~P2]
+
+자동 루프 라운드 4 GREEN 도달 후 코덱스가 권고한 follow-up. SoT: `docs/handoff/2026-05-15-round4-green.md` §6.
+
+| # | 항목 | 우선순위 | 위치 |
+|---|---|---|---|
+| 10.1 | `vote_update` payload 의 `user_votes` 를 `current_voter_user_id` + `current_voter_option_index` 만으로 좁히기 (개인정보 최소화) | P1 | `backend/app/api/routes/meetings.py:636`, `frontend/src/hooks/useAgentWebSocket.ts:57-64`, `frontend/src/components/meeting/VoteCardSection.tsx:113-119` |
+| 10.2 | VoteCardSection 회귀 테스트 — pending-vote hydration·partial null 복귀·이중 마운트 방지 | P1 | `frontend/src/components/meeting/__tests__/VoteCardSection.*.test.tsx` 신규 |
+| 10.3 | VoteCardSection mount 조건에 `timeConfirmed` phase 제외 추가 | P2 | `frontend/src/components/meeting/InfoPane.tsx:357` |
+| 10.4 | `seed_demo_personal_data.py` 주석 정확화 — refresh route 그룹 비교는 `User.home_base` 가 아니라 `MeetingPreference.preferred_location` (또는 `MeetingPreference` seed 별도 추가) | P2 | `backend/scripts/seed_demo_personal_data.py` |
+| 10.5 | refresh rerun `slot_context` 통일 — `default_place_hint`/`preference_common_foods` 주입해 route gate (`meetings.py:1105`) vs 카드 payload (`vote_card.py:315`, `place.py:416`) toggle 드리프트 방지 | P1 | `backend/app/api/routes/meetings.py:1167` |
+
+**연관 SoT**: 라운드 4 코덱스 리뷰 (A1·A2·A4·C 모두 P1 권고 포함). v1.6 backlog 와 묶음 PR (`PR-V1.6`) 권고.
+
+---
+
 ## 다음 세션 진입 순서 (권고)
 
-1. **시연 진행** (Windows PowerShell 또는 WSL venv, `python .gstack-demo.py`) — 사전 준비 완료
+1. **시연 진행** (Windows PowerShell 또는 WSL venv, `python .gstack-demo.py`) — 사전 준비 완료, 라운드 4 GREEN 적용됨
 2. **시연 직후**: retrospective 회의 → Q18~Q25 결정 라운드
 3. **v2 spec PR-v2.0** 착수 (시연 결과 반영 후)
 4. **해결점 O·P 코드 구현** (v2 PR-v2.1과 묶음 권고)
-5. **v1.6 backlog** 중 P1 항목 (F4 narrator·캐싱 등)
+5. **코덱스 P1 backlog** (본 문서 §10) 묶음 PR-V1.6 으로 진행
+6. **v1.6 backlog** (§7) 중 P1 항목 (F4 narrator·캐싱 등)

@@ -10,6 +10,7 @@
 
 **변경 이력**:
 - 2026-05-15 ACT 3 update: vote 직접 호출 → TimeBar 합의 흐름으로 변경. `.gstack-demo.py` ACT 3 동기 적용 완료.
+- 2026-05-16 Option C 반영: ACT 3 확정 버튼 → "이 시간으로 확정" (TimeBar 내 호스트 전용); 캘린더 셀 빨간 배지 제거; 시연 D-Day 갱신 (2026-05-22).
 
 ---
 
@@ -137,7 +138,7 @@ ACT 5.5  hybrid 토글 + F4 실명 narrator  25s   [Q5 토글 → OOO님 선호 
    - `entity_extraction` 노드: Gemini가 "동아리 MT·본가·쉬고 싶다·5/13·5/14·5/15·5/16 다 안 됨·5/19·5/20 발표 준비·5/11 빼고 다 바빠" → `rejected_dates` 배열 추출
    - `slot_filling` 노드: `trigger_reason="stalemate_judged"` 분기 → 후보 슬롯 필터링
    - 후보 소진 → 해결점 N: 다음 주(5/19~5/23)로 범위 자동 확장
-4. 해결점 P: rejected_dates → calendar WebSocket broadcast → 캘린더 패널 5/8·5/9·5/10·5/13~5/16 빨간 카운트 표시
+4. 해결점 P: rejected_dates → calendar WebSocket broadcast → 캘린더 패널 5/8·5/9·5/10·5/13~5/16 셀에 X/Y 가용 인원 배지 갱신 (빨간 카운트 배지 제거, commit `bc315f1` — `_compute_day_avail` blocked_today 중복 표시였음)
 
 **AI narrator (vote_card_creation 노드 출력)**:
 ```python
@@ -156,7 +157,9 @@ best_label 예시: `"5월 19일 (월) 19:00"` — 다음주 첫 가용 슬롯.
 
 - AI 패널: `"캘린더 확인 결과, 5월 19일 (월) 19:00을(를) 추천드려요. 📅 아래에서 확인해주세요."` (또는 다음주 날짜)
 - 채팅 스크롤 끝에 assistant 메시지 말풍선
-- 캘린더: 5/8·5/9·5/10·5/13~5/16 빨간 카운트 뱃지 (해결점 P)
+- 캘린더: 5/8·5/9·5/10·5/13~5/16 셀에 `X/Y` 가용 인원 배지 표시 (해결점 P)
+  - 4/4 = 초록, 3/4 이하 = 노란색(#eab308). **빨간 "1" 카운트 배지는 제거됨** (commit `bc315f1`)
+  - "X일 안돼" 발언자는 셀 클릭 → detail panel "🚫 불가능 표시" 섹션에서 확인
 - vote_card 또는 ACT 2.5로 자연스럽게 전환
 
 ---
@@ -231,11 +234,15 @@ ACT 2에서 이어지는 자동 흐름 — 추가 step 없음. `.gstack-demo.py`
 ## ACT 3. ★신설 — 시간대 변경 → TimeBar 합의 → 호스트 확정 (35초)
 
 > **2026-05-15 update**: vote 직접 호출 → TimeBar 합의 흐름으로 변경. `.gstack-demo.py` ACT 3 동기 적용 완료.
-> **코드 근거**: `ScheduleRecommendationCard.tsx:511~546` — `isHost` 조건 시 두 버튼 렌더. `InfoPane.tsx:406` — `scheduleConsensus + isHost` 조건 "추천 시간 그대로 확정" 버튼.
+> **2026-05-16 update (Option C)**: 확정 버튼 위치·텍스트 변경 — InfoPane A3-2 "추천 시간 그대로 확정" → TimeBar 카드 내 호스트 전용 "이 시간으로 확정" 버튼으로 교체. TimeBar unmount 시점도 확정 후로 변경.
+> **코드 근거**: `ScheduleRecommendationCard.tsx:511~546` — `isHost` 조건 시 두 버튼 렌더. `InfoPane.tsx:406` — `scheduleConsensus + isHost` 조건 (fallback 용). TimeBar 카드 내 보라색 "이 시간으로 확정" 버튼 (commit `ffd4e1f`, `aac6303`).
 
 ### 시나리오 흐름
 
-방장 지민이 vote_card 추천 슬롯(예: 오후 6시)을 확인하고 **"시간대 변경"** 버튼을 클릭한다. InfoPane에 TimeBarSelector 카드가 마운트되어 각 멤버의 가능 시간대를 시각화한다. 게스트 3명이 가능 시간을 WS로 전송하면 TimeBar "다른 분들" row가 파란색으로 채워진다. 방장이 TimeBar 슬롯을 클릭하면 "전원" row가 초록색으로 활성화(consensus)되고, "추천 시간 그대로 확정" 버튼을 눌러 시간을 확정한다.
+방장 지민이 vote_card 추천 슬롯(예: 오후 6시)을 확인하고 **"시간대 변경"** 버튼을 클릭한다. InfoPane에 TimeBarSelector 카드가 마운트되어 각 멤버의 가능 시간대를 시각화한다. 게스트 3명이 가능 시간을 WS로 전송하면 TimeBar "다른 분들" row가 파란색으로 채워진다. 방장이 TimeBar 슬롯을 클릭하면 "전원" row가 초록색으로 활성화(consensus)되고, TimeBar 카드 내 보라색 안내 박스 "✅ 모두 시간대를 골랐어요" 와 호스트 전용 **"이 시간으로 확정"** 버튼이 노출된다. 방장이 버튼을 눌러 시간을 확정한다.
+
+> **게스트 화면**: TimeBar 그대로 유지. 회색 안내 박스 "⏳ 방장 확정 대기 중 — 시간은 자유롭게 변경 가능합니다" 표시. "이 시간으로 확정" 버튼 미노출.
+> **호스트 재선택**: 잘못 골랐으면 시작 슬롯 재클릭 → range 재선택 가능 (TimeBar unmount 안 됨).
 
 ### 자동화 step (`.gstack-demo.py` ACT 3 블록)
 
@@ -258,9 +265,11 @@ ACT 2에서 이어지는 자동 흐름 — 추가 step 없음. `.gstack-demo.py`
 - 효과: "내 시간" row + "전원" row 초록색 활성 (consensus 도달)
 - 클릭 후 5초 시청
 
-**step 4**: A3-2 카드 "추천 시간 그대로 확정" 버튼 활성 대기 → 호스트 클릭
-- `InfoPane.tsx:406`의 `scheduleConsensus + isHost` 조건으로 버튼 등장
-- `wait_for_enabled_button("추천 시간 그대로 확정", 30s)` 후 클릭
+**step 4**: TimeBar 카드 내 "이 시간으로 확정" 버튼 5초 대기 → 호스트 클릭
+- consensus 달성 후 TimeBar 카드 내 보라색 안내 박스 + 호스트 전용 보라색 **"이 시간으로 확정"** 버튼 노출 (commit `ffd4e1f`, `aac6303`)
+- 5초 대기 후 클릭 (시연 시각 인지용)
+- 클릭 → `POST /api/v1/rooms/{roomId}/schedule-confirm` (mode=auto) → `setInfoPanePhase("timeConfirmed")` → TimeBar unmount → `maedeup_card (partial)` 발행
+- **fallback** (TimeBar 버튼 미활성 시): A3-2 카드 "추천 시간 그대로 확정" 버튼 (`InfoPane.tsx:406`, `scheduleConsensus + isHost` 조건) 클릭
 - 클릭 후 5초 시청 (maedeup_card partial 시청)
 
 **step 5**: `act3_completed = True` → ACT 4 (Partial maedeup_card) 자동 진행
@@ -273,16 +282,18 @@ ACT 2에서 이어지는 자동 흐름 — 추가 step 없음. `.gstack-demo.py`
 화면 3: TimeBarSelector 카드 마운트 (캘린더 패널)
 화면 4: 게스트 "다른 분들" row 파란색 채워짐
 화면 5: 호스트 슬롯 클릭 → "내 시간" + "전원" row 초록 (consensus)
-화면 6: "추천 시간 그대로 확정" 버튼 활성 → 클릭
-화면 7: maedeup_card partial 발행 (ACT 4 진입)
+화면 6: TimeBar 카드 내 보라색 안내 박스 "✅ 모두 시간대를 골랐어요 — 위 그래프 확인 후 확정해주세요" + "이 시간으로 확정" 버튼 활성 → 클릭
+  ↳ 게스트 화면: 회색 박스 "⏳ 방장 확정 대기 중 — 시간은 자유롭게 변경 가능합니다" (버튼 없음)
+화면 7: TimeBar unmount → maedeup_card partial 발행 (ACT 4 진입)
 ```
 
 ### 백엔드 호출 흐름
 
 1. **"시간대 변경" 클릭**: 프론트 상태 전환만 (API 호출 없음). `MeetingContext.requestTimeChange` → `voteAwaitingTimeMeetingId = meetingId`
 2. **게스트 WS `time_selection` 송신**: `social` 채널 수신 → `peer_time_selection` broadcast → TimeBar "다른 분들" row 갱신
-3. **호스트 슬롯 클릭 → TimeBar consensus**: 프론트 상태 내 `scheduleConsensus=true` 세팅 → "추천 시간 그대로 확정" 버튼 노출
-4. **확정 API** (`meetings.py:414`):
+3. **호스트 슬롯 클릭 → TimeBar consensus**: 프론트 상태 내 `scheduleConsensus=true` 세팅 → TimeBar 카드 내 보라색 "이 시간으로 확정" 버튼 노출 (호스트 전용). 게스트 화면엔 회색 안내 박스만 표시.
+4. **확정 API** (`POST /api/v1/rooms/{roomId}/schedule-confirm`, mode=auto) → `setInfoPanePhase("timeConfirmed")` → TimeBar unmount → `maedeup_card (partial)` 발행.
+   - (기존 fallback) `meetings.py:414`:
    - `meeting.status = MeetingStatus.confirmed`, `meeting.scheduled_at = scheduled_at`
    - AI 패널 안내 (`meetings.py:537~555`): `"✅ 일정이 확정되었어요 — {time_label}"` + `"이제 어디서 만날지 정해볼까요?"`
    - Google Calendar fan-out (동의 멤버 대상, `sync_events_for_meeting_members`)
@@ -293,15 +304,16 @@ ACT 2에서 이어지는 자동 흐름 — 추가 step 없음. `.gstack-demo.py`
 > 1. *"'시간대 변경' 버튼을 누르면 타임바가 뜹니다. 멤버들이 각자 가능한 시간대를 선택하면 파란색으로 차오르거든요."*
 > 2. *"게스트 3명이 가능 시간을 보내니까 '다른 분들' 줄이 파랗게 채워지죠. 실시간이에요."*
 > 3. *"방장이 슬롯을 클릭하면 전원 줄이 초록색으로 바뀝니다 — 합의가 된 거예요."*
-> 4. *"그러면 '추천 시간 그대로 확정' 버튼이 활성화되고, 클릭하면 확정됩니다. 캘린더 연동된 멤버 캘린더에도 자동 등록돼요."*
+> 4. *"전원 줄이 초록이 되면 '이 시간으로 확정' 버튼이 나타납니다. 클릭하면 확정되고, 캘린더 연동된 멤버 캘린더에도 자동 등록돼요."*
 
 ### 시청자가 보는 화면
 
 - vote_card → `"시간대 합의 중..."` placeholder (지민 화면)
 - TimeBarSelector 카드: "다른 분들" row (파랑), "내 시간" row (회색 → 초록), "전원" row (초록)
 - 호스트 슬롯 클릭 후 consensus 달성: 전원 row 초록 활성
-- InfoPane: "추천 시간 그대로 확정" 버튼 (인디고) 등장
-- 확정 후 AI 패널: `"✅ 일정이 확정되었어요 — 5월 19일 (월) 오후 6:00"` + `"이제 어디서 만날지 정해볼까요? 장소를 추천해드릴게요."`
+- **호스트 화면**: TimeBar 카드 유지 (unmount 안 됨) + 보라색 안내 박스 "✅ 모두 시간대를 골랐어요 — 위 그래프 확인 후 확정해주세요" + 보라색 "이 시간으로 확정" 버튼 등장
+- **게스트 화면**: TimeBar 유지 + 회색 안내 박스 "⏳ 방장 확정 대기 중 — 시간은 자유롭게 변경 가능합니다" (버튼 없음)
+- 확정 클릭 후 TimeBar unmount → 확정 후 AI 패널: `"✅ 일정이 확정되었어요 — 5월 22일 (금) 오후 12:00"` (시연 날짜 기준) + `"이제 어디서 만날지 정해볼까요? 장소를 추천해드릴게요."`
 
 ---
 
@@ -573,9 +585,11 @@ Body:
 - **증상 유형 3**: 호스트 슬롯 클릭 후 "전원" row 초록 미활성 (consensus 미달성)
   - **원인**: selector `[id$="-mine-18"]` 매칭 실패 (UI 구조 변경) 또는 aria-label 불일치
   - **대응**: Playwright `browser_snapshot` → 실제 slot id 확인 후 selector 수정
-- **증상 유형 4**: "추천 시간 그대로 확정" 버튼 미노출 (`scheduleConsensus` 미세팅)
-  - **원인**: `InfoPane.tsx:406` 조건 `scheduleConsensus + isHost` 미충족
-  - **대응**: 타임아웃 30초 대기 → 버튼 미등장 시 ACT 3 생략 → ACT 2.5 vote_card "○월 ○일로 확정" 버튼 직접 클릭 → ACT 4로 진행
+- **증상 유형 4**: "이 시간으로 확정" 버튼 미노출 (`scheduleConsensus` 미세팅 또는 TimeBar 카드 Option C 미반영)
+  - **원인 A**: `scheduleConsensus=true` 미세팅 → consensus 달성 조건 미충족
+  - **원인 B**: 프론트 빌드 stale (BUILD_ID 미갱신) → Option C 코드 미반영
+  - **대응 1**: 타임아웃 5초 대기 → TimeBar 내 버튼 미등장 시 InfoPane A3-2 "추천 시간 그대로 확정" 버튼 폴백 (`InfoPane.tsx:406`, `scheduleConsensus + isHost` 조건) 클릭
+  - **대응 2**: 버튼 전혀 없으면 ACT 3 생략 → ACT 2.5 vote_card "○월 ○일로 확정" 버튼 직접 클릭 → ACT 4로 진행
   - **시연자 멘트**: *"'시간대 변경' 대신 바로 확정하는 경우엔 이렇게 한 번에 됩니다."*
 - **증상 유형 5**: ACT 3 전체 생략 (시간 부족 또는 UI 오류)
   - **대응**: ACT 2.5 vote_card에서 "○월 ○일로 확정" 버튼 직접 클릭 → `POST /api/v1/meetings/confirm` → ACT 4로 바로 진행
@@ -591,6 +605,8 @@ Body:
 ---
 
 ## 시연 사전 체크리스트
+
+> **시연 일정**: 2026-05-22 (금) 점심. 오늘(2026-05-16) 기준 D-6. D-1 준비일 = 2026-05-21 (목).
 
 ### Docker / 서버
 
@@ -627,6 +643,13 @@ Body:
 - [ ] `.gstack-browser-launch.py` Windows PowerShell `.venv\Scripts\python.exe`로 실행 (BUG-1: WSL에서는 실행 금지)
 - [ ] `.gstack-demo.py` dry-run `--fast` 모드로 1회 검증
 
+### 빌드 검증 (D-1 필수)
+
+- [ ] **프론트엔드 BUILD_ID 갱신 확인**: `docker exec maedeup-frontend ls -la /app/.next/BUILD_ID` — 최신 이미지 기준인지 타임스탬프 확인
+  - TS build error 방치 시 stale image 그대로 실행 → 오늘(2026-05-16) 라운드 1~7에서 fake RED 반복된 원인
+  - fix 반영이 안 되면 `docker compose up -d --build frontend` 후 BUILD_ID 재확인
+- [ ] 백엔드 변경은 `docker restart maedeup-api` 후 `docker logs maedeup-api --tail 20`에서 P0 에러 없음 확인
+
 ### 브랜드 / UI
 
 - [ ] 화면 확대 150%~175% (발표 프로젝터 가독성)
@@ -650,10 +673,13 @@ Body:
 
 | # | 구분 | v2 | v3 |
 |---|---|---|---|
-| 1 | **ACT 3 신설 → TimeBar 합의 흐름** | 없음 (v2) / VoteCardSection 직접 투표 (v3 초기) | **"시간대 변경" 클릭 → TimeBarSelector 마운트 → 게스트 WS `time_selection` → 호스트 슬롯 클릭 → consensus → "추천 시간 그대로 확정" 클릭 → `POST /confirm` (35초)** |
+| 1 | **ACT 3 신설 → TimeBar 합의 흐름** | 없음 (v2) / VoteCardSection 직접 투표 (v3 초기) | **"시간대 변경" 클릭 → TimeBarSelector 마운트 → 게스트 WS `time_selection` → 호스트 슬롯 클릭 → consensus → "이 시간으로 확정" 클릭 → `POST /schedule-confirm` (35초)** |
 | 2 | **버튼 명칭 정확화** | "다른 시간대" (가정) | **"시간대 변경"** — 실제 코드 텍스트 (`ScheduleRecommendationCard.tsx:545`: `"시간대 변경"`) |
-| 3 | **TimeBar 흐름 신규 명시** | VoteCardSection 투표 직접 호출 | TimeBarSelector 마운트 → WS `time_selection` (게스트 시뮬) → 호스트 슬롯 클릭 → `scheduleConsensus` → "추천 시간 그대로 확정" (`InfoPane.tsx:406`) |
-| 4 | **ACT 5 입력 단순화** | "강남에서 다 같이 갈만한 한식집" | **"강남 한식 추천해줘"** 또는 **"추천해줘"** — 짧은 입력으로 의도 자동 인식 강조 |
-| 5 | **백업 B-8 갱신** | B-8 (VoteCardSection 미작동 4종) | **B-8 (TimeBar 합의 미작동 5종 + TimeBar selector/WS 대응)** |
-| 6 | **체크리스트 보강** | v2 | ACT 3 WS time_selection용 게스트 토큰 준비 항목 추가 |
-| 7 | **총 시간** | ~4분 50초 | **~5분 25초** (ACT 3 +35초, 발표자 트림 후 ~5분 10초 가능) |
+| 3 | **TimeBar 합의 확정 버튼 (Option C)** | InfoPane A3-2 "추천 시간 그대로 확정" | **TimeBar 카드 내 호스트 전용 보라색 "이 시간으로 확정"** 버튼 (commit `ffd4e1f`, `aac6303`). consensus 후 TimeBar 유지 + 안내 박스 표시. fallback: InfoPane "추천 시간 그대로 확정". |
+| 4 | **게스트 화면 — TimeBar 대기 상태** | 없음 (미명시) | TimeBar 유지 + 회색 박스 "⏳ 방장 확정 대기 중 — 시간은 자유롭게 변경 가능합니다" (commit `ecee744`, `8a7c7d5`) |
+| 5 | **캘린더 셀 빨간 배지 제거** | 안 되는 사람 수 빨간 "1" 배지 + X/Y 배지 이중 표시 | **빨간 배지 삭제**. X/Y 가용 인원 배지만 유지 (4/4=초록, 이하=노란 #eab308). commit `bc315f1` |
+| 6 | **ACT 5 입력 단순화** | "강남에서 다 같이 갈만한 한식집" | **"강남 한식 추천해줘"** 또는 **"추천해줘"** — 짧은 입력으로 의도 자동 인식 강조 |
+| 7 | **백업 B-8 갱신** | B-8 (VoteCardSection 미작동 4종) | **B-8 (TimeBar 합의 미작동 5종 + TimeBar selector/WS 대응)** |
+| 8 | **체크리스트 보강** | v2 | ACT 3 WS time_selection용 게스트 토큰 준비 + 빌드 BUILD_ID 검증 항목 추가 |
+| 9 | **시연 D-Day** | (미명시) | **2026-05-22 (금) 점심, D-6 (2026-05-16 기준), D-1=5/21** |
+| 10 | **총 시간** | ~4분 50초 | **~5분 25초** (ACT 3 +35초, 발표자 트림 후 ~5분 10초 가능) |

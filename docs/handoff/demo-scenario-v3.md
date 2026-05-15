@@ -12,6 +12,7 @@
 - 2026-05-15 ACT 3 update: vote 직접 호출 → TimeBar 합의 흐름으로 변경. `.gstack-demo.py` ACT 3 동기 적용 완료.
 - 2026-05-16 Option C 반영: ACT 3 확정 버튼 → "이 시간으로 확정" (TimeBar 내 호스트 전용); 캘린더 셀 빨간 배지 제거; 시연 D-Day 갱신 (2026-05-22).
 - 2026-05-16 ACT 2 자연 표현 + 5/18 기준 갱신: 발화를 날짜 나열 → 자연 한국어 표현으로 교체; 5/18(월) 촬영일 기준 날짜 환산 및 vote_card 슬롯 후보 추가.
+- 2026-05-16 정합성 7건 fix (D-1~D-7): ACT 0.5·5.5 자동화 표기; ROOM_NAME "이번 주 저녁 약속"; 선호 장소 강남 입력·Partial 분기 설명 갱신; guest-join API 경로; ACT 3 슬롯 분산값 (수현 0~5·민수 20~23·예린 21~25·호스트 20~24); TimeBar selector -mine-20/-mine-24.
 
 ---
 
@@ -55,7 +56,7 @@ ACT 5.5  hybrid 토글 + F4 실명 narrator  25s   [Q5 토글 → OOO님 선호 
 
 ### 자동화 step
 
-수동 액션 (시연자 마우스 클릭). `.gstack-demo.py`는 ACT 0.5를 포함하지 않음 — 시연자가 직접 메인 ✨ 위젯 클릭 → 모달 열기.
+자동화 포함 (`--skip-act-0-5` 플래그로 수동 전환 가능). 시연자가 직접 메인 ✨ 위젯 클릭 → 모달 열기.
 
 ### 백엔드 호출 흐름
 
@@ -77,23 +78,23 @@ ACT 5.5  hybrid 토글 + F4 실명 narrator  25s   [Q5 토글 → OOO님 선호 
 
 ### 시나리오 흐름
 
-지민이 플로팅 바에서 모임을 생성하고, 수현·민수는 앱 알림으로 입장, 예린은 카톡 링크로 게스트 입장한다. 선호도 팝업에서 **선호 장소를 비워둔다** — ACT 4 Partial 카드 분기를 유발하는 핵심 조건.
+지민이 플로팅 바에서 모임을 생성하고, 수현·민수는 앱 알림으로 입장, 예린은 카톡 링크로 게스트 입장한다. 선호도 팝업에서 지민은 **선호 장소 `강남` 입력**, 수현·민수는 장소 공란으로 제출한다. ACT 4 Partial 카드는 선호 장소 유무와 무관하게 `partial_mode="time_only"` (시간 확정 후 장소 미확정 상태) 분기로 발행된다.
 
 ### 자동화 step
 
 `.gstack-demo.py` ACT 1 블록 실행:
 - 플로팅 바 "모임 생성" 클릭
-- 모임명 `동아리 종강 회식` / 카테고리 식사 / 친구 체크 (수현·민수)
-- 선호도 팝업: 가능 시간 `평일 저녁`, **선호 장소 공란**
+- 모임명 `이번 주 저녁 약속` / 카테고리 식사 / 친구 체크 (수현·민수)
+- 선호도 팝업: 가능 시간 `평일 저녁`, **선호 장소 `강남` 입력** (지민 preferred_location="강남")
 - InviteModal → 카톡 게스트 링크 복사 (예린용)
-- 수현·민수: 알림 클릭 → 입장 + 선호도 (장소 공란)
+- 수현·민수: 알림 클릭 → 입장 + 선호도 (장소 공란 — best_location 미등록)
 - 예린: 카톡 링크 → 닉네임 `예린` → 게스트 입장 (`rooms.py:202~244`, synthetic email `guest-{uuid12}@maedeup.local`, `is_guest=True`)
 
 ### 백엔드 호출 흐름
 
 1. `POST /api/v1/rooms` → room 생성, `RoomMember.role=owner`
 2. 수현·민수: `POST /api/v1/rooms/{id}/members`
-3. 예린: `POST /api/v1/rooms/{id}/guests/join` (`rooms.py:178~298`) → JWT 발급
+3. 예린: `POST /api/v1/rooms/{id}/guest-join` (`rooms.py:176~298`) → JWT 발급
 4. 각 멤버: `POST /api/v1/meetings/preferences` → `MeetingPreference` upsert (장소 공란 상태)
 
 ### 발표자 narration
@@ -273,13 +274,16 @@ ACT 2에서 이어지는 자동 흐름 — 추가 step 없음. `.gstack-demo.py`
 
 **step 2**: 게스트 3명이 각자 WS로 `time_selection` 송신 (자동화 시뮬레이션)
 - WS URI: `ws://localhost:8000/ws/social/{room_id}?token={게스트_token}`
-- payload: `{"type":"time_selection","date":"YYYY-MM-DD","start":18,"end":23}`
+- 수현: `{"type":"time_selection","date":"YYYY-MM-DD","start":0,"end":5}` (오전 9:00~11:30)
+- 민수: `{"type":"time_selection","date":"YYYY-MM-DD","start":20,"end":23}` (오후 7:00~8:30)
+- 예린: `{"type":"time_selection","date":"YYYY-MM-DD","start":21,"end":25}` (오후 7:30~9:30)
 - 효과: TimeBar "다른 분들" row가 차례로 파란색으로 채워짐 (`peer_time_selection` broadcast)
 - 게스트 사이 2.5초 간격, 3명 완료 후 4초 시청
 
 **step 3**: 호스트가 Playwright로 TimeBar 슬롯 클릭 (시연 핵심 시각화)
-- selector: `[id$="-mine-18"]` (start), `[id$="-mine-23"]` (end)
-- aria-label fallback: `"내 시간 18:00"`, `"내 시간 20:30"`
+- selector: `[id$="-mine-20"]` (start), `[id$="-mine-24"]` (end)
+- aria-label fallback: `"내 시간 19:00"`, `"내 시간 21:00"`
+- 호스트 WS 송신: `{"type":"time_selection","date":"YYYY-MM-DD","start":20,"end":24}` (오후 7:00~9:00)
 - start 클릭 후 0.8초 (시연 페이스), end 클릭
 - 효과: "내 시간" row + "전원" row 초록색 활성 (consensus 도달)
 - 클릭 후 5초 시청
@@ -441,7 +445,7 @@ ACT 3 확정에서 자동 이어짐 — 별도 자동화 step 없음. 확정 직
 
 ### 자동화 step
 
-수동 액션 (시연자 클릭). `.gstack-demo.py`에 미포함.
+자동화 포함 (`--skip-act-5-5` 플래그로 수동 전환 가능). 단 `PREFERENCE_TOGGLE_ENABLED=false` 환경에서는 토글 미노출로 자동 BACKUP 스킵.
 
 지민이 PlaceRecommendationCard의 `[그룹 다수결] [내 선호]` 토글 중 **"내 선호"** 클릭.
 

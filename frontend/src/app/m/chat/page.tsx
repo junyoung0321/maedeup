@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -62,9 +62,8 @@ export default function ChatListPage() {
   return (
     <div
       style={{
-        width: 390,
-        height: 844,
-        overflow: "clip",
+        width: "100%",
+        height: "844px",
         background: "#ffffff",
         display: "flex",
         flexDirection: "column",
@@ -177,9 +176,10 @@ export default function ChatListPage() {
             </span>
             <div style={{ display: "flex", gap: 8 }}>
               {[
-                { icon: Calendar, label: "일정 관리" },
+                { icon: Calendar, label: "일정 조율" },
                 { icon: MapPin, label: "장소 추천" },
-                { icon: Users, label: "모임 매칭" },
+                { icon: Search, label: "모임 탐색" },
+                { icon: Users, label: "모임 관리" },
               ].map((chip) => (
                 <div
                   key={chip.label}

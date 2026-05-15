@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -86,7 +86,7 @@ export default function ExplorePage() {
     <div
       style={{
         width: "100%",
-        minHeight: "100svh",
+        height: "844px",
         background: "#ffffffff",
         display: "flex",
         flexDirection: "column",
@@ -246,7 +246,7 @@ export default function ExplorePage() {
 
         {/* aiEntry — AI 일정 조율 진입 카드 */}
         <div
-          onClick={() => router.push("/m/chat")}
+          onClick={() => router.push("/m/ai-recommend")}
           style={{
             borderRadius: 16,
             background: "linear-gradient(-225deg, #4f46e5 0%, #7c3aed 50%, #a855f7 100%)",
@@ -281,7 +281,7 @@ export default function ExplorePage() {
                 color: "#ffffff",
               }}
             >
-              AI 일정 조율 시작하기
+              AI 빠른 추천 보고서
             </span>
             <span
               style={{
@@ -291,7 +291,7 @@ export default function ExplorePage() {
                 color: "#ffffffcc",
               }}
             >
-              채팅방에서 AI가 최적 시간을 찾아드려요
+              모임 조건 설정 후 AI가 장소를 추천해드려요
             </span>
           </div>
           <ChevronRight size={20} color="#ffffffcc" />

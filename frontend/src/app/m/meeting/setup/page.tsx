@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -103,7 +103,7 @@ function MeetingSetupContent() {
     <div
       style={{
         width: "100%",
-        height: "100dvh",
+        height: "844px",
         background: "#f8fafc",
         display: "flex",
         flexDirection: "column",

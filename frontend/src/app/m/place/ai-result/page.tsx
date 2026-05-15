@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -46,12 +46,24 @@ function AiResultPageContent() {
 
   useEffect(() => {
     if (authLoading || !user) return;
+    const district = wizard.locationPath?.split(" > ").pop()?.trim() ?? "";
     const cat = encodeURIComponent(wizard.foodCategory ?? "한식");
-    apiFetch<NearbyPlacesResponse>(`/api/v1/recommendations/nearby-places?category=${cat}&limit=5`)
-      .then(setPlacesData)
-      .catch(() => null)
-      .finally(() => setLoading(false));
-  }, [authLoading, user, wizard.foodCategory]);
+
+    const run = async () => {
+      if (district) {
+        await apiFetch("/api/v1/users/me/preferences", {
+          method: "PATCH",
+          body: JSON.stringify({ home_base: district }),
+        }).catch(() => null);
+      }
+      const data = await apiFetch<NearbyPlacesResponse>(
+        `/api/v1/recommendations/nearby-places?category=${cat}&limit=5`
+      ).catch(() => null);
+      setPlacesData(data);
+    };
+
+    run().finally(() => setLoading(false));
+  }, [authLoading, user, wizard.foodCategory, wizard.locationPath]);
 
   function handleSelect(place: NearbyPlace) {
     const withReason: NearbyPlace = placesData?.reason
@@ -65,7 +77,7 @@ function AiResultPageContent() {
 
   const places = placesData?.places ?? [];
   const top = places[0] ?? null;
-  const rest = places.slice(1, 2);
+  const rest = places.slice(1);
 
   const sumItems = [
     { label: "종류", value: wizard.meetingType ?? "회식" },
@@ -79,7 +91,7 @@ function AiResultPageContent() {
     <div
       style={{
         width: "100%",
-        height: "100dvh",
+        height: "844px",
         background: "#f8fafc",
         display: "flex",
         flexDirection: "column",

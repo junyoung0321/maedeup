@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -25,6 +25,7 @@ function CityPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const roomId = searchParams.get("roomId") ?? "";
+  const from = searchParams.get("from") ?? "";
 
   const [province, setProvince] = useState("");
   const [selected, setSelected] = useState("");
@@ -52,14 +53,15 @@ function CityPageContent() {
         JSON.stringify({ ...prev, city: selected, district: "" })
       );
     } catch {}
-    router.push(`/m/place/district?roomId=${roomId}`);
+    const fromParam = from ? `&from=${from}` : "";
+    router.push(`/m/place/district?roomId=${roomId}${fromParam}`);
   }
 
   return (
     <div
       style={{
         width: "100%",
-        height: "100dvh",
+        height: "844px",
         background: "#f8fafc",
         display: "flex",
         flexDirection: "column",

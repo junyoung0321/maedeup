@@ -11,7 +11,11 @@ logger = logging.getLogger(__name__)
 
 QuickKind = Literal["schedule", "place", "schedule+place", "general"]
 
-_SCHEDULE_RE = re.compile(r"(일정|날짜|언제|시간).*(추천|뽑|정리|제안|잡)", re.IGNORECASE)
+_SCHEDULE_RE = re.compile(
+    r"(일정|날짜|언제|시간).*(추천|뽑|정리|제안|잡|정하|확인|조율|맞추)"
+    r"|(언제\s*(만날|만나|볼|모일|모이|갈|할|보자))",
+    re.IGNORECASE,
+)
 # 해결점 A5-1 보강 (2026-05-07): "강남에서 갈만한 한식집" 같은 자연어 미발동 사각지대 차단.
 # 세 갈래 OR — (1) 장소 키워드 + 추천 동사, (2) cuisine 키워드 단독, (3) 장소 방문 동사 단독.
 _PLACE_RE = re.compile(

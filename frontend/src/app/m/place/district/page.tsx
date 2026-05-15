@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -18,6 +18,7 @@ function DistrictPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const roomId = searchParams.get("roomId") ?? "";
+  const from = searchParams.get("from") ?? "";
 
   const [province, setProvince] = useState("");
   const [city, setCity] = useState("");
@@ -47,7 +48,11 @@ function DistrictPageContent() {
         JSON.stringify({ ...prev, district: selected })
       );
     } catch {}
-    router.push(`/m/meeting/setup?roomId=${roomId}`);
+    if (from === "ai-recommend") {
+      router.push("/m/ai-recommend");
+    } else {
+      router.push(`/m/meeting/setup?roomId=${roomId}`);
+    }
   }
 
   const pathLabel = [province, city].filter(Boolean).join(" > ");
@@ -56,7 +61,7 @@ function DistrictPageContent() {
     <div
       style={{
         width: "100%",
-        height: "100dvh",
+        height: "844px",
         background: "#f8fafc",
         display: "flex",
         flexDirection: "column",

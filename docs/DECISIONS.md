@@ -1,7 +1,7 @@
 # DECISIONS — 매듭 프로젝트 결정 사항
 
-**최종 갱신**: 2026-05-15
-**기준**: spec v1.0 + 코드 PR-X·Y·Z·V·V1.5·V1.5.1·V1.5.2
+**최종 갱신**: 2026-05-15 ~ 2026-05-16
+**기준**: spec v1.0 + PR-X·Y·Z·V·V1.5·V1.5.1·V1.5.2 + 자동 루프 12 라운드 (run12 GREEN)
 
 ---
 
@@ -9,134 +9,137 @@
 
 | # | 항목 | 결정 | 근거 |
 |---|---|---|---|
-| **스코프** | 기능정의서 범위 | **시간 + 장소 통합** (한 spec 트리, 3 파일 분할) | 시간만으론 시연 시나리오 ACT 5 미커버. 분리는 결정 중복 위험 |
-| **파일명** | spec 파일 | `spec-common.md` + `spec-time-coordination.md` + `spec-place-recommendation.md` (PR-V 3분할) | 단일 SoT 원칙. common이 결정·권한·API·비기능 |
-| **동의 모델** | 공유 동의 | **opt-out 유지** (모델 default=True, PR-X 일괄 마이그) | 시연·졸업 발표 우선, PIPA 한계 §8.1에 명시 |
-| **게스트 정책** | 식별 | **방별 이름 기반 pseudo_id** (room_id × name) | 동명이인 분리, 카톡 링크 가입 단순화 |
-| **비기능 위치** | 구조 | **§12 비기능 / §13 부록** 분리 | 가독성·표준 spec 구조 |
-| **백로그 정책** | 시연 후 보완 | **별도 v2 spec 예고** (해결점 P·O·ACT 4·5) | v1.0 출하 우선, v2는 시연 후 |
+| **스코프** | 기능정의서 범위 | 시간 + 장소 통합 (3 파일 분할) | 시간만으론 ACT 5 미커버 |
+| **파일명** | spec 파일 | spec-common + spec-time-coordination + spec-place-recommendation | 단일 SoT 원칙 |
+| **동의 모델** | 공유 동의 | opt-out 유지 (default=True, PR-X 마이그) | 시연·졸업 발표 우선 |
+| **게스트 정책** | 식별 | 방별 이름 기반 pseudo_id (room_id × name) | 동명이인 분리 |
+| **비기능 위치** | 구조 | §12 비기능 / §13 부록 분리 | 가독성 |
+| **백로그 정책** | 시연 후 보완 | v2 spec 예고 (해결점 P·O·ACT 4·5) | v1.0 출하 우선 |
 
 ---
 
 ## 2. Spec Q-시리즈 결정 (16건)
 
-| # | 결정 | 근거 / 적용 |
-|---|---|---|
-| **Q1** | B) 단일 슬롯도 vote_card 발행 | 날짜범위 확정 상태 전제, 명시 동의 의식 부여 (spec §5.1.5·§4.4 F3) |
-| **Q2** | 선호 장소 다수결 → 동률 시 발화자 → 선호 없으면 방장 위치 | F5 4-step (spec §6.17, helpers/places.py `_resolve_place_hint`) |
-| **Q3** | A) 방 멤버 수 사용 (headcount=None fallback) | 단순·일관 (spec §4.4 F2) |
-| **Q5** | hybrid — 그룹 다수결 기본 + 발화자 토글 | Q7=B 메타 키로 노출 (spec §4.2 P3) |
-| **Q6** | A) F1 fallback v1.0 구현 포함 | 시연 S8 차단 해소 (PR-Y1) |
-| **Q7** | B) `preference_source: "group"\|"speaker"` + `preference_toggle_enabled: bool`, vote_card·place 양쪽 | 평면 키, 기존 컨벤션 일관 (PR-Z1·Z2) |
-| **Q7-b** | 방 전체 broadcast — refresh 라우트 신설 | `POST /meetings/{id}/recommendations/refresh` (PR-Z1) |
-| **Q7-c** | C1∨C3∨C4 (게스트 C2 제외) | 게스트도 채팅방 입장 후 선호 설정 가능 (spec §6.13) |
-| **Q8** | A) F1 정렬 = 시간 빠른 순 | 후보는 이미 필터된 상태 가정 (spec §4.4 F1) |
-| **Q9** | A) partial maedeup 후 시간 번복 불가 | 재추천은 별도 경로 (spec §6.9, refresh 라우트 잠금) |
-| **Q10** | C) Gemini prompt에 휴일·요일 라벨 안내 | Kakao Local API는 영업시간 미제공 (spec §6.16, helpers/dates.py 헬퍼 활용) |
-| **Q11** | A) 일괄 True 자동 마이그레이션 | 명시 거부자 포함 (Q-X1) PR-X 적용 |
-| **Q12** | A) headcount fallback에 게스트 포함 | 게스트도 매듭 캘린더 불가능 토글로 거부일 입력 가능 |
-| **Q13** | B) refresh 라우트 권한 = 발화자 + 방장만 | 최소 권한 원칙 (meetings.py refresh route) |
-| **Q14** | C) Redis idempotency 캐시 + 일일 100회 상한 | Gemini quota 보호 (meetings.py rate limit) |
-| **Q15** | A) 토글 narrator = "OOO님 선호 기준" 실명 | 액션 가능성·투명성 (PR-Z narrator 발행) |
-| **Q16** | C) blocker_notification UI = 기본 익명 + 더보기 실명 | 점진 공개·k-anonymity 결합 (PR-Y2 UI) |
-| **Q17** | A) F4 narrator = 실명 (권고 적용) | Q15=A 일관 + 액션 가능성 (spec §9.7) |
-
-### 구현 세부 결정 (Q-X·Q-Y, 7건)
-
-| # | 결정 |
-|---|---|
-| **Q-X1** | 명시 False 거부자 포함 일괄 True 마이그 (Q11=A 엄격 적용) |
-| **Q-X2** | `/m/consent` JWT consent=True면 redirect 유지 (기본 권고) |
-| **Q-X3** | `assistant.py:99` "캘린더 연동: 예/아니오" 토큰 체크 보강 (PR-V1.5에서 구현) |
-| **Q-Y1** | F1 페이로드 형식 = 슬롯별 `unavailable_users`/`available_count`/`total_count` |
-| **Q-Y2** | Q16=C 토글 = 슬롯별 single-expand (`expandedUnavailableSlotId`) |
-| **Q-Y3** | PR-Y는 F1 (케이스 A)만 — 권한 0%·모든 blocked 등은 별도 PR (PR-V1.5에서 추가) |
-| **Q-Y4** | 28일 확장 후에도 0이면 F1 fallback (기본 권고) |
-
-### Q4 점수 통합 공식 (S20 의존)
-
-**결정**: A) `0.4 * ML + 0.3 * Gemini + 0.3 * 거리`
-- ML 가중치 ↑ (학습된 ranker 신뢰)
-- Gemini·거리 동일 비중
-- `_compute_final_score` (place.py)에 구현
-
----
-
-## 3. 운영 결정 (메모리 영구 저장)
-
-### PM 모드 (4 담당)
-**메모리**: `feedback_pm_operating_mode.md`
-
-리더는 **PM 역할만** — 작업 분배·진행 점검·결과 통합·최종 의사결정 제안. 깊은 분석은 4 담당 에이전트에 위임:
-1. 코드 분석 (정적)
-2. 문서/기획 (정적)
-3. 리뷰/리스크 (정적)
-4. **QA — 서비스 런타임 검증** (Bash·Playwright MCP·실서버)
-
-리더 직접 read는 얕은 확인만 (디렉토리 ls·git status·헤더 한두 줄). 본문 분석은 항상 위임.
-
-### Handoff 자동 갱신
-**메모리**: `feedback_handoff_auto_update.md`
-
-PR 완료마다 `docs/handoff/2026-05-14-spec-progress.md` 자동 갱신:
-- §1 결정 누적
-- §2 커밋 표
-- §4 확정 결정
-- §5 미결 결정
-- §6 남은 TODO
-- §9 잠재 충돌
-- §7 다음 명령
-
-별도 사용자 요청 없어도 PR 워크플로 일부.
-
-### QA 운영 규칙
-**메모리**: `feedback_qa_runtime_role.md`
-
-- 실제 명령 실행 전 리더가 범위·위험도 사전 검토
-- **금지**: 운영 데이터·외부 API 대량 호출·시크릿 출력·docker compose down --volumes·파일 수정·git commit/push
-- **시연 환경 운영 규칙 (2026-05-15 신설)**:
-  - `.gstack-demo.py` WSL 실행 금지
-  - 시연은 Windows PowerShell + `.venv\Scripts\python.exe`
-  - QA는 Playwright MCP 또는 CLI로 대체 검증
-- 보고 양식: 재현·기대·실제·로그·원인·심각도
-
-### 원격 푸시 정책
-- 로컬 커밋은 자유 (CLAUDE.md "승인 없이 커밋/푸시 금지" 적용)
-- 푸시는 **사용자 명시 승인 후만** (2026-05-14 사용자 명시 directive)
-
-### Codex 리뷰 활용
-- PR 완료 후 `codex review --uncommitted --title "..."` 자동 호출
-- Codex 발견 P1·P2 → 별도 hotfix 에이전트로 위임
-- 통합 단일 커밋으로 처리
-
----
-
-## 4. 신규 결정 (이번 세션, 6건)
-
 | # | 결정 | 적용 |
 |---|---|---|
-| **N (해결점)** | "다음주 자동 확장"을 audit-findings.md에 N 정식 헤더로 추가 | PR-0 (`494807e`) |
-| **시연 환경** | WSL `.gstack-demo.py` 실행 금지 — Windows .venv로 (BUG-1 처리 방향) | 메모리 영구 저장, CLAUDE.md 갱신 권고 |
-| **PM 4번째 담당 추가** | QA — 서비스 런타임 검증 (Bash·Playwright MCP) | 메모리 영구 저장 |
-| **Codex 리뷰 통합** | 큰 PR 완료 시 codex CLI `review --uncommitted` 권장 | 본 세션 PR-V1.5에 적용 |
-| **§11 rename** | "비기능 (Out of scope)" → "Out of scope + 알려진 한계" (§12 비기능 요구사항과 구분) | PR-V·V1.5 |
-| **3 파일 분할** | `spec-time-and-place.md` 1633줄 → common·time·place 3 파일 | PR-V (`6769400`) |
+| **Q1** | B) 단일 슬롯도 vote_card 발행 | spec §5.1.5·§4.4 F3 |
+| **Q2** | 선호 장소 다수결 → 동률 시 발화자 → 없으면 방장 위치 | F5 4-step (_resolve_place_hint) |
+| **Q3** | A) 방 멤버 수 사용 (headcount=None fallback) | spec §4.4 F2 |
+| **Q5** | hybrid — 그룹 다수결 기본 + 발화자 토글 | Q7=B 메타 키로 노출 |
+| **Q6** | A) F1 fallback v1.0 포함 | PR-Y1 |
+| **Q7** | B) preference_source + toggle_enabled, vote_card·place 양쪽 | PR-Z1·Z2 |
+| **Q7-b** | 방 전체 broadcast — refresh 라우트 신설 | POST /meetings/{id}/recommendations/refresh |
+| **Q7-c** | C1∨C3∨C4 (게스트 C2 제외) | spec §6.13 |
+| **Q8** | A) F1 정렬 = 시간 빠른 순 | spec §4.4 F1 |
+| **Q9** | A) partial maedeup 후 시간 번복 불가 | spec §6.9 |
+| **Q10** | C) Gemini prompt에 휴일·요일 라벨 안내 | spec §6.16 |
+| **Q11** | A) 일괄 True 자동 마이그레이션 | PR-X |
+| **Q12** | A) headcount fallback에 게스트 포함 | 일관성 |
+| **Q13** | B) refresh 라우트 권한 = 발화자 + 방장만 | 최소 권한 |
+| **Q14** | C) Redis idempotency 캐시 + 일일 100회 상한 | Gemini quota 보호 |
+| **Q15** | A) 토글 narrator = "OOO님 선호 기준" 실명 | 액션 가능성·투명성 |
+| **Q16** | C) blocker_notification = 기본 익명 + 더보기 실명 | k-anonymity |
+| **Q17** | A) F4 narrator = 실명 | Q15=A 일관 (코드 미구현 → LIMIT-9) |
+
+**Q4 점수 공식**: `0.4 * ML + 0.3 * Gemini + 0.3 * 거리` (`_compute_final_score` in place.py)
 
 ---
 
-## 5. 잠재 충돌·트레이드오프 (4건, 해소 상태)
+## 3. 자동 루프 결정 (이번 세션, run12 GREEN 기준)
 
-| # | 충돌 | 해소 |
+### 옵션 A — InfoPane VoteCardSection 제거 (run3/라운드5)
+- **결정**: InfoPane에서 VoteCardSection mount 제거. AI 어시스턴트 패널에서만 vote_card 렌더
+- **근거**: InfoPane + AI 패널 중복 노출 시 무한 루프 발생 (setInfoPanePhase 트리거 중복)
+- **구현**: `AiAssistantPane.tsx:531` hideConfirmAction prop 제거, `InfoPane.tsx:341` !scheduleConsensus 조건
+
+### 옵션 B — PREFERENCE_TOGGLE_ENABLED=false (run12)
+- **결정**: `.env`에 `PREFERENCE_TOGGLE_ENABLED=false` → preference_toggle 파이프라인 진입 차단
+- **근거**: ACT 2.5 ScheduleRecommendationCard 슬롯 클릭이 host availability prefill echo back → TimeBar 즉시 unmount race 유발. 근본 원인 추적 전 시연 환경 dormant 처리
+- **구현**: `preference_toggle.py:72-99` 환경변수 조기 반환
+
+### AUTO_CALENDAR_PUSH=false — 시연 환경 default
+- **결정**: Google Calendar 실제 이벤트 생성 비활성화
+- **근거**: 시연 반복 실행 시 캘린더 오염 방지
+- **구현**: `meetings.py:563+867` 2곳 gate 추가, `config.py` AUTO_CALENDAR_PUSH field
+
+### ACT 3 흐름 = TimeBar 합의 (vote_card 직접 확정 X)
+- **결정**: vote_card 슬롯 클릭 → 확정이 아니라 TimeBar 가용 시간 입력 → 방장이 range 선택 → 합의 확정
+- **근거**: 실제 모임 조율 UX와 일치. 각 멤버가 가능한 시간대 제출 → 다수결 overlap → 방장 확정
+- **구현**: ACT 3 5단계 (게스트 WS 송신 + 호스트 Playwright 클릭 + WS 송신 best-effort + A3-2 확정)
+- **SoT**: `docs/handoff/demo-scenario-v3.md`
+
+### demo.py 호스트 = Playwright + WS 송신 병행 패턴
+- **결정**: 호스트 TimeBar 조작은 Playwright (시각 증거) + WS 직접 송신 (ground truth) 병행
+- **근거**: Playwright slot 24 selector 간헐적 실패 (LIMIT-demo-1) → WS fallback이 실질 결과 보장
+- **구현**: `.gstack-demo.py` ACT 3 best-effort WS 송신
+
+### backend majority overlap = compute_majority_slot
+- **결정**: 4인 TimeBar 슬롯 중 과반(≥3명) 겹치는 slot → `manual_chosen_time` 주입
+- **근거**: vote_card best slot은 개인 선호 기반, TimeBar는 가용시간 기반 → 별도 계산 필요
+- **구현**: `agent.py:427-479` compute_majority_slot + manual_chosen_time 주입
+- **결과**: slot 21-23 (19:30~20:30) → 확정 시간 19:30
+
+### all_members_selected debounce 예외
+- **결정**: NX Redis lock + local debounce 둘 다 all_members_selected 트리거에 예외 처리
+- **근거**: debounce가 WS 송신 완료 후 트리거 신호를 묵음 → TimeBar 합의 후 파이프라인 미발동
+- **구현**: `agent.py:758-790`
+
+### TimeBarSelector restoredFromServer ref guard + selectionEnd null 보류
+- **결정**: 서버 복원 값 주입 시 WS 재송신 차단 (ref guard). selectionEnd null이면 broadcast 보류
+- **근거**: 서버 복원 echo back이 다른 멤버의 TimeBar를 덮어쓰는 race 차단
+- **구현**: `TimeBarSelector.tsx:105-213` restoredFromServer ref + selectionEnd null 조건
+
+### backend single-slot 제외 (_is_explicit, start==end)
+- **결정**: TimeBar WS 수신 시 start==end인 단일 슬롯은 _is_explicit() false 처리 → majority 계산 제외
+- **근거**: ACT 2.5 echo back이 single-slot으로 수신되어 majority 오염
+- **주의**: 30분 미팅 단일 슬롯 use case에서 false negative 가능 (TODO #9)
+- **구현**: `social.py:81-92`
+
+---
+
+## 4. 운영 결정 (메모리 영구 저장)
+
+### PM 모드 v2 (4 담당 + 메모리)
+- **코드 작성**: code-writer Sonnet
+- **분석·검증**: analyst / risk-reviewer Opus
+- **QA 런타임**: qa-runtime Sonnet (Playwright MCP, 실서버)
+- **문서**: docs-planner Sonnet
+- 리더는 PM 역할만 — 분배·점검·통합·결정 제안
+
+### 시연 환경 실행 규칙
+- 시연 스크립트: WSL venv `~/.venv-maedeup-demo/bin/python3` (Python 3.12)
+- QA agent: Playwright MCP (MCP chromium 별도 인스턴스)
+- Windows PowerShell 실행도 가능 (`.venv\Scripts\python.exe`)
+
+### 커밋·푸시 정책
+- 커밋: 사용자 명시 승인 후, 단일 commit per 라운드
+- 푸시: 사용자 명시 승인 후만
+
+### Handoff 자동 갱신
+- PR 완료마다 `docs/handoff/2026-05-15-round4-green.md` 갱신
+- 메모리: `feedback_handoff_auto_update.md`
+
+### Codex 리뷰 활용
+- 큰 변경 후 `codex review --uncommitted --title "..."` 권장
+- P1·P2 발견 → hotfix 에이전트 위임 → 단일 커밋
+
+---
+
+## 5. 잠재 충돌·트레이드오프 (해소 + 잔존)
+
+| # | 충돌 | 상태 |
 |---|---|---|
-| **C1** | Q5 hybrid + Q7-b 방 전체 + Q15=A 실명 → 발화자 PII 간접 노출 | spec §3 페이로드에 `toggled_by: user_id` + Q7-c 차단 (구현 완료, v1.6에서 narrator 정밀화 후보) |
-| **C2** | Q9 번복 불가 + Q7-b refresh → partial 상태 토글 시 시간 변경 가능성 | **PR-3.1 §6.9로 해소** (refresh가 partial 시 time_options 잠금 명시) |
-| **C3** | Q1=B 단일 슬롯 + 거부 흐름 미정의 | **PR-3.1 §6.8로 해소** (단일 거부 → rejected_dates 누적 → F1 또는 N) |
-| **~~C4~~** | ~~opt-out 정책 + calendar_consent default=False 모순~~ | **PR-X로 완전 해소** (`9609bee`) |
+| **C1** | Q5 hybrid + Q15=A 실명 → 발화자 PII 간접 노출 | v1.6 narrator 정밀화 후보 |
+| **C2** | Q9 번복 불가 + Q7-b refresh → partial 시 시간 변경 가능성 | §6.9 refresh 잠금으로 해소 |
+| **C3** | Q1=B 단일 슬롯 + 거부 흐름 미정의 | §6.8 rejected_dates 누적으로 해소 |
+| **C4** | opt-out + calendar_consent default=False 모순 | PR-X로 완전 해소 |
+| **C5 (신규)** | PREFERENCE_TOGGLE_ENABLED=false + ACT 2.5 슬롯 클릭 echo back | 옵션 B로 dormant, 근본 원인 미해소 (TODO #8) |
+| **C6 (신규)** | single-slot 제외 + 30분 미팅 use case | 잠재 false negative (TODO #9) |
 
 ---
 
 ## 6. 결정 안건 단일 SoT
 
-**spec-common.md** §결정 안건 표가 모든 Q 결정의 단일 SoT.
-
-PR-V 3분할 후 `spec-time-coordination.md`·`spec-place-recommendation.md`에는 결정 인라인 인용만 (예: "Q1=B 결정"·"Q7-c=C1+C3+C4").
+- **Q-시리즈**: `docs/handoff/spec-common.md` §결정 안건 표
+- **루프 결정**: 본 파일 §3
+- **운영 결정**: 본 파일 §4 + 메모리 (`feedback_pm_operating_mode.md` 등)

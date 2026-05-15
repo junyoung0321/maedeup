@@ -1,8 +1,9 @@
 # SESSION_STATE — 매듭(Maedeup) 프로젝트
 
-**최종 갱신**: 2026-05-15
-**세션 컨텍스트**: spec v1.0 작성 + 미구현 항목 코드화 + Codex 리뷰 + QA 런타임 검증
-**브랜치**: `docs/spec-time-coordination` (origin = `e996bba`, 로컬 미푸시 38+ 커밋)
+**최종 갱신**: 2026-05-15 ~ 2026-05-16
+**세션 컨텍스트**: 자동 루프 12 라운드 — TimeBar 합의 흐름 완성 + run12 GREEN 확정
+**브랜치**: `docs/spec-time-coordination` (origin/main 대비 10 ahead, origin 동기됨)
+**HEAD**: `558c57c`
 
 ---
 
@@ -12,201 +13,240 @@
 - **종류**: 졸업 프로젝트 — AI 모임 조율 플랫폼
 - **핵심 가치**: 채팅으로 흩어진 시간·장소 의사를 자동으로 모아 vote_card / place_recommendation / maedeup_card로 마무리
 - **스택**: Next.js 14 + FastAPI + SQLModel + asyncpg + Redis + LangGraph + Gemini 2.5 Flash + Kakao Local API
-- **현재 상태**: MVP — spec v1.0 완성, 핵심 코드 구현, **시연 직전**
+- **현재 상태**: MVP — spec v1.0 완성, ACT 3 TimeBar 합의 흐름 완성, **시연 직전 (5/19~20)**
 
 ---
 
-## 2. spec 문서 구조 (3 파일 분할, PR-V로 분리됨)
+## 2. git 상태
 
-| 파일 | 분량 | 역할 |
+| 항목 | 값 |
+|---|---|
+| 현재 브랜치 | `docs/spec-time-coordination` |
+| HEAD | `558c57c` |
+| origin 대비 | origin/main 대비 10 ahead (origin/docs/spec-time-coordination 동기) |
+| 별도 로컬 브랜치 | `chore/claude-subagents` (main 기반, 2 commit — sub-agents 5개 + .gitattributes) |
+
+### 오늘 세션 10 commit (최신순)
+| SHA | 메시지 |
+|---|---|
+| `558c57c` | fix(timebar+toggle): restore race + 시연 toggle dormant (run12 GREEN) |
+| `39fd8f9` | fix(demo): act_3_host_click_gap 0.8→2.5s (run11 GREEN) |
+| `7fd7daa` | feat(demo): TimeBar majority overlap + WS race fix (run10 GREEN) |
+| `f56271b` | feat(demo): ACT 3 TimeBar 합의 + UI 완결 + AUTO_CALENDAR_PUSH gate (run7 GREEN) |
+| `1705e69` | docs: round4 GREEN 반영 CLAUDE/TODOS |
+| `a5a4ca5` | docs(handoff): round4 GREEN |
+| `a2e9b16` | fix(demo): ACT 5.5 preference_toggle 시드 보강 (C) |
+| `0f3802b` | fix(demo): ACT 3 confirm 자동 루프 (A1~A5) |
+| `1de7794` | docs: refresh stale CLAUDE.md/HANDOVER.md/TODOS.md |
+| `c8a4a7d` | chore: EOL + .gitignore PNG ignore |
+
+---
+
+## 3. 자동 루프 12 라운드 흐름 요약
+
+| 라운드 | 상태 | 핵심 내용 |
 |---|---|---|
-| `docs/handoff/spec-common.md` | 839줄 | 공통 정책·권한·API·비기능·부록·**결정 안건 SoT** |
-| `docs/handoff/spec-time-coordination.md` | 619줄 | 시간 조율 (§1·S1~S10·§3.1·§4 시간·§6.1~6.13·§10) |
-| `docs/handoff/spec-place-recommendation.md` | 459줄 | 장소 추천 (§1·S11~S20·§3.2~3.4·§4 장소·§6.14~6.18·§10) |
-
-**합계**: 1917줄. 단일 SoT 원칙 — 결정 안건·변경 이력은 `spec-common.md` 한 곳만.
-
----
-
-## 3. 코드 변경 인벤토리 (PR별)
-
-| PR | SHA | 메시지 | 변경량 |
-|---|---|---|---|
-| **PR-X** | `9609bee` | calendar_consent default True + Alembic 마이그 + 게스트 보호 | +372 / -1 |
-| **PR-Y1** | `54e1532` | F1 fallback (다수결 vote_card) 백엔드 + 9 파일 + pytest 8 케이스 | +522 / -3 |
-| **PR-Y2** | `adc444f` | F1 fallback 프론트 UI (배너·배지·슬롯별 더보기 토글) | +132 / -11 |
-| **PR-Z1** | `66110e9` | Q5 hybrid refresh 라우트 + P0-2·3·4 plumbing + 메타 키 + Q7-c | +946 / -4 |
-| **PR-Z2** | `ea759d1` | Q5 hybrid 토글 UI (Schedule·Place 카드) + refresh API 호출 | +255 / -1 |
-| **PR-V** | `6769400` | spec 3 분할 (common·time·place) + 외부 문서 cross-ref | +1943 / -1646 |
-| **PR-V1.5** | `90131f2` | spec v1.0 미구현 12건 + Codex P1·P2 통합 | +1342 / -54 |
-| **PR-V1.5.1** | `1892b50` | QA P2 hotfix — alembic sqlite·JSON dialect·SENTINEL | +60 / -11 |
-| **PR-V1.5.2** | `aaec29d` | P3 hotfix — alembic batch_alter_table 7파일 + JSON·test seed | +208 / -193 |
-
----
-
-## 4. 핵심 파일 경로
-
-### 백엔드 (LangGraph 파이프라인)
-- `backend/app/services/pipeline/state.py` — GraphState 정의 (preference_*·rejected_places·zero_slot_reason 등)
-- `backend/app/services/pipeline/graph.py` — `_route_from_start` (trigger_reason 5분기: stalemate/conclusion/all_members/direct_request/**preference_toggle**)
-- `backend/app/services/pipeline/nodes/entity.py` — date_hint·place_hint·cuisine·rejected_dates·**rejected_places** 추출
-- `backend/app/services/pipeline/nodes/slot.py` — slot_filling 분기 (4 trigger × partial_mode)
-- `backend/app/services/pipeline/nodes/function_call.py` — `_safe_search_place` + 0슬롯 reason 분기
-- `backend/app/services/pipeline/nodes/vote_card.py` — payload + zero_slot_reason narrator + Q7 메타
-- `backend/app/services/pipeline/nodes/place.py` — `_compute_final_score` (Q4=A) + `_sort_by_final_score` + F7·F9
-- `backend/app/services/pipeline/nodes/maedeup.py` — 확정/partial 카드 발행
-- `backend/app/services/pipeline/helpers/places.py` — `_detect_cuisine_type` (list 반환) + `_resolve_place_hint` (F5 4-step) + `_filter_out_rejected_places`
-- `backend/app/services/pipeline/helpers/preference_toggle.py` — Q7-c lightweight 비교 + meta 계산
-- `backend/app/services/pipeline/helpers/preferences.py` — `load_requester_context` (P0-2·3·4)
-- `backend/app/services/kakao_maps.py` — `KakaoApiError` + 5xx/timeout/network 분리
-- `backend/app/api/routes/meetings.py` — refresh 라우트 (`POST /{id}/recommendations/refresh`, Q13·Q14·Q7-c·Q15)
-- `backend/app/api/routes/assistant.py:99` — 토큰 체크 보강 (Q-X3)
-- `backend/app/models/user.py` — `calendar_consent default=True` + `is_ai_filled` dialect-agnostic
-- `backend/app/models/meeting.py` — `google_event_ids` dialect-agnostic
-- `backend/alembic/env.py` — sqlite 분기 (`_is_sqlite_url` + 동기 run_sync_migrations)
-- `backend/alembic/versions/e2a3b4c5d6f7_set_calendar_consent_default_true.py` — PR-X 신규
-- `backend/alembic/versions/*` — 7 파일에 `batch_alter_table` 패턴 적용 (PR-V1.5.2)
-
-### 프론트엔드
-- `frontend/src/hooks/useAgentWebSocket.ts` — VoteCardPayload·PlaceRecommendationPayload 타입 (preference_source·toggle_enabled·available_count·unavailable_users 등)
-- `frontend/src/components/meeting/ScheduleRecommendationCard.tsx` — F1 fallback UI + Q5 hybrid 토글
-- `frontend/src/components/meeting/PlaceRecommendationCard.tsx` — Q5 hybrid 토글
-
-### 테스트 (신규 12 파일, 91/91 PASS)
-- `backend/tests/integration/test_user_consent_default.py` (6 케이스, PR-X)
-- `backend/tests/unit/test_majority_fallback.py` (4, PR-Y1)
-- `backend/tests/integration/test_f1_fallback_pipeline.py` (3, PR-Y1)
-- `backend/tests/unit/test_preference_toggle.py` (18, PR-Z1+V1.5)
-- `backend/tests/integration/test_refresh_route.py` (10, PR-Z1+V1.5)
-- `backend/tests/unit/test_rejected_places.py` (8, PR-V1.5)
-- `backend/tests/unit/test_cuisine_ambiguity.py` (6, PR-V1.5)
-- `backend/tests/unit/test_score_integration.py` (12, PR-V1.5)
-- `backend/tests/unit/test_kakao_error_handling.py` (8, PR-V1.5)
-- `backend/tests/unit/test_resolve_place_hint.py` (9, PR-V1.5)
-- `backend/tests/unit/test_assistant_consent_message.py` (5, PR-V1.5)
-- `backend/tests/unit/test_zero_slot_reason.py` (3, PR-V1.5)
-
-### 핸드오프·메타 문서
-- `docs/handoff/2026-05-14-spec-progress.md` — 진행 핸드오프 (v17까지 갱신)
-- `docs/handoff/2026-05-14-spec-review-guide.md` — 외부 리뷰 가이드 (심사위원·협업자용)
-- `docs/handoff/2026-05-14-spec-v2-plan.md` — v2 spec 계획 (38 항목)
-- `docs/handoff/audit-findings.md` — 해결점 A~P (N PR-0에서 추가)
-- `docs/handoff/demo-scenario.md` — 시연 시나리오 SoT (ACT 0~6, 3분30초)
-- `docs/handoff/2026-05-13-recommend-input-catalog.md` — 입력 카탈로그 6 카테고리·P0/P1/P2
-
-### 메모리 (영구 저장, `/home/cyun0407/.claude/projects/-mnt-c-Users-cyun0-git-maedeup/memory/`)
-- `feedback_pm_operating_mode.md` — PM 4담당 운영 모드
-- `feedback_handoff_auto_update.md` — PR 완료 시 handoff 자동 갱신
-- `feedback_qa_runtime_role.md` — QA 4번째 담당 + Playwright MCP·CLI + 시연 환경 운영 규칙
-
-### 시연 스크립트
-- `.gstack-browser-launch.py` — Chromium CDP 띄우기 + JWT 주입
-- `.gstack-demo.py` — ACT 1·2·4·5 자동화 (ACT 3·6 스킵)
-- `.gstack-demo-integrated.py` — 통합 버전
-- `.gstack-demo-token` — JWT 저장 (gitignore)
-
-**🔴 중요**: 시연 스크립트는 **WSL이 아니라 Windows PowerShell + `.venv\Scripts\python.exe`**로 실행 (BUG-1 해결 방향, 사용자 결정)
+| run1 | RED | ACT 3 fallback 실패 |
+| run2 | RED | 계속 실패 |
+| run3 | GREEN | 라운드 4 PASS — ACT 3 첫 통과 |
+| (사용자) | - | vote 카드 InfoPane 중복 발견 |
+| 옵션 A | - | InfoPane VoteCardSection 롤백 + AI 패널 확정 버튼 복구 |
+| 라운드 5 | GREEN | placeholder lock 해소 |
+| (사용자) | - | UI 무한 루프 발견 |
+| 라운드 5 fix | - | setInfoPanePhase("timeConfirmed") 적용 |
+| (사용자) | - | TimeBar UI 실효 X 발견 |
+| ACT 3 재작성 | - | TimeBar 합의 흐름 5단계 (게스트 WS + 호스트 Playwright + WS 송신 + A3-2 확정) |
+| run7 | GREEN | 시각 체크리스트 15 항목 GREEN |
+| (사용자) | - | 시간 결정 무시 발견 |
+| 시나리오 분산 | - | backend majority overlap (compute_majority_slot) 추가 |
+| run8/9 | RED | debounce + Playwright slot 24 selector 실패 |
+| - | - | 호스트 WS 송신 + debounce NX lock 예외 적용 |
+| run10 | GREEN | WS race 해소 |
+| (사용자) | - | chromium stale cache 발견 |
+| - | - | chromium 재시작 + host_click_gap 2.5s |
+| run11 | GREEN | gap 조정 통과 |
+| (사용자) | - | TimeBar 즉시 사라짐 회귀 발견 |
+| qa agent | - | ACT 2.5 prefill 자동 echo back root cause 발견 |
+| - | - | frontend restore guard + backend single-slot 제외 + PREFERENCE_TOGGLE_ENABLED=false |
+| **run12** | **GREEN** | TimeBar 16초 mount 유지, 확정 2026-06-01 19:30 |
 
 ---
 
-## 5. 실행 명령
+## 4. run12 GREEN 핵심 증거
 
-### Docker (WSL에서 `sg docker -c` 우회 필요)
+- TimeBar 16초간 mount 유지 (호스트 1st 클릭 후 사라짐 X)
+- 2nd 클릭 (range 완성) 후만 unmount → consensus
+- 확정 시간: **2026-06-01 (월) 19:30 (오후 7:30)**
+- backend 로그: `[TIMEBAR] majority slot injected room=109 21..23`
+- ERROR 0건, AUTO_CALENDAR_PUSH skip, PREFERENCE_TOGGLE_ENABLED dormant
+- 시뮬 시나리오: 게스트 수현 오전(0-5), 민수 7-8:30(20-23), 예린 7:30-9:30(21-25), 호스트 7-9(20-24) → 4명 중 3명 겹침 slot 21-23 = 오후 7:30~8:30 → backend 19:30 확정
+
+---
+
+## 5. 적용된 fix 누적 (15+ 변경)
+
+### Backend
+- `backend/app/api/routes/meetings.py:323-334,636` — pending-vote.current_user_vote + vote_update.user_votes
+- `backend/app/api/routes/meetings.py:563+867` — AUTO_CALENDAR_PUSH gate (confirm + place-confirm)
+- `backend/app/core/config.py` — AUTO_CALENDAR_PUSH field
+- `backend/app/api/ws/agent.py:427-479` — TimeBar majority overlap (compute_majority_slot) → manual_chosen_time 주입
+- `backend/app/api/ws/agent.py:758-790` — all_members_selected 트리거 debounce 예외
+- `backend/app/api/ws/social.py:81-92` — _is_explicit() + start==end 단일 슬롯 제외
+- `backend/app/services/pipeline/helpers/preference_toggle.py:72-99` — PREFERENCE_TOGGLE_ENABLED 환경변수 검사
+- `backend/scripts/seed_demo_personal_data.py` — 방장 home_base "신촌" + food 차별화 (C1·C3·C4 회피)
+
+### Frontend
+- `frontend/src/contexts/MeetingContext.tsx:333-369` — setVoteCard 무조건 awaiting 해제 + setVoteUpdate same meeting 시 해제
+- `frontend/src/components/meeting/InfoPane.tsx:341` — TimeBar mount 조건 `!scheduleConsensus`
+- `frontend/src/components/meeting/InfoPane.tsx:388-392` — A3-2 클릭 시 setInfoPanePhase("timeConfirmed")
+- `frontend/src/components/meeting/AiAssistantPane.tsx:525` — vote_card 렌더 조건에 phase 검사 (timeConfirmed/placeRecommendation/placeConfirmed/done hide)
+- `frontend/src/components/meeting/AiAssistantPane.tsx:531` — hideConfirmAction prop 제거 (옵션 A)
+- `frontend/src/components/meeting/ScheduleRecommendationCard.tsx` — hideConfirmAction prop 정의·사용 제거 + voteUpdate 구독 + vote count 시각화
+- `frontend/src/components/meeting/TimeBarSelector.tsx:105-213` — restoredFromServer ref guard + selectionEnd null 시 broadcast 보류
+- `frontend/src/hooks/useAgentWebSocket.ts:57-67` — VoteCardPayload.current_user_vote + VoteUpdatePayload.user_votes 타입
+
+### Demo
+- `.gstack-demo.py` ACT 3 통째 재작성 (5단계: 게스트 WS + 호스트 Playwright + WS 송신 best-effort + A3-2 확정)
+- 페이스: act_3_vote_gap 2.5s, act_3_after_votes 4s, act_3_host_click_gap 2.5s, act_3_after_host_vote 5s, act_3_after_confirm_click 5s
+
+### .env (gitignore, 시연 환경)
+- `AUTO_CALENDAR_PUSH=false`
+- `PREFERENCE_TOGGLE_ENABLED=false`
+- `DEMO_FALLBACK_ENABLED=true`
+
+---
+
+## 6. 핵심 파일 경로
+
+### Backend (LangGraph 파이프라인)
+| 파일 | 역할 |
+|---|---|
+| `backend/app/services/pipeline/state.py` | GraphState 정의 |
+| `backend/app/services/pipeline/graph.py` | _route_from_start (5분기) |
+| `backend/app/services/pipeline/nodes/entity.py` | date_hint·place_hint·cuisine·rejected 추출 |
+| `backend/app/services/pipeline/nodes/slot.py` | slot_filling 분기 |
+| `backend/app/services/pipeline/nodes/function_call.py` | _safe_search_place + 0슬롯 분기 |
+| `backend/app/services/pipeline/nodes/vote_card.py` | payload + zero_slot_reason narrator |
+| `backend/app/services/pipeline/nodes/place.py` | _compute_final_score + F7·F9 |
+| `backend/app/services/pipeline/nodes/maedeup.py` | 확정/partial 카드 발행 |
+| `backend/app/services/pipeline/helpers/places.py` | _detect_cuisine_type + _resolve_place_hint + _filter_out_rejected |
+| `backend/app/services/pipeline/helpers/preference_toggle.py` | Q7-c + PREFERENCE_TOGGLE_ENABLED |
+| `backend/app/services/pipeline/helpers/preferences.py` | load_requester_context (P0-2·3·4) |
+| `backend/app/api/ws/agent.py` | TimeBar majority overlap + debounce 예외 |
+| `backend/app/api/ws/social.py` | _is_explicit() + single-slot 제외 |
+| `backend/app/api/routes/meetings.py` | AUTO_CALENDAR_PUSH gate + refresh 라우트 |
+| `backend/app/core/config.py` | AUTO_CALENDAR_PUSH / PREFERENCE_TOGGLE_ENABLED 필드 |
+| `backend/scripts/seed_demo_personal_data.py` | 시연 personal data 시드 (방장 신촌 + food) |
+
+### Frontend
+| 파일 | 역할 |
+|---|---|
+| `frontend/src/contexts/MeetingContext.tsx` | setVoteCard awaiting 해제 + voteUpdate 구독 |
+| `frontend/src/components/meeting/InfoPane.tsx` | TimeBar mount 조건 + timeConfirmed phase |
+| `frontend/src/components/meeting/AiAssistantPane.tsx` | vote_card phase 검사 렌더 조건 |
+| `frontend/src/components/meeting/ScheduleRecommendationCard.tsx` | vote count 시각화 + hideConfirmAction 제거 |
+| `frontend/src/components/meeting/TimeBarSelector.tsx` | restore guard + selectionEnd null 보류 |
+| `frontend/src/hooks/useAgentWebSocket.ts` | VoteCardPayload / VoteUpdatePayload 타입 |
+
+### Demo / 시연
+| 파일 | 역할 |
+|---|---|
+| `.gstack-demo.py` | 풀 시나리오 자동화 (ACT 1~5.5) |
+| `.gstack-browser-launch.py` | Chromium CDP 9222 기동 + JWT 주입 |
+| `.gstack-demo-token` | JWT 저장 (gitignore) |
+| `docs/handoff/demo-scenario-v3.md` | 시연 시나리오 SoT |
+| `docs/handoff/2026-05-15-round4-green.md` | 자동 루프 진행 기록 |
+| `docs/handoff/audit-findings.md` | 해결점 A~P |
+
+### Sub-agents (로컬 브랜치 `chore/claude-subagents`)
+| 파일 | 역할 |
+|---|---|
+| `.claude/agents/code-writer.md` | Sonnet — 코드 구현 |
+| `.claude/agents/analyst.md` | Opus — 정적 분석 |
+| `.claude/agents/qa-runtime.md` | Sonnet — 런타임 검증 |
+| `.claude/agents/risk-reviewer.md` | Opus — 리스크 검토 |
+| `.claude/agents/docs-planner.md` | Sonnet — 문서 작성 |
+
+---
+
+## 7. 실행 명령어
+
+### Docker (WSL)
 ```bash
 sg docker -c "docker compose up -d"
 sg docker -c "docker compose ps"
+sg docker -c "docker restart maedeup-api"
+```
+
+### 시연 자동화 (WSL venv, 터미널 2개)
+```bash
+# 터미널 1 — Chromium CDP 기동
+~/.venv-maedeup-demo/bin/python3 .gstack-browser-launch.py
+
+# 터미널 2 — 풀 시나리오 실행
+~/.venv-maedeup-demo/bin/python3 .gstack-demo.py
+```
+
+### 시연 D-1 준비
+```bash
+# personal data 시드 (room ID는 시연 방 ID로 교체)
+sg docker -c "docker exec maedeup-api python -m scripts.seed_demo_personal_data --room <ROOM_ID>"
+# JWT 갱신 (만료 의심 시)
+# 로그인 후 localStorage의 token 값을 .gstack-demo-token에 저장
+```
+
+### 기타
+```bash
+# Intent seed
+curl -X POST http://localhost:8000/api/v1/intents/seed
+# Alembic
 sg docker -c "docker exec maedeup-api alembic upgrade head"
-sg docker -c "docker exec maedeup-api alembic current"
 ```
-
-### Pytest (전체 신규 12 파일, 91/91 PASS 확인됨)
-```bash
-sg docker -c "docker exec maedeup-api pytest \
-  tests/integration/test_user_consent_default.py \
-  tests/unit/test_majority_fallback.py \
-  tests/integration/test_f1_fallback_pipeline.py \
-  tests/unit/test_preference_toggle.py \
-  tests/integration/test_refresh_route.py \
-  tests/unit/test_rejected_places.py \
-  tests/unit/test_cuisine_ambiguity.py \
-  tests/unit/test_score_integration.py \
-  tests/unit/test_kakao_error_handling.py \
-  tests/unit/test_resolve_place_hint.py \
-  tests/unit/test_assistant_consent_message.py \
-  tests/unit/test_zero_slot_reason.py -v --tb=short"
-```
-
-### 시연 (Windows PowerShell에서, **WSL X**)
-```powershell
-# 터미널 1
-python .gstack-browser-launch.py
-
-# 터미널 2 (별도 셸)
-python .gstack-demo.py
-# 또는 빠른 검증: python .gstack-demo.py --fast
-```
-
-### Codex 리뷰
-```bash
-# staged 변경 검토
-codex review --uncommitted --title "..."
-# 또는 특정 커밋
-codex review --commit <SHA> --title "..." "<prompt>"
-```
-
-### QA Playwright MCP (작동 확인됨)
-- `mcp__playwright__browser_navigate` (URL = localhost:3000)
-- `mcp__playwright__browser_snapshot` / `browser_take_screenshot`
-- `mcp__playwright__browser_console_messages` (level: error/warning/info/debug)
-- `mcp__playwright__browser_network_requests`
-- `mcp__playwright__browser_click` / `browser_type` / `browser_fill_form`
-- `mcp__playwright__browser_evaluate` (JS 직접 실행, localStorage 주입 등)
 
 ---
 
-## 6. 운영 모드 (PM 4 담당 + QA)
-
-리더(Claude)는 **PM 역할만**:
-- 작업 분배·진행 점검·결과 통합·최종 의사결정 제안
-- 깊은 분석은 **항상 4 담당 에이전트에 위임**
-
-**4 담당**:
-1. **코드 분석 담당** — 정적, Read·grep
-2. **문서/기획 담당** — 정적, Read
-3. **리뷰/리스크 담당** — 정적, Read
-4. **QA (서비스 런타임 검증)** — Bash·Playwright MCP·실서버 실행
-
-**자동 워크플로**:
-- PR 완료마다 `2026-05-14-spec-progress.md` 자동 갱신 (메모리에 영구 저장)
-- Codex 리뷰는 user가 명시 시 codex CLI `review --uncommitted`
-- 원격 푸시 금지 (사용자 직접 승인 시에만)
-
----
-
-## 7. 환경 상태
+## 8. 환경 상태
 
 | 항목 | 상태 |
 |---|---|
-| Docker WSL 통합 | ✅ 활성 (`sg docker -c` 우회 필요 — 사용자 docker 그룹 미가입) |
-| 4 컨테이너 | ✅ healthy (api·frontend·postgres·redis) |
-| Alembic head | ✅ `e2a3b4c5d6f7` (PR-X 마이그 적용) |
-| pytest 신규 12 파일 | ✅ 91/91 PASS |
-| Playwright MCP | ✅ 작동 (browser_navigate 성공, Page Title "매듭 (Maedeup)") |
-| Codex CLI | ✅ 0.118.0 (ChatGPT 로그인 cyun0407@gmail.com) |
+| Docker 4 컨테이너 | healthy (api·frontend·postgres·redis) |
+| chromium | pid 31337, CDP 9222 LISTEN (frontend rebuild 후 fresh) |
+| WSL venv | `~/.venv-maedeup-demo/bin/python3` (Python 3.12, websockets 16, playwright 1.59, chromium 1217) |
+| JWT | `.gstack-demo-token` (5/13 생성, 401 0건이라 유효) |
+| AUTO_CALENDAR_PUSH | false (시연 환경) |
+| PREFERENCE_TOGGLE_ENABLED | false (dormant) |
+| DEMO_FALLBACK_ENABLED | true |
 
 ---
 
-## 8. compact 후 첫 읽기 순서
+## 9. 시연 정보
 
-복구할 다른 Claude(또는 자신)는 다음 순서로 읽기:
+- **시연 일정**: 5/19 ~ 5/20 (졸업 발표)
+- **시나리오 SoT**: `docs/handoff/demo-scenario-v3.md`
+- **ACT 구조**: ACT 0(소개) → 1(방 생성) → 2(채팅 stalemate + vote_card) → 3(TimeBar 합의 → 19:30 확정) → 4(partial confirm) → 5(장소 추천·확정) → 5.5(preference_toggle dormant) → 6(extractor)
+- **확정 시간**: 2026-06-01 (월) 오후 7:30
+- **핵심 장면**: TimeBar 4인 겹침 시각화 → 호스트 range 선택 → "일정 확정" 클릭
 
-1. **본 파일 (`docs/SESSION_STATE.md`)** — 전체 컨텍스트
-2. **`docs/DECISIONS.md`** — 30+ 결정 사항·근거
-3. **`docs/TODO.md`** — 진행 중·남은 작업
-4. **`docs/BUGS.md`** — 발견 버그·우선순위·해소 상태
-5. **`docs/handoff/2026-05-14-spec-progress.md`** — 진행 핸드오프 (커밋 표·상세)
-6. **`docs/handoff/spec-common.md`** — 공통 정책·권한·API (필요 시)
-7. **`docs/handoff/spec-time-coordination.md` / `spec-place-recommendation.md`** — 도메인별 (필요 시)
-8. **메모리** (`feedback_pm_operating_mode.md` / `feedback_qa_runtime_role.md` / `feedback_handoff_auto_update.md`) — 운영 규칙
+---
 
-`git log --oneline -40`로 최근 커밋 확인하면 빠르게 컨텍스트 잡힘.
+## 10. 운영 모드
+
+- **PM (리더)**: 분배·점검·통합·결정 제안만. 깊은 분석은 sub-agent 위임
+- **코드 작성**: code-writer (Sonnet)
+- **분석·검증**: analyst / risk-reviewer (Opus)
+- **QA 런타임**: qa-runtime (Sonnet, Playwright MCP)
+- **문서**: docs-planner (Sonnet)
+- **커밋 정책**: 사용자 명시 승인 후만, 단일 commit per 라운드
+- **푸시 정책**: 사용자 명시 승인 후만
+
+---
+
+## 11. compact 후 읽기 순서
+
+1. `docs/SESSION_STATE.md` — 전체 컨텍스트 (본 파일)
+2. `docs/DECISIONS.md` — 확정 결정 사항
+3. `docs/TODO.md` — 남은 작업
+4. `docs/BUGS.md` — 잔존 버그 + 우선순위
+5. `docs/handoff/demo-scenario-v3.md` — 시연 SoT
+6. `docs/handoff/2026-05-15-round4-green.md` — 자동 루프 진행 기록
+7. `git log --oneline -15` — 최근 commit

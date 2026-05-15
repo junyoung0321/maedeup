@@ -2,16 +2,26 @@
 
 ## 진행 중인 작업
 세션 시작 시 `docs/handoff/` 폴더의 가장 최근 문서를 먼저 확인하세요.
-**현재 task**: 시연 직전 — 해결점 A~P 적용 완료, 풀 시나리오 자동화 검증 통과.
-시연 자동화: `python .gstack-browser-launch.py` (터미널 1) + `python .gstack-demo.py` (터미널 2). 사전에 `.gstack-demo-token` 파일에 JWT 저장.
-시연 후 보완 항목:
+**현재 task**: spec v1.0 (§1~§13) 완성 + PR-V1.5 머지 + QA dry-run v2 PASS + `.gstack-demo.py` v3 풀 자동화 완료. **다음**: v2 spec 본문 작성 (`docs/handoff/2026-05-14-spec-v2-plan.md` 38 항목 기반) + 해결점 O·P 구현.
+시연 자동화 (WSL venv v2, 2026-05-15):
+- 터미널 1: `~/.venv-maedeup-demo/bin/python3 .gstack-browser-launch.py`
+- 터미널 2: `~/.venv-maedeup-demo/bin/python3 .gstack-demo.py` (또는 `--fast`)
+- 사전에 `.gstack-demo-token` 파일에 JWT 저장.
+- Windows 발표자 환경 병행: `.venv\Scripts\python.exe .gstack-demo.py`
+미해결 backlog:
 1. 해결점 P 정교화 (번복 처리, 게스트 정책)
-2. 해결점 O (정규식 단축 사각지대)
+2. 해결점 O (정규식 단축 사각지대) — spec v2 옵션 B 권고
 3. ACT 4 confirm 후속 메시지 / ACT 5 quick_classify 보강
+4. LIMIT-7 (free-slots 캐싱), LIMIT-8
+5. F4 narrator (Q17 후속)
 참고:
-- `docs/handoff/2026-05-06-demo-loop-progress.md` (최신 — 시연 검증 + 자동화 + 보완 항목)
-- `docs/handoff/demo-scenario.md` (시연 시나리오 SoT)
+- `docs/handoff/2026-05-14-spec-progress.md` (최신 v19, 2026-05-15 갱신 — spec v1.0 + PR-V1.5 + QA v2 + v3 자동화 통합 보고)
+- `docs/handoff/2026-05-14-spec-v2-plan.md` (v2 spec 38 항목 계획서)
+- `docs/handoff/demo-scenario-v3.md` (시연 시나리오 SoT, 2026-05-15 갱신)
+- `docs/handoff/spec-time-coordination.md` (619줄, v1.0)
+- `docs/handoff/spec-common.md`
 - `docs/handoff/audit-findings.md` (해결점 A~P)
+- `docs/SESSION_STATE.md`, `docs/TODO.md`, `docs/DECISIONS.md`, `docs/BUGS.md` (복구 SoT 4파일, 9c8c076 commit)
 - `docs/handoff/diagrams/`
 
 ## Project
@@ -26,9 +36,14 @@ AI 모임 조율 플랫폼 (졸업 프로젝트). 채팅방에서 일정/장소 
 
 ## Structure
 backend/
-  app/services/langgraph_pipeline.py  # 핵심 AI 파이프라인 (8노드)
-  app/routers/                        # API 엔드포인트
+  app/services/langgraph_pipeline.py  # 31줄 re-export shim (Phase 5.2, dce4357)
+  app/services/pipeline/              # 실제 파이프라인 (graph + nodes + helpers + constants)
+    nodes/                            # conversation_analyzer, slot, memory, validation, maedeup 등
+    helpers/                          # dates, formatting, json_extract, messaging, slot_state
+    graph.py                          # 라우터 6 + _build_graph + run_pipeline
+  app/api/routes/                     # API 엔드포인트 (auth/calendar/chat/events/finalization/places/recommendations/rooms/users/notifications/intents)
   app/models/                         # SQLModel 모델
+  alembic/versions/                   # DB 마이그레이션 (idempotent 패턴 필수)
 frontend/
   src/components/meeting/             # 채팅방, AI 어시스턴트 패널
 

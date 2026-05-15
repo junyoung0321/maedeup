@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarDays, ChevronDown, ChevronUp, Check } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useMeeting } from "@/contexts/MeetingContext";
-import type { VoteCardPayload } from "@/hooks/useAgentWebSocket";
+import type { VoteCardPayload, VoteUpdatePayload } from "@/hooks/useAgentWebSocket";
 
 function splitLabelParts(label: string): { date: string; time: string | null; trail: string | null } {
   const match = label.match(/^(.*?)\s*((?:오전|오후)?\s*\d{1,2}:\d{2}(?:\s*[~\-]\s*(?:오전|오후)?\s*\d{1,2}:\d{2})?)(\s*\([^)]*\))?\s*$/);
@@ -47,14 +47,11 @@ function groupByDate(options: VoteCardPayload["time_options"]) {
 interface ScheduleRecommendationCardProps {
   voteCard?: VoteCardPayload | null;
   onMeetingResolved?: (meetingId: number) => void;
-  /** true일 때 host 전용 "확정" 버튼을 숨김. "시간대 변경" 버튼은 유지됨. */
-  hideConfirmAction?: boolean;
 }
 
 export default function ScheduleRecommendationCard({
   voteCard: voteCardProp,
   onMeetingResolved,
-  hideConfirmAction = false,
 }: ScheduleRecommendationCardProps = {}) {
   const {
     voteCard: contextVoteCard,
@@ -65,6 +62,7 @@ export default function ScheduleRecommendationCard({
     voteAwaitingTimeMeetingId,
     requestTimeChange,
     setContextMode,
+    voteUpdate,
   } = useMeeting();
   const voteCard = voteCardProp ?? contextVoteCard;
   const isAwaitingTimeChange = !!voteCard && voteAwaitingTimeMeetingId === voteCard.meeting_id;
@@ -82,6 +80,11 @@ export default function ScheduleRecommendationCard({
   const [hostLoading, setHostLoading] = useState(true);
   const currentUserId = useMemo(() => getCurrentUserIdFromToken(), []);
   const isHost = currentUserId !== null && hostUserId === currentUserId;
+
+  // vote 실시간 집계 state (voteUpdate WS 구독)
+  const [voteCounts, setVoteCounts] = useState<Record<string, number>>({});
+  const [totalVoters, setTotalVoters] = useState(0);
+  const [votedOptionIndex, setVotedOptionIndex] = useState<number | null>(null);
 
   // PR-Z2 (Q5 hybrid): 선호 기준 토글 상태.
   // 토글 클릭 → refresh API 호출 → 응답은 WebSocket으로 broadcast 되므로 별도 state 갱신 불필요.
@@ -109,7 +112,23 @@ export default function ScheduleRecommendationCard({
     setError(null);
     setExpandedUnavailableSlotId(null);
     setPreferenceRefreshError(null);
+    // 새 voteCard 도착 시 vote 집계 초기화 + 본인 기존 vote 반영
+    setVoteCounts({});
+    setTotalVoters(0);
+    setVotedOptionIndex(voteCard.current_user_vote ?? null);
   }, [voteCard]);
+
+  // voteUpdate WS 이벤트 → vote 집계 동기화 (VoteCardSection.tsx 패턴 포팅)
+  useEffect(() => {
+    if (!voteUpdate) return;
+    if (voteCard && voteUpdate.meeting_id !== voteCard.meeting_id) return;
+    setVoteCounts(voteUpdate.votes);
+    setTotalVoters(voteUpdate.total_voters);
+    if (voteUpdate.user_votes && currentUserId !== null) {
+      const myVote = voteUpdate.user_votes[String(currentUserId)];
+      setVotedOptionIndex(myVote !== undefined ? myVote : null);
+    }
+  }, [voteCard, currentUserId, voteUpdate]);
 
   // PR-Z2 (Q5 hybrid): refresh API 호출 — viewer === requester(자기 자신)만 호출.
   // 응답은 WebSocket으로 broadcast되어 voteCard가 자동 갱신되므로 별도 setter 불필요.
@@ -319,6 +338,11 @@ export default function ScheduleRecommendationCard({
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <CalendarDays style={{ width: 18, height: 18, color: "#4f46e5" }} />
         <span style={{ fontSize: 13, fontWeight: 600, color: "#4f46e5" }}>AI 일정 추천</span>
+        {totalVoters > 0 && (
+          <span style={{ fontSize: 12, color: "#94a3b8", marginLeft: 4 }}>
+            투표 {totalVoters}/{voteCard.headcount ?? "?"}명
+          </span>
+        )}
       </div>
 
       {/* PR-Z2 (Q5 hybrid): 추천 기준 토글.
@@ -454,6 +478,17 @@ export default function ScheduleRecommendationCard({
             }}>
               추천
             </span>
+            <span style={{ fontSize: 12, color: "#94a3b8" }}>
+              ({voteCounts[String(0)] ?? 0}표{totalVoters > 0 ? ` / ${totalVoters}명` : ""})
+            </span>
+            {votedOptionIndex === 0 && (
+              <span style={{
+                fontSize: 11, padding: "2px 7px", borderRadius: 6,
+                background: "#dcfce7", color: "#166534", fontWeight: 600,
+              }}>
+                ✓ 내가 투표
+              </span>
+            )}
           </div>
         </div>
         {best.is_holiday && (
@@ -484,28 +519,44 @@ export default function ScheduleRecommendationCard({
           </button>
           {showAlternatives && (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {alternatives.map((opt) => (
-                <div
-                  key={opt.slot_id}
-                  onClick={() => setSelectedSlotId(opt.slot_id)}
-                  style={{
-                    padding: "10px 12px", borderRadius: 10,
-                    background: selectedSlotId === opt.slot_id ? "#eef2ff" : "#ffffff",
-                    border: selectedSlotId === opt.slot_id ? "1.5px solid #4f46e5" : "1px solid #e2e8f0",
-                    cursor: "pointer", fontSize: 14, fontWeight: 500, color: "#334155",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                    <span>
-                      {opt.label}
-                      {opt.is_holiday && <span style={{ marginLeft: 6, fontSize: 11, color: "#dc2626" }}>{opt.holiday_name || "공휴일"}</span>}
-                      {opt.is_weekend && !opt.is_holiday && <span style={{ marginLeft: 6, fontSize: 11, color: "#2563eb" }}>주말</span>}
-                    </span>
-                    {renderAvailabilityBadge(opt)}
+              {alternatives.map((opt, idx) => {
+                const optionIndex = idx + 1;
+                return (
+                  <div
+                    key={opt.slot_id}
+                    onClick={() => setSelectedSlotId(opt.slot_id)}
+                    style={{
+                      padding: "10px 12px", borderRadius: 10,
+                      background: selectedSlotId === opt.slot_id ? "#eef2ff" : "#ffffff",
+                      border: selectedSlotId === opt.slot_id ? "1.5px solid #4f46e5" : "1px solid #e2e8f0",
+                      cursor: "pointer", fontSize: 14, fontWeight: 500, color: "#334155",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <span>
+                        {opt.label}
+                        {opt.is_holiday && <span style={{ marginLeft: 6, fontSize: 11, color: "#dc2626" }}>{opt.holiday_name || "공휴일"}</span>}
+                        {opt.is_weekend && !opt.is_holiday && <span style={{ marginLeft: 6, fontSize: 11, color: "#2563eb" }}>주말</span>}
+                      </span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                        {renderAvailabilityBadge(opt)}
+                        <span style={{ fontSize: 12, color: "#94a3b8" }}>
+                          ({voteCounts[String(optionIndex)] ?? 0}표{totalVoters > 0 ? ` / ${totalVoters}명` : ""})
+                        </span>
+                        {votedOptionIndex === optionIndex && (
+                          <span style={{
+                            fontSize: 11, padding: "2px 7px", borderRadius: 6,
+                            background: "#dcfce7", color: "#166534", fontWeight: 600,
+                          }}>
+                            ✓ 내가 투표
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {renderUnavailableToggle(opt)}
                   </div>
-                  {renderUnavailableToggle(opt)}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </>
@@ -522,8 +573,7 @@ export default function ScheduleRecommendationCard({
         </div>
       ) : isHost ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {!hideConfirmAction && (
-            <button
+          <button
               onClick={handleConfirm}
               disabled={!selectedSlotId || isConfirming}
               style={{
@@ -535,7 +585,6 @@ export default function ScheduleRecommendationCard({
             >
               {isConfirming ? "확정 중..." : selectedSlot ? `${selectedSlot.label}로 확정` : "시간을 선택해주세요"}
             </button>
-          )}
           <button
             onClick={handleRequestTimeChange}
             disabled={!selectedSlotId || isConfirming}
@@ -550,7 +599,7 @@ export default function ScheduleRecommendationCard({
             시간대 변경
           </button>
         </div>
-      ) : !hideConfirmAction ? (
+      ) : (
         <button
           onClick={handleConfirm}
           disabled={!selectedSlotId || isConfirming}
@@ -563,7 +612,7 @@ export default function ScheduleRecommendationCard({
         >
           {isConfirming ? "확정 중..." : selectedSlot ? `${selectedSlot.label}로 확정` : "시간을 선택해주세요"}
         </button>
-      ) : null}
+      )}
       {error && <span style={{ fontSize: 12, color: "#dc2626", fontWeight: 500 }}>{error}</span>}
     </div>
   );

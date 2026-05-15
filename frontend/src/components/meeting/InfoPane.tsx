@@ -5,7 +5,6 @@ import { ChevronLeft, ChevronDown, ChevronUp, CalendarDays } from "lucide-react"
 import CalendarPane from "@/components/meeting/CalendarPane";
 import FinalizationProposalCard from "@/components/meeting/FinalizationProposalCard";
 import PlaceDetailPane from "@/components/meeting/PlaceDetailPane";
-import VoteCardSection from "@/components/meeting/VoteCardSection";
 import TimeBarSelector from "@/components/meeting/TimeBarSelector";
 import HostTimeAdjustModal from "@/components/meeting/HostTimeAdjustModal";
 import { apiFetch } from "@/lib/api";
@@ -338,8 +337,9 @@ export default function InfoPane() {
 
               {/* Phase: dateSelected → CalendarPane의 DateCard가 보여줌 (여기서 추가 UI 불필요) */}
 
-              {/* Phase: dateConfirmed → TimeBarSelector */}
-              {infoPanePhase === "dateConfirmed" && confirmedDate && (
+              {/* Phase: dateConfirmed → TimeBarSelector.
+                  scheduleConsensus 도달 시 A3-2 카드가 host action source 가 되므로 TimeBar 는 unmount. */}
+              {infoPanePhase === "dateConfirmed" && confirmedDate && !scheduleConsensus && (
                 <div style={{ padding: "0 4px" }}>
                   <TimeBarSelector
                     date={confirmedDate}
@@ -351,14 +351,6 @@ export default function InfoPane() {
                 </div>
               )}
 
-              {/* B-9: VoteCardSection — vote_card WS 페이로드 도착 시 투표 카드 + "일정 확정하기" 버튼 렌더.
-                   isHost / votedOptionIndex / selectedSlotId 조건은 컴포넌트 내부(VoteCardSection.tsx:423-427)에서 평가.
-                   placeConfirmed / done phase에서는 자동 unmount. */}
-              {voteCard && infoPanePhase !== "placeConfirmed" && infoPanePhase !== "done" && (
-                <div style={{ margin: "0 4px" }}>
-                  <VoteCardSection mode="vote-only" />
-                </div>
-              )}
 
               {/* A3-2: TimeBar 전원 합의 → 호스트 "일정 확정하기" 버튼 노출.
                    비호스트는 "방장이 확정 대기 중" placeholder. */}
@@ -395,6 +387,9 @@ export default function InfoPane() {
                                 }),
                               });
                               setScheduleConsensus(null);
+                              // phase 를 timeConfirmed 로 전이 — TimeBar 재마운트 방지 (무한 루프 차단).
+                              // maedeup_card WS broadcast 가 늦게 도착해도 즉시 UI 안정화.
+                              setInfoPanePhase("timeConfirmed");
                             } catch (err) {
                               console.error("schedule-confirm failed", err);
                             }

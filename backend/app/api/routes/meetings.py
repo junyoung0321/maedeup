@@ -560,26 +560,32 @@ async def confirm_meeting(
 
     # Best-effort: push the confirmed meeting onto each consenting member's
     # Google Calendar. Failures here MUST NOT unwind the DB commit.
-    try:
-        members_result = await session.execute(
-            select(User)
-            .join(RoomMember, RoomMember.user_id == User.id)
-            .where(RoomMember.room_id == body.room_id)
+    if not settings.AUTO_CALENDAR_PUSH:
+        logger.info(
+            "Google Calendar fan-out skipped (AUTO_CALENDAR_PUSH=false, meeting_id=%s)",
+            meeting.id,
         )
-        members = members_result.scalars().all()
-        updated_event_ids = await sync_events_for_meeting_members(
-            meeting, members, session, event_title=room.name,
-        )
-        if updated_event_ids != (meeting.google_event_ids or {}):
-            meeting.google_event_ids = updated_event_ids
-            session.add(meeting)
-            await session.commit()
-            await session.refresh(meeting)
-    except Exception:
-        logger.warning(
-            "Google Calendar fan-out failed (meeting_id=%s, room_id=%s)",
-            meeting.id, body.room_id, exc_info=True,
-        )
+    else:
+        try:
+            members_result = await session.execute(
+                select(User)
+                .join(RoomMember, RoomMember.user_id == User.id)
+                .where(RoomMember.room_id == body.room_id)
+            )
+            members = members_result.scalars().all()
+            updated_event_ids = await sync_events_for_meeting_members(
+                meeting, members, session, event_title=room.name,
+            )
+            if updated_event_ids != (meeting.google_event_ids or {}):
+                meeting.google_event_ids = updated_event_ids
+                session.add(meeting)
+                await session.commit()
+                await session.refresh(meeting)
+        except Exception:
+            logger.warning(
+                "Google Calendar fan-out failed (meeting_id=%s, room_id=%s)",
+                meeting.id, body.room_id, exc_info=True,
+            )
 
     return ConfirmMeetingResponse(
         id=meeting.id,
@@ -859,20 +865,26 @@ async def patch_meeting_place(
             await session.refresh(meeting)
 
         if meeting.scheduled_at and meeting.location_name:
-            room_row = await session.execute(
-                select(Room).where(Room.id == meeting.room_id)
-            )
-            room = room_row.scalar_one_or_none()
-            updated_event_ids = await sync_events_for_meeting_members(
-                meeting, members, session,
-                event_title=room.name if room else None,
-            )
-            if updated_event_ids != (meeting.google_event_ids or {}):
-                meeting.google_event_ids = updated_event_ids
-                session.add(meeting)
-                await session.commit()
-                await session.refresh(meeting)
-            calendar_registered = bool(updated_event_ids)
+            if not settings.AUTO_CALENDAR_PUSH:
+                logger.info(
+                    "Google Calendar place-confirm fan-out skipped (AUTO_CALENDAR_PUSH=false, meeting_id=%s)",
+                    meeting.id,
+                )
+            else:
+                room_row = await session.execute(
+                    select(Room).where(Room.id == meeting.room_id)
+                )
+                room = room_row.scalar_one_or_none()
+                updated_event_ids = await sync_events_for_meeting_members(
+                    meeting, members, session,
+                    event_title=room.name if room else None,
+                )
+                if updated_event_ids != (meeting.google_event_ids or {}):
+                    meeting.google_event_ids = updated_event_ids
+                    session.add(meeting)
+                    await session.commit()
+                    await session.refresh(meeting)
+                calendar_registered = bool(updated_event_ids)
     except Exception:
         logger.warning(
             "Place patch external sync failed after DB commit (meeting_id=%s)",

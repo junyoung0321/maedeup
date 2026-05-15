@@ -8,6 +8,9 @@
 
 **v2 대비 추가 ACT**: ACT 3 신설 (시간대 변경 → 시간 투표 → 결과 합의 → 시간 확정)
 
+**변경 이력**:
+- 2026-05-15 ACT 3 update: vote 직접 호출 → TimeBar 합의 흐름으로 변경. `.gstack-demo.py` ACT 3 동기 적용 완료.
+
 ---
 
 ## 참여자
@@ -30,7 +33,7 @@ ACT 0.5  Personal Data 모달 사전 투어     40s   [6 카테고리 ✨ 추출
 ACT 1    모임 생성 + 초대 + 게스트        25s   [플로팅바 + InviteModal + 카톡 링크]
 ACT 2    채팅 교착 → 자연어 거부 → 확장   40s   [stalemate + 강한 거부 패턴 + N + P]
 ACT 2.5  F1 다수결 fallback 발동         30s   [전원 가능 0 → majority_fallback vote_card]
-ACT 3    시간대 변경 → 투표 → 시간 확정   35s   [★신설] ["시간대 변경" 클릭 → VoteCardSection 투표 → 방장 확정]
+ACT 3    시간대 변경 → TimeBar 합의 → 확정  35s   [★신설] ["시간대 변경" 클릭 → TimeBarSelector → WS time_selection → 슬롯 클릭 → consensus → 확정]
 ACT 4    Partial 카드 발행               10s   [시간 확정 후 Partial maedeup]
 ACT 5    AI 패널 짧은 입력 → 장소 확정    30s   ["강남 한식 추천해줘" 입력 → carousel → 확정]
 ACT 5.5  hybrid 토글 + F4 실명 narrator  25s   [Q5 토글 → OOO님 선호 기준 + calendar F4]
@@ -225,112 +228,80 @@ ACT 2에서 이어지는 자동 흐름 — 추가 step 없음. `.gstack-demo.py`
 
 ---
 
-## ACT 3. ★신설 — 시간대 변경 → 멤버 투표 → 시간 확정 (35초)
+## ACT 3. ★신설 — 시간대 변경 → TimeBar 합의 → 호스트 확정 (35초)
 
-> **코드 근거**: `ScheduleRecommendationCard.tsx:511~546` — `isHost` 조건 시 두 버튼 렌더.
-> "시간대 변경" 버튼 실제 텍스트: `"시간대 변경"` (v3에서는 "다른 시간대"를 이 버튼으로 안내).
+> **2026-05-15 update**: vote 직접 호출 → TimeBar 합의 흐름으로 변경. `.gstack-demo.py` ACT 3 동기 적용 완료.
+> **코드 근거**: `ScheduleRecommendationCard.tsx:511~546` — `isHost` 조건 시 두 버튼 렌더. `InfoPane.tsx:406` — `scheduleConsensus + isHost` 조건 "추천 시간 그대로 확정" 버튼.
 
 ### 시나리오 흐름
 
-방장 지민이 vote_card를 보고 바로 확정하는 대신 **"시간대 변경"** 버튼을 클릭해 멤버들에게 투표를 맡기기로 결정한다. VoteCardSection의 투표 기능이 진입되어 각 멤버가 선호 시간에 투표하고, 방장이 최다 득표 시간으로 "일정 확정하기"를 클릭해 시간을 확정한다.
+방장 지민이 vote_card 추천 슬롯(예: 오후 6시)을 확인하고 **"시간대 변경"** 버튼을 클릭한다. InfoPane에 TimeBarSelector 카드가 마운트되어 각 멤버의 가능 시간대를 시각화한다. 게스트 3명이 가능 시간을 WS로 전송하면 TimeBar "다른 분들" row가 파란색으로 채워진다. 방장이 TimeBar 슬롯을 클릭하면 "전원" row가 초록색으로 활성화(consensus)되고, "추천 시간 그대로 확정" 버튼을 눌러 시간을 확정한다.
 
-### 자동화 step
+### 자동화 step (`.gstack-demo.py` ACT 3 블록)
 
-`.gstack-demo.py` ACT 3 블록:
+**step 0**: ScheduleRecommendationCard의 추천 슬롯(예: 오후 6시) 재확인. 화면 5초 시청 (TimeBar 등장 전 렌더 확인).
 
-0. **[사전 조건] 슬롯 1개 클릭** (지민 화면, `ScheduleRecommendationCard.tsx:536`)
-   - "시간대 변경" 버튼은 `selectedSlotId !== null` 조건에서만 활성화됨
-   - 시연자는 먼저 vote_card의 슬롯 카드 중 **1개를 마우스로 클릭**해 `selectedSlotId` 세팅
-   - 자동화 시 `.gstack-demo.py`에서 `browser_click(first_slot)` 1줄 선행 호출
-   - **D-1 보강 (QA v3 권고)**: 본 step을 누락하면 "시간대 변경" 버튼이 disabled 상태로 노출 → 클릭 미동작. 시연자가 직접 슬롯을 가리킨 후 변경 버튼 클릭.
+**step 1**: 호스트가 "시간대 변경" 버튼 클릭
+- `InfoPane`의 `voteAwaitingTimeMeetingId` 세팅 → 캘린더 패널에 TimeBarSelector 카드 마운트
+- 클릭 후 5초 시청 (TimeBar 렌더 확인)
 
-1. **"시간대 변경" 버튼 클릭** (지민 화면, `ScheduleRecommendationCard.tsx:534`)
-   - `handleRequestTimeChange()` 호출 → `requestTimeChange(slot, meetingId)` → `MeetingContext` 상태 갱신:
-     ```typescript
-     // MeetingContext.tsx:372~382
-     setState((prev) => ({
-       ...prev,
-       myDateSelection: selectedDate,   // slot.start_at.split("T")[0]
-       infoPanePhase: "dateConfirmed",
-       voteAwaitingTimeMeetingId: meetingId,
-     }));
-     ```
-   - `setContextMode("schedule")` 호출 → InfoPane이 `schedule` 모드(TimeBarSelector 또는 VoteCardSection)로 전환
-   - vote_card 표시 영역에 `"시간대 합의 중..."` placeholder 렌더 (`ScheduleRecommendationCard.tsx:512~519`, `isAwaitingTimeChange === true`)
+**step 2**: 게스트 3명이 각자 WS로 `time_selection` 송신 (자동화 시뮬레이션)
+- WS URI: `ws://localhost:8000/ws/social/{room_id}?token={게스트_token}`
+- payload: `{"type":"time_selection","date":"YYYY-MM-DD","start":18,"end":23}`
+- 효과: TimeBar "다른 분들" row가 차례로 파란색으로 채워짐 (`peer_time_selection` broadcast)
+- 게스트 사이 2.5초 간격, 3명 완료 후 4초 시청
 
-2. **VoteCardSection 투표 기능 진입**
-   - AI 어시스턴트 패널에 `VoteCardSection` 컴포넌트(`VoteCardSection.tsx`) 렌더
-   - 슬롯 3개 각각에 "투표하기" 버튼 표시 (`VoteCardSection.tsx:386~403`)
+**step 3**: 호스트가 Playwright로 TimeBar 슬롯 클릭 (시연 핵심 시각화)
+- selector: `[id$="-mine-18"]` (start), `[id$="-mine-23"]` (end)
+- aria-label fallback: `"내 시간 18:00"`, `"내 시간 20:30"`
+- start 클릭 후 0.8초 (시연 페이스), end 클릭
+- 효과: "내 시간" row + "전원" row 초록색 활성 (consensus 도달)
+- 클릭 후 5초 시청
 
-3. **멤버 시뮬레이션 (자동화 — 게스트 vote 발생)**
-   - 수현 → 슬롯 0 투표: `POST /api/v1/meetings/{meeting_id}/vote` `{"option_index": 0}`
-   - 민수 → 슬롯 0 투표: `POST /api/v1/meetings/{meeting_id}/vote` `{"option_index": 0}`
-   - 예린 → 슬롯 1 투표: `POST /api/v1/meetings/{meeting_id}/vote` `{"option_index": 1}`
+**step 4**: A3-2 카드 "추천 시간 그대로 확정" 버튼 활성 대기 → 호스트 클릭
+- `InfoPane.tsx:406`의 `scheduleConsensus + isHost` 조건으로 버튼 등장
+- `wait_for_enabled_button("추천 시간 그대로 확정", 30s)` 후 클릭
+- 클릭 후 5초 시청 (maedeup_card partial 시청)
 
-4. **실시간 집계 표시**
-   - 투표 직후 Redis publish `{"type": "vote_update", "meeting_id": ..., "votes": {...}, "total_voters": 4}` → WebSocket broadcast
-   - `VoteCardSection.tsx:107~113`: `voteUpdate` 수신 → `voteCounts` 갱신 → 슬롯별 득표수 표시 갱신
+**step 5**: `act3_completed = True` → ACT 4 (Partial maedeup_card) 자동 진행
 
-5. **지민 투표 + 방장 확정 팝업**
-   - 지민 → 슬롯 0 투표: `POST /api/v1/meetings/{meeting_id}/vote` `{"option_index": 0}`
-   - 전원 투표 완료 → "일정 확정하기" 버튼 활성화 (`VoteCardSection.tsx:416~432`, `votedOptionIndex !== null && isHost`)
-   - 지민이 "일정 확정하기" 클릭 → `showConfirmPopup = true` → 확정 팝업 모달 렌더 (`VoteCardSection.tsx:461~548`)
-   - 팝업에서 "확정하기" 클릭 → `handleConfirmSchedule()` 호출
+### 시연 화면 전환 흐름
 
-6. **`POST /api/v1/meetings/confirm`** 실행 (`meetings.py:414~583`):
-   ```python
-   # meetings.py:414 — @router.post("/confirm")
-   # body: room_id, title, scheduled_at, end_at, meeting_id (pending → confirmed 승격)
-   meeting.status = MeetingStatus.confirmed
-   ```
+```
+화면 1: vote_card 추천 슬롯 (6시) 확인
+화면 2: "시간대 변경" 클릭 → vote_card "시간대 합의 중..." placeholder
+화면 3: TimeBarSelector 카드 마운트 (캘린더 패널)
+화면 4: 게스트 "다른 분들" row 파란색 채워짐
+화면 5: 호스트 슬롯 클릭 → "내 시간" + "전원" row 초록 (consensus)
+화면 6: "추천 시간 그대로 확정" 버튼 활성 → 클릭
+화면 7: maedeup_card partial 발행 (ACT 4 진입)
+```
 
 ### 백엔드 호출 흐름
 
 1. **"시간대 변경" 클릭**: 프론트 상태 전환만 (API 호출 없음). `MeetingContext.requestTimeChange` → `voteAwaitingTimeMeetingId = meetingId`
-2. **투표 API** (`meetings.py:586~729`):
-   ```python
-   # @router.post("/{meeting_id}/vote") — meetings.py:586
-   votes[str(current_user.sub)] = body.option_index
-   meeting.votes = votes
-   ```
-   - 집계 후 Redis publish:
-     ```python
-     payload = {
-         "type": "vote_update",
-         "meeting_id": meeting.id,
-         "votes": aggregated_votes,   # {"0": 3, "1": 1} 형태
-         "total_voters": total_voters,
-     }
-     await redis_client.publish(f"agent:{meeting.room_id}", json.dumps(payload))
-     ```
-   - 만장일치 아닌 경우 conflict resolution 시도 (`meetings.py:651~720`):
-     최다 득표 옵션에 반대한 멤버 식별 → `suggest_alternative_slots` → 대안 시간 메시지 발행
-3. **확정 API** (`meetings.py:414`):
+2. **게스트 WS `time_selection` 송신**: `social` 채널 수신 → `peer_time_selection` broadcast → TimeBar "다른 분들" row 갱신
+3. **호스트 슬롯 클릭 → TimeBar consensus**: 프론트 상태 내 `scheduleConsensus=true` 세팅 → "추천 시간 그대로 확정" 버튼 노출
+4. **확정 API** (`meetings.py:414`):
    - `meeting.status = MeetingStatus.confirmed`, `meeting.scheduled_at = scheduled_at`
-   - A4-1 AI 패널 안내 (`meetings.py:537~555`):
-     ```python
-     await emit_agent_message(redis, body.room_id, f"✅ 일정이 확정되었어요 — {time_label}")
-     await emit_agent_message(redis, body.room_id, "이제 어디서 만날지 정해볼까요? 장소를 추천해드릴게요.")
-     ```
+   - AI 패널 안내 (`meetings.py:537~555`): `"✅ 일정이 확정되었어요 — {time_label}"` + `"이제 어디서 만날지 정해볼까요?"`
    - Google Calendar fan-out (동의 멤버 대상, `sync_events_for_meeting_members`)
-4. **ACT 4로 전환**: 확정 직후 `maedeup_card (partial)` 자동 발행 (선호 장소 공란 → `place_pending=True`)
+5. **ACT 4로 전환**: 확정 직후 `maedeup_card (partial)` 자동 발행 (선호 장소 공란 → `place_pending=True`)
 
 ### 발표자 narration
 
-> 1. *"투표 카드에서 바로 확정하는 대신 '시간대 변경' 버튼으로 멤버들한테 투표를 열 수 있어요."*
-> 2. *"각 멤버가 자기 선호 시간에 투표하고 — 실시간으로 득표수가 업데이트됩니다."*
-> 3. *"투표가 다 끝나면 방장한테만 '일정 확정하기' 버튼이 활성화되고, 확인 팝업 거쳐서 확정합니다."*
-> 4. *"확정되면 AI 패널에 '✅ 일정이 확정되었어요' 메시지가 뜨고, 캘린더 연동된 멤버들 캘린더에도 자동 등록됩니다."*
+> 1. *"'시간대 변경' 버튼을 누르면 타임바가 뜹니다. 멤버들이 각자 가능한 시간대를 선택하면 파란색으로 차오르거든요."*
+> 2. *"게스트 3명이 가능 시간을 보내니까 '다른 분들' 줄이 파랗게 채워지죠. 실시간이에요."*
+> 3. *"방장이 슬롯을 클릭하면 전원 줄이 초록색으로 바뀝니다 — 합의가 된 거예요."*
+> 4. *"그러면 '추천 시간 그대로 확정' 버튼이 활성화되고, 클릭하면 확정됩니다. 캘린더 연동된 멤버 캘린더에도 자동 등록돼요."*
 
 ### 시청자가 보는 화면
 
 - vote_card → `"시간대 합의 중..."` placeholder (지민 화면)
-- VoteCardSection: 슬롯 3개 + "투표하기" 버튼 (각 멤버 차례로 클릭)
-- 투표 후 실시간 득표수: `"(3표 / 4명)"`, `"(1표 / 4명)"`
-- 지민 화면: 투표 완료 후 "일정 확정하기" (인디고) 활성 + "⏳ 방장이 확정하기를 기다리는 중이에요" (일반 멤버)
-- 확정 팝업 모달: `"이 일정으로 확정할까요? [선택 시간 표시]"` + `[취소] [확정하기]`
-- 확정 후 VoteCardSection → `"✓ 일정이 확정되었습니다"` 녹색 배너
-- AI 패널: `"✅ 일정이 확정되었어요 — 5월 19일 (월) 오후 7:00"` + `"이제 어디서 만날지 정해볼까요? 장소를 추천해드릴게요."`
+- TimeBarSelector 카드: "다른 분들" row (파랑), "내 시간" row (회색 → 초록), "전원" row (초록)
+- 호스트 슬롯 클릭 후 consensus 달성: 전원 row 초록 활성
+- InfoPane: "추천 시간 그대로 확정" 버튼 (인디고) 등장
+- 확정 후 AI 패널: `"✅ 일정이 확정되었어요 — 5월 19일 (월) 오후 6:00"` + `"이제 어디서 만날지 정해볼까요? 장소를 추천해드릴게요."`
 
 ---
 
@@ -515,7 +486,7 @@ Body:
 | **자연어 거부** | Gemini rejected_dates 추출 + 캘린더 동기화 (해결점 P) | 2 |
 | **후보 확장 (N)** | rejected 소진 → 다음주 자동 확장 | 2 |
 | **F1 다수결 fallback** | 전원 가능 0 → `majority_fallback` vote_card + 배지 + 불참자 토글 | 2.5 |
-| **★시간대 변경 투표** | "시간대 변경" 클릭 → VoteCardSection 멤버 투표 → 방장 확정 팝업 → 시간 확정 | **3 (신설)** |
+| **★시간대 변경 → TimeBar 합의** | "시간대 변경" 클릭 → TimeBarSelector 마운트 → 게스트 WS time_selection → 호스트 슬롯 클릭 → consensus → "추천 시간 그대로 확정" | **3 (신설)** |
 | **카드 라이프사이클** | partial → place 확정 → maedeup 갱신 (같은 meeting_id, 해결점 J) | 4 · 5 |
 | **단축 경로** | `direct_request` → 3~5초 (해결점 E) | 5 |
 | **Personal Data 활용** | reasoning 실명 인용 `group_constraints_summary` | 5 |
@@ -533,13 +504,13 @@ Body:
 | 1 | 모임 생성 + 초대 + 게스트 | 25초 |
 | 2 | 채팅 교착 → 자연어 거부 → 다음주 확장 | 40초 |
 | 2.5 | F1 다수결 fallback 발동 | 30초 |
-| **3** | **★시간대 변경 → 멤버 투표 → 방장 확정** | **35초** |
+| **3** | **★시간대 변경 → TimeBar 합의 → 호스트 확정** | **35초** |
 | 4 | Partial 카드 발행 | 10초 |
 | 5 | AI 패널 단축 입력 + Personal Data + 장소 확정 | 30초 |
 | 5.5 | hybrid 토글 + F4 narrator + 마무리 | 25초 + 10초 |
 | **합계** | | **~5분 25초** |
 
-> **발표자 트림 포인트**: ACT 3의 투표 시뮬레이션 단계(멤버 3명 개별 투표)를 1명으로 줄이면 약 15초 절감 → 5분 10초.
+> **발표자 트림 포인트**: ACT 3의 WS time_selection 단계(게스트 3명)를 1명으로 줄이거나 step 2를 스킵하면 약 10~15초 절감 → 5분 10초.
 
 ---
 
@@ -591,23 +562,23 @@ Body:
 - **영향**: 시연 흐름상 큰 영향 없음 (발표자가 설명하는 동안 로드 완료)
 - **대응**: 필요 시 D-1에 `docker exec maedeup-api`에서 free-slots warm 호출로 Redis 캐시 준비
 
-### B-8. ★ACT 3 시간 투표 미작동 (신설)
+### B-8. ★ACT 3 TimeBar 합의 미작동 (신설)
 
-- **증상 유형 1**: "시간대 변경" 버튼 클릭 후 `voteAwaitingTimeMeetingId` 설정은 됐으나 VoteCardSection이 렌더되지 않음
+- **증상 유형 1**: "시간대 변경" 버튼 클릭 후 `voteAwaitingTimeMeetingId` 설정은 됐으나 TimeBarSelector가 마운트되지 않음
   - **원인**: `InfoPane`의 `schedule` 컨텍스트 모드 미전환 (MeetingContext `setContextMode("schedule")` 미호출)
   - **대응**: 브라우저 새로고침 후 vote_card 상태 복구(`GET /api/v1/meetings/rooms/{id}/pending-vote`) → 다시 "시간대 변경" 클릭
-- **증상 유형 2**: `POST /api/v1/meetings/{id}/vote` 응답 정상이나 실시간 집계(`vote_update`) WebSocket 미도달
-  - **원인**: Redis publish 실패 (`meetings.py:643~651` Redis socket_timeout=1초 초과)
-  - **대응**: 페이지 새로고침 → WS 재연결 후 vote_update 재수신 (DB `meeting.votes`는 저장됨)
-- **증상 유형 3**: 전원 투표 완료 후 방장 "일정 확정하기" 버튼 미활성
-  - **원인**: `votedOptionIndex === null` (지민이 아직 투표 안 함)
-  - **대응**: 지민도 투표 후 버튼 활성화 대기
-- **증상 유형 4**: ACT 3 전체 생략 (시간 부족 또는 UI 오류)
-  - **대응**: ACT 2.5 vote_card에서 "○월 ○일로 확정" 버튼 직접 클릭 → `POST /api/v1/meetings/confirm` → ACT 4로 바로 진행
+- **증상 유형 2**: 게스트 WS `time_selection` 송신 후 TimeBar "다른 분들" row가 파랗게 채워지지 않음
+  - **원인**: WS 연결 실패 또는 `peer_time_selection` broadcast 누락
+  - **대응**: 게스트 토큰 유효성 확인 → WS 재연결 후 재송신
+- **증상 유형 3**: 호스트 슬롯 클릭 후 "전원" row 초록 미활성 (consensus 미달성)
+  - **원인**: selector `[id$="-mine-18"]` 매칭 실패 (UI 구조 변경) 또는 aria-label 불일치
+  - **대응**: Playwright `browser_snapshot` → 실제 slot id 확인 후 selector 수정
+- **증상 유형 4**: "추천 시간 그대로 확정" 버튼 미노출 (`scheduleConsensus` 미세팅)
+  - **원인**: `InfoPane.tsx:406` 조건 `scheduleConsensus + isHost` 미충족
+  - **대응**: 타임아웃 30초 대기 → 버튼 미등장 시 ACT 3 생략 → ACT 2.5 vote_card "○월 ○일로 확정" 버튼 직접 클릭 → ACT 4로 진행
   - **시연자 멘트**: *"'시간대 변경' 대신 바로 확정하는 경우엔 이렇게 한 번에 됩니다."*
-- **증상 유형 5**: conflict_resolution 메시지가 불필요하게 노출 (만장일치 아닌 투표 결과)
-  - **증상**: `suggest_alternative_slots` 호출 후 `"@예린님이 기존 시간에 어려워요"` 메시지 채팅에 노출
-  - **대응**: 자연스럽게 넘어감. 시연자 멘트: *"투표가 갈리면 매듭이 절충안 시간도 찾아줍니다."*
+- **증상 유형 5**: ACT 3 전체 생략 (시간 부족 또는 UI 오류)
+  - **대응**: ACT 2.5 vote_card에서 "○월 ○일로 확정" 버튼 직접 클릭 → `POST /api/v1/meetings/confirm` → ACT 4로 바로 진행
 
 ### B-9. ★ACT 5 `"추천해줘"` 단독 입력 시 분류 실패 (신설)
 
@@ -633,7 +604,7 @@ Body:
 - [ ] **지민·수현·민수 3명 모두 Google OAuth 연동 완료 + `calendar_consent=True` 사전 확인** — `SELECT id, name, calendar_consent FROM users WHERE id IN (지민, 수현, 민수)` 또는 `GET /api/v1/users/{id}` 응답 점검 (QA v3 D-1 권고 — ACT 2.5 `majority_fallback` 발동 안정성 위해 `busy_by_user` non-empty 보장)
 - [ ] 예린(게스트)는 OAuth 불필요 — `is_guest=True` 확인
 - [ ] 수현·민수 계정 앱 로그인 세션 유효
-- [ ] ACT 3 자동화용 수현·민수·예린 JWT 별도 저장 (vote API 호출 시 각자 계정으로 인증 필요)
+- [ ] ACT 3 자동화용 수현·민수·예린 JWT 별도 저장 (WS time_selection 송신 시 각자 계정 토큰 필요)
 
 ### Personal Data 시드 (D-1)
 
@@ -648,7 +619,7 @@ Body:
 
 - [ ] 시연용 방 ID 메모 (`.gstack-demo.py` 실행 전 방 생성 확인)
 - [ ] 이전 시연 잔여 `pending` MeetingSchedule 없음 (`GET /api/v1/meetings/rooms/{id}/pending-vote` → null)
-- [ ] ACT 3용 vote 자동화 스크립트: 수현·민수·예린 각 JWT로 `POST /api/v1/meetings/{id}/vote` 준비
+- [ ] ACT 3용 WS time_selection 자동화: 수현·민수·예린 각 JWT로 `ws://localhost:8000/ws/social/{room_id}?token={token}` 연결 + `{"type":"time_selection","date":"YYYY-MM-DD","start":18,"end":23}` 송신 준비
 
 ### MCP / 자동화
 
@@ -679,10 +650,10 @@ Body:
 
 | # | 구분 | v2 | v3 |
 |---|---|---|---|
-| 1 | **ACT 3 신설** | 없음 | **"시간대 변경" 버튼(ScheduleRecommendationCard.tsx:534) 클릭 → VoteCardSection 투표 → 방장 확정 팝업 → `POST /confirm` (35초)** |
+| 1 | **ACT 3 신설 → TimeBar 합의 흐름** | 없음 (v2) / VoteCardSection 직접 투표 (v3 초기) | **"시간대 변경" 클릭 → TimeBarSelector 마운트 → 게스트 WS `time_selection` → 호스트 슬롯 클릭 → consensus → "추천 시간 그대로 확정" 클릭 → `POST /confirm` (35초)** |
 | 2 | **버튼 명칭 정확화** | "다른 시간대" (가정) | **"시간대 변경"** — 실제 코드 텍스트 (`ScheduleRecommendationCard.tsx:545`: `"시간대 변경"`) |
-| 3 | **투표 흐름 명시** | 투표 흐름 미기술 | `VoteCardSection.tsx:124~147` `handleVote()` → `POST /{id}/vote` → Redis `vote_update` broadcast → 실시간 집계 표시 → 방장 확정 팝업 전체 흐름 인용 |
+| 3 | **TimeBar 흐름 신규 명시** | VoteCardSection 투표 직접 호출 | TimeBarSelector 마운트 → WS `time_selection` (게스트 시뮬) → 호스트 슬롯 클릭 → `scheduleConsensus` → "추천 시간 그대로 확정" (`InfoPane.tsx:406`) |
 | 4 | **ACT 5 입력 단순화** | "강남에서 다 같이 갈만한 한식집" | **"강남 한식 추천해줘"** 또는 **"추천해줘"** — 짧은 입력으로 의도 자동 인식 강조 |
-| 5 | **백업 B-8 신설** | B-1~B-7 | **B-8 (ACT 3 시간 투표 미작동 4종 + fallback 멘트)** |
-| 6 | **체크리스트 보강** | v2 | ACT 3 vote 자동화용 멤버 JWT 준비 항목 추가 |
+| 5 | **백업 B-8 갱신** | B-8 (VoteCardSection 미작동 4종) | **B-8 (TimeBar 합의 미작동 5종 + TimeBar selector/WS 대응)** |
+| 6 | **체크리스트 보강** | v2 | ACT 3 WS time_selection용 게스트 토큰 준비 항목 추가 |
 | 7 | **총 시간** | ~4분 50초 | **~5분 25초** (ACT 3 +35초, 발표자 트림 후 ~5분 10초 가능) |

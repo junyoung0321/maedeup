@@ -136,9 +136,14 @@ PACE_FAST = {
     "act_0_5_modal_pause": 5.0,    # PersonalData 모달 펼친 후 시연자 narration
     "act_3_vote_gap": 0.6,          # 게스트 3명 vote API 호출 사이 간격
     "act_3_after_change": 1.5,      # "시간대 변경" 클릭 후 VoteCardSection 렌더 대기
-    "act_3_after_popup": 1.0,       # 확정 팝업 렌더 대기
+    "act_3_after_votes": 1.0,       # 게스트 3명 vote 완료 후 vote count 변화 시청 시간
+    "act_3_after_popup": 1.0,       # 확정 팝업 렌더 대기 (ACT 4 fallback용으로만 잔존)
+    "act_3_host_click_gap": 0.4,     # 호스트 TimeBar start/end slot 클릭 사이 간격
+    "act_3_after_host_vote": 2.0,   # 방장 vote 후 ScheduleRecommendationCard 변화 시청
+    "act_3_after_confirm_click": 2.0,  # "로 확정" 클릭 후 confirm 전환 / maedeup_card 시청
     "act_5_5_after_toggle": 4.0,    # "내 선호" 토글 클릭 후 refresh API + carousel rerender
     "act_5_5_view_pause": 3.0,      # refreshed carousel narration
+    "act_2_5_view_pause": 1.0,      # vote_card 발현 직후 카드 내용 시청 시간
 }
 PACE_DEMO = {
     "between_steps": 1.2,
@@ -146,18 +151,23 @@ PACE_DEMO = {
     "after_pref": 3.5,
     "after_msg": 2.0,
     "after_trigger": 14.0,
-    "after_confirm": 5.0,
+    "after_confirm": 8.0,           # 확정 후 maedeup_card 발현 시청 (2.5→5.0→8.0)
     "after_place_query": 16.0,
     "after_place_click": 2.5,
     "after_place_confirm": 8.0,
-    "view_pause": 3.0,
+    "view_pause": 6.0,              # 카드 발견 후 클릭 전 시청 (3.0→6.0)
     # v3 신규 (시연 페이스)
     "act_0_5_modal_pause": 8.0,
-    "act_3_vote_gap": 1.0,
-    "act_3_after_change": 2.5,
-    "act_3_after_popup": 1.5,
+    "act_3_vote_gap": 2.5,           # 게스트 vote 사이 간격 — vote count 변화 시각적 인지 (1.0→2.5)
+    "act_3_after_change": 5.0,      # "시간대 변경" 후 VoteCardSection 렌더 시청 (2.5→5.0)
+    "act_3_after_votes": 4.0,       # 게스트 3명 vote 완료 후 vote count 변화 시청 시간
+    "act_3_after_popup": 3.0,       # 확정 팝업 시청 (ACT 4 fallback용으로만 잔존)
+    "act_3_host_click_gap": 0.8,     # 호스트 TimeBar start/end slot 클릭 사이 간격
+    "act_3_after_host_vote": 5.0,   # 방장 vote 후 ScheduleRecommendationCard 변화 시청
+    "act_3_after_confirm_click": 5.0,  # "로 확정" 클릭 후 confirm 전환 / maedeup_card 시청
     "act_5_5_after_toggle": 7.0,
     "act_5_5_view_pause": 5.0,
+    "act_2_5_view_pause": 5.0,      # vote_card 발현 직후 카드 내용 시청 시간 (신규)
 }
 
 
@@ -253,6 +263,20 @@ def vote_as_user(meeting_id: int, token: str, option_index: int, name_hint: str 
         # B-8 대응: 4xx (만료 토큰·중복 vote 등) → log + skip
         log(f"  [BACKUP] vote 실패 ({name_hint}): {type(e).__name__}: {e}")
         return False
+
+
+async def send_time_selection_via_ws(token: str, room_id: str, date: str, start: int, end: int) -> None:
+    """게스트 WS time_selection 송신 — TimeBar '다른 분들' row 실시간 채우기.
+
+    date: "YYYY-MM-DD", start/end: 슬롯 인덱스 (HOUR_START=9, SLOT_MINUTES=30 기준.
+    ex) 오후 6:00 = slot 18, 오후 8:30 = slot 23).
+    토큰 로그 출력 금지 (masking).
+    """
+    uri = f"{WS}/ws/social/{room_id}?token={token}"
+    async with websockets.connect(uri) as ws:
+        await asyncio.sleep(0.3)  # subscribe setup
+        await ws.send(json.dumps({"type": "time_selection", "date": date, "start": start, "end": end}))
+        await asyncio.sleep(0.5)  # broadcast 도달 대기
 
 
 # ---------------------------------------------------------------------------
@@ -722,34 +746,31 @@ async def run_demo(flags: DemoFlags) -> None:
         else:
             log("vote_card 발현 확인 (AI 일정 추천 헤더 노출)")
             # 슬롯 클릭: ScheduleRecommendationCard selectedSlotId 세팅 (시연 UI용).
-            # A4 적용 후 '로 확정' 버튼은 hide이므로 이 클릭은 UI 상태만 반영.
             log("vote_card 슬롯 사전 클릭 (ScheduleRecommendationCard selectedSlotId 세팅)")
             pre_slot_ok = await click_first_vote_slot(page)
             if not pre_slot_ok:
-                await asyncio.sleep(0.8)
+                await asyncio.sleep(pace["act_2_5_view_pause"])
                 pre_slot_ok = await click_first_vote_slot(page)
             if pre_slot_ok:
                 await asyncio.sleep(0.5)
-            # A4 적용 후 ScheduleRecommendationCard의 "로 확정" 버튼은 hide.
-            # 대신 VoteCardSection(InfoPane)의 "투표하기" 버튼 존재 여부로 gate 통과 판정.
-            # "투표하기"는 votedOptionIndex=null 상태의 각 슬롯 옵션에 렌더됨 (항상 복수).
-            appeared = await wait_for_button(page, "투표하기", timeout_s=5.0)
+            # ScheduleRecommendationCard의 "로 확정" 버튼 존재 여부로 gate 통과 판정.
+            # "로 확정"은 selectedSlot이 세팅된 상태에서 렌더됨.
+            appeared = await wait_for_button(page, "로 확정", timeout_s=5.0)
             if not appeared:
-                log("⚠️  VoteCardSection '투표하기' 버튼 미발견 — confirm_btn 비움")
+                log("⚠️  ScheduleRecommendationCard '로 확정' 버튼 미발견 — confirm_btn 비움")
                 confirm_btn = []
             else:
-                confirm_btn = ["vote_card_present"]  # sentinel: VoteCardSection 마운트 확인
-                log("VoteCardSection '투표하기' 버튼 확인 — gate 통과")
+                confirm_btn = ["vote_card_present"]  # sentinel: ScheduleRecommendationCard 마운트 확인
+                log("ScheduleRecommendationCard '로 확정' 버튼 확인 — gate 통과")
 
         # ─────────────────────────────────────────────────
-        # ACT 3 — ★시간대 변경 → 게스트 vote → 방장 확정
+        # ACT 3 — ★TimeBar 합의 흐름 → 호스트 확정
         # ─────────────────────────────────────────────────
         act3_completed = False
         if confirm_btn and not flags.skip_act_3:
-            hr("ACT 3 — ★시간대 변경 → 게스트 3명 vote → 방장 확정 팝업")
+            hr("ACT 3 — ★시간대 변경 → TimeBar 게스트 선택 → 호스트 슬롯 클릭 → 합의 확정")
 
             # step 0: 슬롯 선택 확보 (ACT 2.5에서 이미 클릭했으나 re-click으로 선택 상태 보장).
-            # ScheduleRecommendationCard:424 — 동일 슬롯 재클릭은 setSelectedSlotId(same) → 무해.
             log("step 0 — vote_card 슬롯 선택 확보 (ACT 2.5 선택 상태 재확인)")
             slot_ok = await click_first_vote_slot(page)
             if not slot_ok:
@@ -761,79 +782,101 @@ async def run_demo(flags: DemoFlags) -> None:
             else:
                 await asyncio.sleep(0.8)
 
-                # step 1: "시간대 변경" 버튼 클릭
+                # step 1: "시간대 변경" 버튼 클릭 → TimeBarSelector 마운트
                 log("step 1 — '시간대 변경' 버튼 클릭")
                 changed = await click_button_by_text(page, "시간대 변경")
                 if not changed:
                     log("[BACKUP] '시간대 변경' 버튼 클릭 실패 — ACT 3 스킵")
                 else:
-                    await asyncio.sleep(pace["act_3_after_change"])
+                    await asyncio.sleep(pace["act_3_after_change"])  # TimeBar 카드 렌더 시청
 
-                    # step 2: meeting_id 조회 → 게스트 3명 vote API 호출
-                    log("step 2 — meeting_id 조회 + 게스트 3명 vote API 호출")
-                    meeting_id = get_pending_meeting_id(room_id, host_token)
-                    if meeting_id is None:
-                        log("[BACKUP] meeting_id 조회 실패 — ACT 3 vote 스킵")
+                    # step 2: confirmedDate 추출 — TimeBarSelector gridId 패턴에서 역산.
+                    # gridId = "timebar-{YYYYMMDD}" → DOM element id 첫 매칭으로 날짜 추출.
+                    log("step 2 — confirmedDate 추출 (TimeBar DOM id 파싱)")
+                    raw_date_str = await js_eval(
+                        page,
+                        """(() => {
+                          const el = document.querySelector('[id^="timebar-"]');
+                          if (!el) return null;
+                          const m = el.id.match(/timebar-(\\d{8})/);
+                          if (!m) return null;
+                          const s = m[1];
+                          return s.slice(0,4) + '-' + s.slice(4,6) + '-' + s.slice(6,8);
+                        })()""",
+                    )
+                    if not raw_date_str:
+                        log("[BACKUP] confirmedDate DOM 파싱 실패 — ACT 3 스킵")
                     else:
-                        log(f"  meeting_id = {meeting_id}")
-                        # 수현 → 0, 민수 → 0, 예린 → 1 (만장일치 아니어도 conflict 시연용)
-                        vote_as_user(meeting_id, suhyun.token, 0, name_hint="수현")
-                        await asyncio.sleep(pace["act_3_vote_gap"])
-                        vote_as_user(meeting_id, minsu.token, 0, name_hint="민수")
-                        await asyncio.sleep(pace["act_3_vote_gap"])
-                        vote_as_user(meeting_id, yerin.token, 1, name_hint="예린")
-                        await asyncio.sleep(pace["act_3_vote_gap"] + 1.0)
+                        confirmed_date = raw_date_str
+                        log(f"  confirmedDate = {confirmed_date}")
 
-                        # step 3: 지민(방장)도 vote — VoteCardSection의 "투표하기" 버튼
-                        log("step 3 — 방장(지민) '투표하기' 클릭")
-                        # 첫 번째 "투표하기" 버튼 클릭 (슬롯 0 투표)
-                        host_vote_clicked = await click_button_by_text(page, "투표하기")
-                        if not host_vote_clicked:
-                            log("[BACKUP] 방장 '투표하기' 미발견 — host_token 직접 vote")
-                            vote_as_user(meeting_id, host_token, 0, name_hint="지민(방장)")
-                        # 방장 vote API 응답 → votedOptionIndex 갱신 + isHost 확인 대기
-                        await asyncio.sleep(pace["act_3_after_change"] + 1.5)
+                        # step 2 cont: 게스트 3명 WS time_selection 송신 (오후 6:00~8:30 = slot 18~23)
+                        # TimeBar '다른 분들' row 실시간 채워짐 (when2meet 스타일 시각화)
+                        log("  게스트 3명 time_selection WS 송신 (오후 6:00~8:30, slot 18~23)")
+                        await send_time_selection_via_ws(suhyun.token, room_id, confirmed_date, 18, 23)
+                        log("  게스트 수현 → TimeBar 6시~8시30분 선택")
+                        await asyncio.sleep(pace["act_3_vote_gap"])
 
-                        # step 4: "일정 확정하기" 클릭 (방장만 활성) → 팝업 → "확정하기"
-                        # wait_for_enabled_button: disabled 속성까지 검사 (단순 visible 체크 미흡)
-                        log("step 4 — '일정 확정하기' 활성 대기 (최대 30s)")
-                        finalize_ok = await wait_for_enabled_button(page, "일정 확정하기", timeout_s=30.0)
-                        if not finalize_ok:
-                            log("[BACKUP] '일정 확정하기' 버튼 미활성 — ACT 4로 fallback")
+                        await send_time_selection_via_ws(minsu.token, room_id, confirmed_date, 18, 23)
+                        log("  게스트 민수 → TimeBar 6시~8시30분 선택")
+                        await asyncio.sleep(pace["act_3_vote_gap"])
+
+                        await send_time_selection_via_ws(yerin.token, room_id, confirmed_date, 18, 23)
+                        log("  게스트 예린 → TimeBar 6시~8시30분 선택")
+                        await asyncio.sleep(pace["act_3_after_votes"])  # '다른 분들' row 채워짐 시청
+
+                        # step 3: 호스트 TimeBar 슬롯 클릭 — slot 18(오후 6:00) → slot 23(오후 8:30)
+                        # '내 시간' + '전원' row 초록색 (COLOR_EVERYONE_AGREE) 시각화 핵심
+                        log("step 3 — 호스트 TimeBar 슬롯 클릭 (slot 18 start → slot 23 end)")
+                        start_btn = await page.query_selector('[id$="-mine-18"]')
+                        if start_btn:
+                            await start_btn.click()
+                            await asyncio.sleep(pace["act_3_host_click_gap"])
                         else:
-                            await click_button_by_text(page, "일정 확정하기")
-                            await asyncio.sleep(pace["act_3_after_popup"])
+                            log("  [BACKUP] slot 18 selector 미발견 — aria-label fallback 시도")
+                            await page.click('[aria-label*="내 시간 18:00"]', timeout=2000)
+                            await asyncio.sleep(pace["act_3_host_click_gap"])
 
-                            # 팝업의 "확정하기" 클릭 (취소 아님)
-                            log("step 5 — 확정 팝업 '확정하기' 클릭")
-                            popup_ok = await click_button_by_text(page, "확정하기")
-                            if not popup_ok:
-                                log("[BACKUP] '확정하기' 버튼 미발견")
-                            else:
-                                await asyncio.sleep(pace["after_confirm"])
-                                act3_completed = True
-                                log("ACT 3 완료 — 시간 확정 → Partial maedeup_card 자동 발행 예정")
+                        end_btn = await page.query_selector('[id$="-mine-23"]')
+                        if end_btn:
+                            await end_btn.click()
+                        else:
+                            log("  [BACKUP] slot 23 selector 미발견 — aria-label fallback 시도")
+                            # slot 23 시각 = 9h + 23×30m = 20:30 (오후 8:30)
+                            try:
+                                await page.click('[aria-label*="내 시간 20:30"]', timeout=2000)
+                            except Exception:
+                                # 더 robust: 전체 슬롯 중 23번째 cell 클릭 또는 mine row 의 23번 index
+                                log("  [BACKUP2] aria-label 도 미발견 — 인덱스 기반 시도")
+                                await page.evaluate(
+                                    "() => { const cells = document.querySelectorAll('[id*=\"-mine-\"]'); "
+                                    "if (cells[23]) cells[23].click(); else if (cells.length > 0) cells[cells.length-1].click(); }"
+                                )
+                        # 호스트 slot 클릭 → sendTimeSelection WS 브로드캐스트 → 전원 row 초록 전환 시청
+                        await asyncio.sleep(pace["act_3_after_host_vote"])
+
+                        # step 4: A3-2 "추천 시간 그대로 확정" 버튼 활성 대기 + 호스트 클릭
+                        # scheduleConsensus 도달(전원 time_selection 완료) → InfoPane 버튼 노출.
+                        log("step 4 — '추천 시간 그대로 확정' 버튼 활성 대기 (최대 30s)")
+                        finalize_ok = await wait_for_enabled_button(page, "추천 시간 그대로 확정", timeout_s=30.0)
+                        if not finalize_ok:
+                            log("[BACKUP] '추천 시간 그대로 확정' 미활성 — 짧은 텍스트로 재시도")
+                            finalize_ok = await wait_for_enabled_button(page, "그대로 확정", timeout_s=5.0)
+
+                        if finalize_ok:
+                            log("step 4 — 호스트 '추천 시간 그대로 확정' 클릭")
+                            await click_button_by_text(page, "추천 시간 그대로 확정", contains=True)
+                            await asyncio.sleep(pace["act_3_after_confirm_click"])
+                            act3_completed = True
+                            log("ACT 3 완료 — TimeBar 합의 + 호스트 확정 → maedeup_card (partial) 자동 발행 예정")
+                        else:
+                            log("⚠️ ACT 3 — A3-2 '추천 시간 그대로 확정' 미발현, ACT 4로 fallback")
 
         # ─────────────────────────────────────────────────
-        hr("ACT 4 — Partial maedeup_card 자동 발행" + (" (ACT 3 skip → vote_card 직접 확정)" if not act3_completed else ""))
+        hr("ACT 4 — Partial maedeup_card 자동 발행")
         # ─────────────────────────────────────────────────
 
-        if not act3_completed and confirm_btn:
-            # A4 적용 후 ScheduleRecommendationCard "로 확정" 버튼 hide.
-            # fallback: InfoPane VoteCardSection "일정 확정하기" 활성 대기 + 클릭.
-            # (방장이 투표 완료 상태여야 버튼 활성 — 미투표 시 disabled 유지)
-            log(f"카드 확인 시간 ({pace['view_pause']}s) 후 VoteCardSection '일정 확정하기' 시도")
-            await asyncio.sleep(pace["view_pause"])
-            finalize_ok = await wait_for_enabled_button(page, "일정 확정하기", timeout_s=15.0)
-            if finalize_ok:
-                log("ACT 4 fallback — '일정 확정하기' 활성 → 클릭")
-                await click_button_by_text(page, "일정 확정하기")
-                await asyncio.sleep(1.0)
-                await click_button_by_text(page, "확정하기")
-                await asyncio.sleep(pace["after_confirm"])
-            else:
-                log("⚠️  ACT 4 fallback — '일정 확정하기' 미활성 (방장 미투표 or 버튼 미발견) — 진행 차단")
-        elif act3_completed:
+        if act3_completed:
             # ACT 3에서 이미 확정 → maedeup_card (partial) WebSocket 수신 대기만
             log(f"Partial 카드 발행 대기 ({pace['view_pause']}s)")
             await asyncio.sleep(pace["view_pause"])

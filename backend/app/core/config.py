@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     # 라이브 Gemini 호출에 대한 안전망.
     DEMO_FALLBACK_ENABLED: bool = False
 
+    # 모임 confirm 시 구성원 Google Calendar 자동 등록 여부.
+    # 기본 True (운영 환경 안전). 시연 중 반복 confirm으로 캘린더 오염 방지 시 false 설정.
+    AUTO_CALENDAR_PUSH: bool = True
+
     def required_env_fields(self) -> list[str]:
         required = [
             "GEMINI_API_KEY",

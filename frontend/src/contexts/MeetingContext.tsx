@@ -330,8 +330,8 @@ export function MeetingProvider({
       const slots = card.time_options;
       const dateSet = new Set(slots.map((s) => s.start_at.split("T")[0]));
       const dates = Array.from(dateSet);
-      const shouldResetAwaiting =
-        card.meeting_id !== prev.voteAwaitingTimeMeetingId;
+      // A3: 새 vote_card 수신 시 (같은 meeting이든 다른 meeting이든) awaiting 해제.
+      // "시간대 변경" 요청 후 새 카드가 도착했다면 = 다른 옵션 받음 = 정상 vote 흐름 복귀.
       // Don't reset phase if already past time confirmation (prevents
       // pipeline re-triggering from resetting the flow)
       const phaseAlreadyAdvanced =
@@ -341,7 +341,7 @@ export function MeetingProvider({
       return {
         ...prev,
         voteCard: card,
-        voteAwaitingTimeMeetingId: shouldResetAwaiting ? null : prev.voteAwaitingTimeMeetingId,
+        voteAwaitingTimeMeetingId: null,
         candidateSlots: slots,
         highlightedDates: dates,
         ...(phaseAlreadyAdvanced ? {} : {
@@ -356,7 +356,19 @@ export function MeetingProvider({
   }, []);
 
   const setVoteUpdate = useCallback((update: VoteUpdatePayload | null) => {
-    setState((prev) => ({ ...prev, voteUpdate: update }));
+    setState((prev) => {
+      // A2: vote_update 수신 시 해당 meeting의 awaiting 해제.
+      // "누군가 투표했다" = 이미 vote 진행 중 → 시간 재추천 기다릴 필요 없음.
+      const shouldClearAwaiting =
+        update != null &&
+        prev.voteAwaitingTimeMeetingId != null &&
+        update.meeting_id === prev.voteAwaitingTimeMeetingId;
+      return {
+        ...prev,
+        voteUpdate: update,
+        ...(shouldClearAwaiting ? { voteAwaitingTimeMeetingId: null } : {}),
+      };
+    });
   }, []);
 
   const setPlaceRecommendation = useCallback((rec: PlaceRecommendationPayload | null, meetingId?: number | null) => {

@@ -1,18 +1,18 @@
 # 매듭 (Maedeup) 인수인계 문서
 
-> 최종 갱신: 2026-05-15
-> 브랜치: `docs/spec-time-coordination` (main 기반 53+ 커밋 ahead, origin 동기 `c8a4a7d` 까지 push 완료)
+> 최종 갱신: 2026-05-16
+> 브랜치: `docs/spec-time-coordination` (main 기반 75+ 커밋 ahead, origin 동기 `4a98d2f` 까지 push 완료)
 > 이전 버전(2026-04-14 작성, `feature/code-review-improvements` 기준)은 완전 폐기.
 
 ---
 
 ## 1. 개요
 
-졸업 프로젝트. 채팅방에서 시간·장소 교착을 자동 감지해 투표카드·장소추천·매듭카드를 생성하는 AI 모임 조율 플랫폼. **현재 상태**: spec v1.0 완성(1917줄, 3파일 분할), 미구현 12건 코드화(PR-V1.5) 완료, pytest 91/91 PASS, QA dry-run v2 PASS — **시연 직전(5/19·5/20 발표 예정)**. 시연 자동화 스크립트 v3(`.gstack-demo.py` 812줄)까지 완성.
+졸업 프로젝트. 채팅방에서 시간·장소 교착을 자동 감지해 투표카드·장소추천·매듭카드를 생성하는 AI 모임 조율 플랫폼. **현재 상태**: spec v1.0 완성(1917줄, 3파일 분할), 미구현 12건 코드화(PR-V1.5) 완료, pytest 91/91 PASS, QA dry-run v2 PASS, **Option C (TimeBar in-card 호스트 확정) 라운드 1~9 완성 — 시연 D-6 (2026-05-22 금 점심)**. 시연 영상 촬영 2026-05-18 (월) 예정.
 
 ---
 
-## 2. 현재 상태 (2026-05-15)
+## 2. 현재 상태 (2026-05-16)
 
 ### spec 진행도
 - **v1.0 완성** (2026-05-14, SHA `1a9f1e2`): §1~§13 전체 완료, 3-파일 분할(PR-V)
@@ -20,7 +20,7 @@
   - `docs/handoff/spec-time-coordination.md` (619줄) — 시간 조율 본문
   - `docs/handoff/spec-place-recommendation.md` (459줄) — 장소 추천 본문
 - **v2 계획서 완성** (SHA `b3d1509`): 38 항목, P0 8건·P1 18건·P2 12건, 10 카테고리, 신규 Q18~Q25, PR-v2.0~v2.5 분할안 — `docs/handoff/2026-05-14-spec-v2-plan.md`
-- v2 본문 작성은 **시연 통과 + retrospective 후** 시작 권고
+- v2 본문 작성은 **시연 통과 + retrospective 후** 시작 권고 (시연 D-6, 2026-05-22 금 점심)
 
 ### 코드 PR 흐름 (이번 브랜치 내 주요 PR)
 
@@ -35,8 +35,9 @@
 | PR-V1.5 | `90131f2` | spec v1.0 미구현 12건 + Codex P1·P2 통합 | ✅ push 완료 |
 | PR-V1.5.1 | `1892b50` | alembic sqlite·JSON dialect·SENTINEL hotfix | ✅ push 완료 |
 | PR-V1.5.2 | `aaec29d` | alembic batch_alter_table 7파일 + test seed | ✅ push 완료 |
+| Option C | `ecee744`~`4a98d2f` | TimeBar in-card 확정 + CalendarPane 배지 제거 + 자연 표현 + 시나리오 정합성 (22 commit) | ✅ push 완료 |
 
-**푸시 상태**: origin 동기 완료, `c8a4a7d`(EOL+gitignore hygiene)까지 모두 push (2026-05-15). 이후 작업은 사용자 명시 승인 후 push.
+**푸시 상태**: origin 동기 완료, `4a98d2f`(시나리오 정합성 7건 fix)까지 모두 push (2026-05-16). 이후 작업은 사용자 명시 승인 후 push.
 
 ### QA dry-run v2 결과 (2026-05-15)
 - **PASS** (taskId `a9dbbaccb1eb8c374`, 8m38s, Playwright MCP)
@@ -44,11 +45,20 @@
 - 백엔드 ERROR/EXCEPTION 0건, 스크린샷 6장 저장
 - P0 버그: 0건. 잔존: LIMIT-7(free-slots 1095ms, P2), LIMIT-8(favicon 404, P3)
 
-### 시연 자동화 v3 상태 (2026-05-15)
-- `.gstack-demo.py` 812줄 (v3 완성, SHA `9c8c076` 포함 origin 푸시 완료)
-- ACT 0.5(Personal Data 모달)·ACT 1·ACT 2·ACT 3·ACT 4·ACT 5·ACT 5.5(Q5 hybrid 토글) 모두 자동화
+### Option C dry-run 결과 (2026-05-16)
+- **ACT 3 primary 경로 GREEN** (TimeBar in-card 확정 흐름, 라운드 9 완성)
+- 캘린더 페인 X/Y 표시 — 빨간 배지 0 (중복 제거 2차 commit `bc315f1`)
+- TimeBar 유지 + "이 시간으로 확정" 버튼 시각 확인 (스크린샷 5건)
+- ACT 5 장소 확정: 변동성 잔존 (이전 라운드 GREEN, round selector 일부 fail 보고)
+- 핵심 발견: TS build error 로 stale image 7번 누적 → 8라운드에서 진짜 GREEN 도달
+
+### 시연 자동화 v3 상태 (2026-05-16)
+- `.gstack-demo.py` 최신 (Option C + 자연 표현 + 5초 대기 패치 포함, `4a98d2f` 기준)
+- ACT 0.5(Personal Data 모달)·ACT 1·ACT 2·ACT 3(TimeBar in-card)·ACT 4·ACT 5·ACT 5.5(Q5 hybrid 토글) 모두 자동화
 - CLI 인자: `--v2-mode` / `--skip-act-0-5` / `--skip-act-3` / `--skip-act-5-5`
 - `backend/scripts/seed_demo_calendar_busy.py` 신설 (272줄): synthetic busy 시드, ACT 2.5 majority_fallback 안정 발동
+- **ACT 2 발화 자연 표현**: "차주" alias + "그 다음주" +14일 분기 + `DEMO_TARGET_DATE` 상수 (5/18 촬영 기준 하드코딩, `8b03c04`)
+- **ACT 3 step 4 5초 대기**: 호스트 버튼 노출 시각 인지를 위한 대기 추가 (`aac6303`)
 
 ---
 
@@ -208,19 +218,22 @@ ACT 흐름: `0.5(Personal Data) → 1(방 생성) → 2(채팅 stalemate) → 3(
 
 ## 5. 현재 브랜치 / 미해결 backlog
 
-현재 브랜치: `docs/spec-time-coordination` (main 대비 53+ 커밋 ahead, origin 동기 완료)
+현재 브랜치: `docs/spec-time-coordination` (main 대비 75+ 커밋 ahead, origin 동기 완료 `4a98d2f`)
 별도 운영 브랜치: `chore/claude-subagents` (로컬, main 기반 — `.claude/agents/*.md` 5개 + .gitattributes + .gitignore PNG)
 
 상세 TODO는 `TODOS.md` 및 `docs/TODO.md` 참조. 핵심 미결 항목:
 
 | 우선순위 | 항목 | TODOS.md 참조 |
 |---|---|---|
+| P0 최우선 | 시연 영상 촬영 (2026-05-18 월) | — |
+| P0 최우선 | 시연 D-1 최종 리허설 (2026-05-21 목) | — |
+| P0 시급 | v2 spec 본문 작성 시작 (38항목, 시연 통과 후) | TODOS.md §1 |
 | P0 시급 | 해결점 O 구현 (정규식 단축 사각지대) | TODOS.md §2 |
 | P0 시급 | 해결점 P 정교화 (번복·게스트 정책) | TODOS.md §3 |
-| P0 시급 | v2 spec 본문 작성 시작 (38항목, 시연 후) | TODOS.md §1 |
 | P1 다음 세션 | ACT 4 confirm 후속 메시지 / ACT 5 quick_classify 보강 | TODOS.md §4 |
 | P1 다음 세션 | F4 narrator 백엔드 구현 (LIMIT-9, Q17=A) | TODOS.md §6 |
 | P1 다음 세션 | LIMIT-7 free-slots Redis 캐싱 | TODOS.md §5 |
+| P1 다음 세션 | 장소 추천 vote 시스템 검토 (v2 PR-v2.1 후보) | TODOS.md 신규 |
 | P2 backlog | When2Meet 프라이버시 (InfoPane 대개편 후) | TODOS.md §8 |
 
 ---
@@ -229,13 +242,14 @@ ACT 흐름: `0.5(Personal Data) → 1(방 생성) → 2(채팅 stalemate) → 3(
 
 | 파일 | 역할 |
 |---|---|
-| `docs/handoff/2026-05-14-spec-progress.md` | 진행 핸드오프 v19 (이번 세션 커밋 표·결정 전체) |
+| `docs/handoff/2026-05-16-option-c-natural.md` | **오늘 세션 핸드오프** (Option C + 자연 표현 + 시나리오 정합성, 2026-05-16) |
+| `docs/handoff/2026-05-14-spec-progress.md` | 진행 핸드오프 v20 (spec v1.0 + PR-V1.5 + QA v2 + v3 자동화 + Option C 통합 보고) |
 | `docs/handoff/2026-05-14-spec-v2-plan.md` | v2 spec 38항목 계획서 (PR-v2.0~v2.5 분할안) |
 | `docs/handoff/spec-common.md` | spec v1.0 공통 SoT (권한·데이터·API·비기능·결정 안건·변경 이력) |
 | `docs/handoff/spec-time-coordination.md` | spec v1.0 시간 조율 본문 |
 | `docs/handoff/spec-place-recommendation.md` | spec v1.0 장소 추천 본문 |
 | `docs/handoff/audit-findings.md` | 해결점 A~P 누적 (16건, 코드/git 검증 완료) |
-| `docs/handoff/demo-scenario-v3.md` | 시연 시나리오 SoT (2026-05-15, ACT 0.5~5.5) |
+| `docs/handoff/demo-scenario-v3.md` | 시연 시나리오 SoT (2026-05-16 갱신, ACT 0.5~5.5) |
 | `docs/handoff/2026-05-14-spec-review-guide.md` | 외부 리뷰 가이드 (심사위원·협업자용, 212줄) |
 | `docs/SESSION_STATE.md` | 컨텍스트 복구 4-파일 중 메인 (핵심 파일 경로·환경 상태) |
 | `docs/TODO.md` | 진행 중·남은 작업 (v1.6 backlog 15항목 포함) |
@@ -248,8 +262,9 @@ ACT 흐름: `0.5(Personal Data) → 1(방 생성) → 2(채팅 stalemate) → 3(
 2. `docs/DECISIONS.md` (30건 결정 사항)
 3. `docs/TODO.md` (진행 중·남은 작업)
 4. `docs/BUGS.md` (버그 인벤토리)
-5. `docs/handoff/2026-05-14-spec-progress.md` (커밋 표·상세 진행)
-6. `git log --oneline -40` (최근 커밋 스냅샷)
+5. `docs/handoff/2026-05-16-option-c-natural.md` (오늘 세션 핸드오프 — 가장 최신)
+6. `docs/handoff/2026-05-14-spec-progress.md` (커밋 표·상세 진행 v20)
+7. `git log --oneline -40` (최근 커밋 스냅샷)
 
 ---
 

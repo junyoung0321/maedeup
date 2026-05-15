@@ -1,7 +1,7 @@
-# 시간+장소 기능정의서 작성 — 진행 상태 핸드오프 (v19)
+# 시간+장소 기능정의서 작성 — 진행 상태 핸드오프 (v20)
 
 작성: 2026-05-14
-최종 갱신: 2026-05-15 (v3 자동화 PR — `.gstack-demo.py` 풀 패치 + `seed_demo_calendar_busy.py` 신설 + 푸시 완료)
+최종 갱신: 2026-05-16 (v20 — Option C 라운드 1~9 완성 + CalendarPane 배지 제거 + ACT 2 자연 표현 + 시나리오 정합성 7건 fix, HEAD `4a98d2f`)
 작성자: 본인 + Claude Opus 4.7 (PM 모드 + QA + Playwright MCP)
 브랜치: `docs/spec-time-coordination` (origin 푸시 = `e996bba` 시점까지, 그 후 로컬 `0ffdfbe`까지 진행)
 대상 문서 (PR-V로 3분할):
@@ -341,3 +341,56 @@ docker rebuild + pytest 실행
 다음 세션 시작 시 사용자 결정으로:
 - (a) CLAUDE.md 갱신 (PR-2 또는 별도)
 - (b) 본 핸드오프 문서 우선, CLAUDE.md 그대로
+
+---
+
+## v20 추가 (2026-05-16 — Option C 완성 + 자연 표현 + 시나리오 정합성)
+
+작성: 2026-05-16 / HEAD `4a98d2f` / 22 commit push 완료
+
+### v20 핵심 성과
+
+| 항목 | 상세 | commit |
+|---|---|---|
+| Option C 라운드 1~9 완성 | TimeBar in-card "이 시간으로 확정" 호스트 버튼 확정 흐름 | `ecee744`~`cb0acee` |
+| TS build error 7회 → GREEN 1회 | stale image 패턴 발견, 8라운드에서 진짜 GREEN 달성 | `ad22516`, `cb0acee` |
+| CalendarPane 빨간 배지 제거 | avail.count 중복 해소, X/Y 표기만 유지 | `8ce6b46`, `bc315f1` |
+| ACT 2 자연 표현 + backend 보강 | "차주" alias + "그 다음주" +14일 분기 + `DEMO_TARGET_DATE` 상수 | `2e8ee9f`, `8b03c04` |
+| 시나리오 정합성 7건 fix | D-1~D-7 체크리스트 기반 (발표일 5/22·촬영일 5/18 기준) | `4a98d2f` |
+| ACT 3 step 4 5초 대기 | 호스트 버튼 노출 시각 인지 페이스 | `aac6303` |
+| SoT 4파일 갱신 | SESSION_STATE + TODO + DECISIONS + BUGS | `646d252` |
+
+### v20 커밋 표 (22건)
+
+| SHA | 메시지 요약 | 영역 |
+|---|---|---|
+| `ecee744` | Option C — 호스트 in-card "이 시간으로 확정" 버튼 도입 | frontend |
+| `ffd4e1f` | ACT 3 TimeBar in-card 확정 셀렉터 갱신 | demo |
+| `3528f19` | .pytest_cache dockerignore 추가 | chore |
+| `8a7c7d5` | ScheduleRecommendationCard isHost 낙관적 렌더 | frontend |
+| `cdf727b` | maedeup_card auto phase-advance 가드 | frontend |
+| `1fe9b17` | setVoteCard phaseAlreadyAdvanced dateConfirmed 포함 | frontend |
+| `ad22516` | TS build error — InfoPanePhase 없는 비교 제거 | frontend |
+| `cb0acee` | TS union narrowing — maedeup_card guard 추가 | frontend |
+| `8ce6b46` | 셀 배지 X/Y 형식으로 변경 | frontend |
+| `bc315f1` | 빨간 배지 완전 제거 | frontend |
+| `0df31ae` | qa-runtime 스크린샷 gitignore 패턴 추가 | chore |
+| `aac6303` | ACT 3 step 4 5초 대기 | demo |
+| `e8a10c4` | option-c-*.png gitignore 패턴 추가 | chore |
+| `646d252` | Session-state SoT 4파일 갱신 | docs |
+| `8119c75` | demo-scenario-v3 Option C 패치 반영 | docs |
+| `2e8ee9f` | "차주" alias + "그 다음주" +14일 분기 | backend |
+| `8b03c04` | ACT 2 발화 자연 표현 하드코딩 (5/18 기준) | demo |
+| `58eb58e` | demo-scenario ACT 2 날짜 환산 갱신 | docs |
+| `4a98d2f` | 시나리오 정합성 7건 fix D-1~D-7 | docs |
+
+(전체 22 commit: 위 19건 + `cfaaf68`, `558c57c`, `39fd8f9` 라운드 4 후속 포함)
+
+### v20 이후 상태
+
+- **시연 D-6** (2026-05-22 금 점심), 영상 촬영 2026-05-18 (월)
+- **ACT 3 primary 경로**: GREEN (스크린샷 5건 확인)
+- **ACT 5 장소 확정**: 변동성 잔존 (round selector 일부 fail — manual fallback 시나리오 숙지 필요)
+- **남은 P0**: 시연 영상 촬영, D-1 리허설 (`TODOS.md §0`)
+- **남은 P1 (시연 후)**: v2 spec PR-v2.0 착수, 해결점 O·P 구현, 장소 추천 vote 시스템 검토
+- **SoT**: `docs/handoff/2026-05-16-option-c-natural.md` (오늘 세션 상세 기록)

@@ -1,14 +1,31 @@
 # TODOS — 매듭 프로젝트
 
-> 최종 갱신: 2026-05-15
-> 기준: PR-V1.5.2 완료 + QA dry-run v2 PASS + 시연 자동화 v3 완성 + EOL/gitignore hygiene (`c8a4a7d`) push 완료
+> 최종 갱신: 2026-05-16
+> 기준: Option C 라운드 1~9 완성 + CalendarPane 배지 제거 + ACT 2 자연 표현 + 시나리오 정합성 7건 fix (HEAD `4a98d2f`) push 완료
 > 이전 버전(When2Meet 1건만) 폐기.
+
+---
+
+## 0. 시연 준비 [P0 최우선 — 시연 D-6]
+
+**시연 일정**: 2026-05-22 (금) 점심 발표 (D-6 기준, 2026-05-16 현재)
+**영상 촬영**: 2026-05-18 (월) 예정
+
+### 시연 D-1 체크리스트 (2026-05-21 목 실행)
+
+- [ ] Docker 4 컨테이너 healthy 확인 (`sg docker -c "docker compose ps"`)
+- [ ] `.gstack-demo-token` 파일 최신 JWT 갱신
+- [ ] Personal Data 시드: `python backend/scripts/seed_demo_personal_data.py --room <ID>`
+- [ ] 캘린더 busy 시드: `python backend/scripts/seed_demo_calendar_busy.py`
+- [ ] 전체 시연 dry-run 1회 (`.gstack-demo.py`)
+- [ ] ACT 2 날짜 표현 발표일 기준 수정 확인 (`DEMO_TARGET_DATE`, `8b03c04`)
+- [ ] 스크린샷 확인 (TimeBar + "이 시간으로 확정" 버튼 노출)
 
 ---
 
 ## 1. v2 spec 본문 작성 [P0 — 시연 통과 후 즉시]
 
-**의존**: 시연(5/19·5/20) 통과 → retrospective 회의 → Q18~Q25 결정 라운드 후 시작 권고.
+**의존**: 시연(2026-05-22) 통과 → retrospective 회의 → Q18~Q25 결정 라운드 후 시작 권고.
 **SoT**: `docs/handoff/2026-05-14-spec-v2-plan.md` (38항목, 10 카테고리, PR-v2.0~v2.5 분할안)
 
 | PR 단계 | 내용 | 예상 분량 | 신규 Q |
@@ -128,11 +145,24 @@
 
 ---
 
-## 다음 세션 진입 순서 (권고)
+## 11. 장소 추천 vote 시스템 검토 [P1 backlog — v2 spec PR-v2.1 후보]
 
-1. **시연 진행** (Windows PowerShell 또는 WSL venv, `python .gstack-demo.py`) — 사전 준비 완료, 라운드 4 GREEN 적용됨
-2. **시연 직후**: retrospective 회의 → Q18~Q25 결정 라운드
-3. **v2 spec PR-v2.0** 착수 (시연 결과 반영 후)
-4. **해결점 O·P 코드 구현** (v2 PR-v2.1과 묶음 권고)
-5. **코덱스 P1 backlog** (본 문서 §10) 묶음 PR-V1.6 으로 진행
-6. **v1.6 backlog** (§7) 중 P1 항목 (F4 narrator·캐싱 등)
+**배경**: 현재 장소 추천 카드는 AI 단방향 추천 (호스트가 확정). 멤버 선호도를 vote로 수렴하는 시스템이 v2 spec PR-v2.1 후보로 부상.
+**검토 항목**:
+- 장소 vote_card 페이로드 설계 (시간 vote_card와 구분 또는 통합)
+- 멤버 vote 집계 → 최종 확정 흐름
+- spec-place-recommendation.md §6 확장 여부
+**연관**: `docs/handoff/2026-05-14-spec-v2-plan.md` A3 항목
+
+---
+
+## 다음 세션 진입 순서 (권고, 2026-05-16 갱신)
+
+1. **시연 영상 촬영** (2026-05-18 월) — Option C 라운드 9 GREEN 기준, `python .gstack-demo.py`
+2. **시연 D-1 리허설** (2026-05-21 목) — 본 문서 §0 체크리스트 실행
+3. **시연 진행** (2026-05-22 금 점심)
+4. **시연 직후**: retrospective 회의 → Q18~Q25 결정 라운드
+5. **v2 spec PR-v2.0** 착수 (시연 결과 반영 후)
+6. **해결점 O·P 코드 구현** (v2 PR-v2.1과 묶음 권고)
+7. **코덱스 P1 backlog** (본 문서 §10) 묶음 PR-V1.6 으로 진행
+8. **v1.6 backlog** (§7) 중 P1 항목 (F4 narrator·캐싱 등)

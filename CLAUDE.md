@@ -2,7 +2,7 @@
 
 ## 진행 중인 작업
 세션 시작 시 `docs/handoff/` 폴더의 가장 최근 문서를 먼저 확인하세요.
-**현재 task**: spec v1.0 + PR-V1.5 + QA v2 PASS + v3 자동화 + **자동 루프 라운드 4 GREEN** (ACT 3 confirm 자동화 복구 + ACT 5.5 토글 enable, `0f3802b` + `a2e9b16`, run3 2m13s exit 0). **다음**: v2 spec 본문 작성 (`docs/handoff/2026-05-14-spec-v2-plan.md` 38항목 기반) + 코덱스 P1 backlog 5건 (`docs/handoff/2026-05-15-round4-green.md` §6) + 해결점 O·P 구현.
+**현재 task**: spec v1.0 + Option C (TimeBar in-card 호스트 확정) + CalendarPane 빨간 배지 제거 + ACT 2 자연 표현 + 시나리오 정합성 7건 fix + 시연 D-6 (2026-05-22 금 점심) 준비 완료 (HEAD `4a98d2f`). **다음**: 시연 영상 5/18 (월) 촬영 + v2 spec 본문 작성.
 시연 자동화 (WSL venv v2, 2026-05-15):
 - 터미널 1: `~/.venv-maedeup-demo/bin/python3 .gstack-browser-launch.py`
 - 터미널 2: `~/.venv-maedeup-demo/bin/python3 .gstack-demo.py` (또는 `--fast`)
@@ -14,16 +14,18 @@
 3. ACT 4 confirm 후속 메시지 / ACT 5 quick_classify 보강
 4. LIMIT-7 (free-slots 캐싱), LIMIT-8
 5. F4 narrator (Q17 후속)
-6. 코덱스 P1 backlog (라운드 4 후속, TODOS.md §10) — vote_update 좁히기·VoteCardSection 회귀 테스트·timeConfirmed mount·seed 주석·refresh state 통일
+6. 코덱스 P1 backlog (Option C 라운드 1~9 완료 후 추가 필요 검토, TODOS.md §10) — vote_update 좁히기·VoteCardSection 회귀 테스트·timeConfirmed mount·seed 주석·refresh state 통일
+7. 장소 추천 vote 시스템 검토 (v2 spec PR-v2.1 후보)
 참고:
+- `docs/handoff/2026-05-16-option-c-natural.md` (오늘 진행 기록 — Option C 라운드 1~9 + 자연 표현 + 시나리오 정합성, 2026-05-16)
 - `docs/handoff/2026-05-15-round4-green.md` (자동 루프 5라운드 + GREEN 도달, 2026-05-15)
-- `docs/handoff/2026-05-14-spec-progress.md` (v19 — spec v1.0 + PR-V1.5 + QA v2 + v3 자동화 통합 보고)
+- `docs/handoff/2026-05-14-spec-progress.md` (v20 — spec v1.0 + PR-V1.5 + QA v2 + v3 자동화 + Option C 통합 보고)
 - `docs/handoff/2026-05-14-spec-v2-plan.md` (v2 spec 38 항목 계획서)
-- `docs/handoff/demo-scenario-v3.md` (시연 시나리오 SoT, 2026-05-15 갱신)
+- `docs/handoff/demo-scenario-v3.md` (시연 시나리오 SoT, 2026-05-16 갱신)
 - `docs/handoff/spec-time-coordination.md` (619줄, v1.0)
 - `docs/handoff/spec-common.md`
 - `docs/handoff/audit-findings.md` (해결점 A~P)
-- `docs/SESSION_STATE.md`, `docs/TODO.md`, `docs/DECISIONS.md`, `docs/BUGS.md` (복구 SoT 4파일, 9c8c076 commit)
+- `docs/SESSION_STATE.md`, `docs/TODO.md`, `docs/DECISIONS.md`, `docs/BUGS.md` (복구 SoT 4파일, 646d252 commit)
 - `docs/handoff/diagrams/`
 
 ## Project

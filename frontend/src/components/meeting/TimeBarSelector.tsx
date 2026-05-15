@@ -198,16 +198,18 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
     return { counts, totalPeers: relevant.length };
   }, [peerTimeSelections, date]);
 
-  // 내 선택 변경 시 브로드캐스트
+  // 내 선택 변경 시 브로드캐스트 — range 완성 후에만 (단일 슬롯 race 방지).
+  // 시작만 클릭한 상태에서는 backend availability 부분 등록 차단 — TimeBar 즉시 unmount 방지.
   useEffect(() => {
     if (!sendTimeSelection) return;
     if (selectionStart === null) {
+      // 선택 클리어
       sendTimeSelection(date, null, null);
       return;
     }
-    // 끝 선택 전 (단일 slot)도 실시간으로 보여줌
-    const endVal = selectionEnd ?? selectionStart;
-    sendTimeSelection(date, selectionStart, endVal);
+    // 끝 슬롯 미선택 상태에서는 broadcast 보류
+    if (selectionEnd === null) return;
+    sendTimeSelection(date, selectionStart, selectionEnd);
   }, [selectionStart, selectionEnd, date, sendTimeSelection]);
 
   // 날짜 바뀌면 현재 선택 리셋 (이전 날짜의 선택이 새 날짜에 이어지지 않게)

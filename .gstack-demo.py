@@ -810,48 +810,50 @@ async def run_demo(flags: DemoFlags) -> None:
                         confirmed_date = raw_date_str
                         log(f"  confirmedDate = {confirmed_date}")
 
-                        # step 2 cont: 게스트 3명 WS time_selection 송신 (오후 6:00~8:30 = slot 18~23)
-                        # TimeBar '다른 분들' row 실시간 채워짐 (when2meet 스타일 시각화)
-                        log("  게스트 3명 time_selection WS 송신 (오후 6:00~8:30, slot 18~23)")
-                        await send_time_selection_via_ws(suhyun.token, room_id, confirmed_date, 18, 23)
-                        log("  게스트 수현 → TimeBar 6시~8시30분 선택")
+                        # step 2 cont: 게스트 3명 WS time_selection 송신 — 현실성 강화 (각자 다른 시간)
+                        # 수현: 오전 (slot 0~5 = 9:00~11:30) — 1명만 오전
+                        # 민수: 오후 7:00~8:30 (slot 20~23)
+                        # 예린: 오후 7:30~9:30 (slot 21~25)
+                        # 호스트 (Playwright): 오후 7:00~9:00 (slot 20~24)
+                        # 겹치는 시간대 = 오후 7:30~8:30 (slot 21~23) — backend majority overlap 으로 결정 기대
+                        log("  게스트 3명 time_selection WS 송신 (각자 다른 시간, 7~9시 부근 겹침)")
+                        await send_time_selection_via_ws(suhyun.token, room_id, confirmed_date, 0, 5)
+                        log("  게스트 수현 → TimeBar 오전 9:00~11:30 선택 (오전형)")
                         await asyncio.sleep(pace["act_3_vote_gap"])
 
-                        await send_time_selection_via_ws(minsu.token, room_id, confirmed_date, 18, 23)
-                        log("  게스트 민수 → TimeBar 6시~8시30분 선택")
+                        await send_time_selection_via_ws(minsu.token, room_id, confirmed_date, 20, 23)
+                        log("  게스트 민수 → TimeBar 오후 7:00~8:30 선택")
                         await asyncio.sleep(pace["act_3_vote_gap"])
 
-                        await send_time_selection_via_ws(yerin.token, room_id, confirmed_date, 18, 23)
-                        log("  게스트 예린 → TimeBar 6시~8시30분 선택")
+                        await send_time_selection_via_ws(yerin.token, room_id, confirmed_date, 21, 25)
+                        log("  게스트 예린 → TimeBar 오후 7:30~9:30 선택")
                         await asyncio.sleep(pace["act_3_after_votes"])  # '다른 분들' row 채워짐 시청
 
-                        # step 3: 호스트 TimeBar 슬롯 클릭 — slot 18(오후 6:00) → slot 23(오후 8:30)
-                        # '내 시간' + '전원' row 초록색 (COLOR_EVERYONE_AGREE) 시각화 핵심
-                        log("step 3 — 호스트 TimeBar 슬롯 클릭 (slot 18 start → slot 23 end)")
-                        start_btn = await page.query_selector('[id$="-mine-18"]')
-                        if start_btn:
-                            await start_btn.click()
-                            await asyncio.sleep(pace["act_3_host_click_gap"])
-                        else:
-                            log("  [BACKUP] slot 18 selector 미발견 — aria-label fallback 시도")
-                            await page.click('[aria-label*="내 시간 18:00"]', timeout=2000)
-                            await asyncio.sleep(pace["act_3_host_click_gap"])
+                        # step 3: 호스트 TimeBar — Playwright 클릭(시각 효과, best-effort) + WS 송신(availability 보장)
+                        # Playwright slot selector 3-layer fallback 가 실패할 수 있어 (qa-run9 RED 원인),
+                        # 호스트도 게스트와 동일한 WS time_selection 으로 availability 직접 등록.
+                        # 시연 시각 효과는 Playwright 클릭으로 유지 (실패 무관).
+                        log("step 3 — 호스트 TimeBar slot 20→24 (Playwright 시각 + WS availability 등록)")
 
-                        end_btn = await page.query_selector('[id$="-mine-23"]')
-                        if end_btn:
-                            await end_btn.click()
-                        else:
-                            log("  [BACKUP] slot 23 selector 미발견 — aria-label fallback 시도")
-                            # slot 23 시각 = 9h + 23×30m = 20:30 (오후 8:30)
-                            try:
-                                await page.click('[aria-label*="내 시간 20:30"]', timeout=2000)
-                            except Exception:
-                                # 더 robust: 전체 슬롯 중 23번째 cell 클릭 또는 mine row 의 23번 index
-                                log("  [BACKUP2] aria-label 도 미발견 — 인덱스 기반 시도")
-                                await page.evaluate(
-                                    "() => { const cells = document.querySelectorAll('[id*=\"-mine-\"]'); "
-                                    "if (cells[23]) cells[23].click(); else if (cells.length > 0) cells[cells.length-1].click(); }"
-                                )
+                        # Playwright 시각 효과 (실패해도 진행)
+                        try:
+                            start_btn = await page.query_selector('[id$="-mine-20"]')
+                            if start_btn:
+                                await start_btn.click()
+                                await asyncio.sleep(pace["act_3_host_click_gap"])
+                                end_btn = await page.query_selector('[id$="-mine-24"]')
+                                if end_btn:
+                                    await end_btn.click()
+                                else:
+                                    log("  [INFO] slot 24 cell 미발견 — Playwright 클릭 스킵 (WS 송신만)")
+                            else:
+                                log("  [INFO] slot 20 cell 미발견 — Playwright 클릭 스킵 (WS 송신만)")
+                        except Exception as e:
+                            log(f"  [INFO] Playwright slot click 예외 — 무시 (WS 송신 진행): {e}")
+
+                        # WS 직접 송신 — 호스트 availability 정확히 보장
+                        await send_time_selection_via_ws(host_token, room_id, confirmed_date, 20, 24)
+                        log("  호스트 → TimeBar 오후 7:00~9:00 WS 송신 (availability 등록)")
                         # 호스트 slot 클릭 → sendTimeSelection WS 브로드캐스트 → 전원 row 초록 전환 시청
                         await asyncio.sleep(pace["act_3_after_host_vote"])
 

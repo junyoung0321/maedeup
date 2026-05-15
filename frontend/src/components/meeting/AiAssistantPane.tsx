@@ -522,7 +522,15 @@ export default function AiAssistantPane() {
         {timeline.map((item, index) => {
           if (item.kind === "card") {
             const card = item.data;
-            if (card.type === "vote_card") {
+            // vote_card 는 ACT 3 시간 확정(timeConfirmed) 직후엔 숨김.
+            // backend partial maedeup_card 가 늦게 도착해도 즉시 UI 깔끔하게.
+            if (
+              card.type === "vote_card" &&
+              currentPhaseCtx !== "timeConfirmed" &&
+              currentPhaseCtx !== "placeRecommendation" &&
+              currentPhaseCtx !== "placeConfirmed" &&
+              currentPhaseCtx !== "done"
+            ) {
               return (
                 <ScheduleRecommendationCard
                   key={`card-${card.type}-${card.meeting_id}`}

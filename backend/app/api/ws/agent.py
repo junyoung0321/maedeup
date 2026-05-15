@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from sqlalchemy import func
 from sqlmodel import select
 
 from app.api.ws.manager import manager
@@ -427,6 +428,40 @@ async def _run_auto_trigger_pipeline(
         if trigger_reason == "all_members_selected":
             async with AsyncSessionLocal() as session:
                 timebar_data = await _build_entities_from_timebar(room_id, session, redis_client)
+
+            # Authoritative time pick from TimeBar majority overlap.
+            # rooms.py schedule-confirm 가 manual_chosen_time 을 이미 넣었으면 그 값 우선.
+            if not slot_context.get("manual_chosen_time") and redis_client is not None:
+                try:
+                    room_pk_int = int(room_id)
+                    avail = await sr.load_room_availability(redis_client, room_id=room_pk_int)
+                    unavail = await sr.load_room_unavailability(redis_client, room_id=room_pk_int)
+                    async with AsyncSessionLocal() as session:
+                        member_count = (
+                            await session.execute(
+                                select(func.count(RoomMember.user_id))
+                                .where(RoomMember.room_id == room_pk_int)
+                            )
+                        ).scalar_one()
+                    majority_result = sr.compute_majority_slot(avail, int(member_count), unavail)
+                    if majority_result is not None:
+                        primary = majority_result.primary
+                        slot_context["manual_chosen_time"] = {
+                            "date": primary["date"],
+                            "start_idx": int(primary["start_idx"]),
+                            "end_idx": int(primary["end_idx"]),
+                        }
+                        logger.info(
+                            "[TIMEBAR] majority slot injected room=%s %s..%s",
+                            room_id, primary["start_idx"], primary["end_idx"],
+                        )
+                except (TypeError, ValueError):
+                    pass
+                except Exception:
+                    logger.warning(
+                        "majority slot calc failed for room %s", room_id, exc_info=True,
+                    )
+
             if timebar_data:
                 pre_extracted = slot_context.get("pre_extracted_signals")
                 if not isinstance(pre_extracted, dict):
@@ -437,9 +472,11 @@ async def _run_auto_trigger_pipeline(
                 slot_context["date_hints"] = timebar_data.get("date_hints", [])
                 slot_context["parsed_time_hint"] = timebar_data.get("parsed_time_hint")
                 slot_context["time_options"] = timebar_data.get("time_options", [])
-                consensus_label = timebar_data.get("consensus_label")
-                if consensus_label:
-                    slot_context["confirmed_time"] = consensus_label
+                # manual_chosen_time 박힌 경우 confirmed_time 은 slot.py 가 정확히 산출 → 덮어쓰지 않음
+                if not slot_context.get("manual_chosen_time"):
+                    consensus_label = timebar_data.get("consensus_label")
+                    if consensus_label:
+                        slot_context["confirmed_time"] = consensus_label
 
         async with AsyncSessionLocal() as session:
             # 해결점 K: requester_* 주입 — compute_preference_toggle_enabled가
@@ -717,13 +754,21 @@ async def agent_ws(
             if not trigger_content:
                 continue
 
+            # user-explicit 트리거 (호스트 A3-2 "추천 시간 그대로 확정" 클릭) 는
+            # 짧은 시간 안에 stalemate→all_members_selected 연속 발생 정상 시나리오 → debounce 예외.
+            trigger_reason_early = trigger.get("trigger_reason", "")
+            is_user_explicit_confirm = trigger_reason_early == "all_members_selected"
+
             # room-singleton lock (Phase 3 eng review §3.4):
             # N users connected = N subscribers to shared channel, all dequeue the trigger.
             # Redis SET NX picks one winner per room; others skip pipeline execution so the
             # AI doesn't run N times per auto-trigger.
             nx_key = f"nx_autotrigger:{room_id}"
             acquired = False
-            if r is not None:
+            if is_user_explicit_confirm:
+                # user-explicit 트리거는 NX lock 우회 — 호스트 확정 명령 묵음 폐기 방지
+                acquired = True
+            elif r is not None:
                 try:
                     acquired = bool(
                         await r.set(
@@ -740,16 +785,18 @@ async def agent_ws(
                 )
                 continue
 
-            # Local debounce as a belt-and-suspenders guard (same-connection dup)
-            now = time.monotonic()
-            if now - _last_auto_trigger_time < _AUTO_TRIGGER_DEBOUNCE_SECONDS:
-                logger.debug(
-                    "Auto-trigger local-debounced for room %s (%.1fs since last)",
-                    room_id,
-                    now - _last_auto_trigger_time,
-                )
-                continue
-            _last_auto_trigger_time = now
+            # Local debounce as a belt-and-suspenders guard (same-connection dup).
+            # user-explicit 트리거는 local debounce 도 예외 — 호스트 의도 보존.
+            if not is_user_explicit_confirm:
+                now = time.monotonic()
+                if now - _last_auto_trigger_time < _AUTO_TRIGGER_DEBOUNCE_SECONDS:
+                    logger.debug(
+                        "Auto-trigger local-debounced for room %s (%.1fs since last)",
+                        room_id,
+                        now - _last_auto_trigger_time,
+                    )
+                    continue
+                _last_auto_trigger_time = now
 
             trigger_reason = trigger.get("trigger_reason", "")
             if trigger_intent not in {"meeting_schedule", "place_suggestion"}:

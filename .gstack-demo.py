@@ -139,7 +139,7 @@ PACE_FAST = {
     "act_3_after_votes": 1.0,       # 게스트 3명 vote 완료 후 vote count 변화 시청 시간
     "act_3_after_popup": 1.0,       # 확정 팝업 렌더 대기 (ACT 4 fallback용으로만 잔존)
     "act_3_host_click_gap": 0.4,     # 호스트 TimeBar start/end slot 클릭 사이 간격
-    "act_3_after_host_vote": 2.0,   # 방장 vote 후 ScheduleRecommendationCard 변화 시청
+    "act_3_after_host_vote": 3.0,   # 방장 vote 후 ScheduleRecommendationCard 변화 시청 (Option C: +1s, TimeBar in-card 버튼 활성 인지 여유)
     "act_3_after_confirm_click": 2.0,  # "로 확정" 클릭 후 confirm 전환 / maedeup_card 시청
     "act_5_5_after_toggle": 4.0,    # "내 선호" 토글 클릭 후 refresh API + carousel rerender
     "act_5_5_view_pause": 3.0,      # refreshed carousel narration
@@ -163,7 +163,7 @@ PACE_DEMO = {
     "act_3_after_votes": 4.0,       # 게스트 3명 vote 완료 후 vote count 변화 시청 시간
     "act_3_after_popup": 3.0,       # 확정 팝업 시청 (ACT 4 fallback용으로만 잔존)
     "act_3_host_click_gap": 2.5,     # 호스트 TimeBar start/end slot 클릭 사이 간격 (0.8→2.5: 시각 인지)
-    "act_3_after_host_vote": 5.0,   # 방장 vote 후 ScheduleRecommendationCard 변화 시청
+    "act_3_after_host_vote": 6.0,   # 방장 vote 후 ScheduleRecommendationCard 변화 시청 (Option C: +1s, TimeBar in-card 버튼 활성 인지 여유)
     "act_3_after_confirm_click": 5.0,  # "로 확정" 클릭 후 confirm 전환 / maedeup_card 시청
     "act_5_5_after_toggle": 7.0,
     "act_5_5_view_pause": 5.0,
@@ -857,22 +857,28 @@ async def run_demo(flags: DemoFlags) -> None:
                         # 호스트 slot 클릭 → sendTimeSelection WS 브로드캐스트 → 전원 row 초록 전환 시청
                         await asyncio.sleep(pace["act_3_after_host_vote"])
 
-                        # step 4: A3-2 "추천 시간 그대로 확정" 버튼 활성 대기 + 호스트 클릭
-                        # scheduleConsensus 도달(전원 time_selection 완료) → InfoPane 버튼 노출.
-                        log("step 4 — '추천 시간 그대로 확정' 버튼 활성 대기 (최대 30s)")
-                        finalize_ok = await wait_for_enabled_button(page, "추천 시간 그대로 확정", timeout_s=30.0)
-                        if not finalize_ok:
-                            log("[BACKUP] '추천 시간 그대로 확정' 미활성 — 짧은 텍스트로 재시도")
-                            finalize_ok = await wait_for_enabled_button(page, "그대로 확정", timeout_s=5.0)
-
+                        # step 4: Option C — TimeBar in-card "이 시간으로 확정" 버튼 활성 대기 + 호스트 클릭
+                        # scheduleConsensus 도달(전원 time_selection 완료) → TimeBar 내부 호스트 확정 버튼 노출.
+                        log("step 4 — TimeBar in-card '이 시간으로 확정' 버튼 활성 대기 (최대 30s)")
+                        finalize_ok = await wait_for_enabled_button(page, "이 시간으로 확정", timeout_s=30.0)
                         if finalize_ok:
-                            log("step 4 — 호스트 '추천 시간 그대로 확정' 클릭")
-                            await click_button_by_text(page, "추천 시간 그대로 확정", contains=True)
+                            log("step 4 — 호스트 TimeBar 내부 '이 시간으로 확정' 클릭")
+                            await click_button_by_text(page, "이 시간으로 확정", contains=True)
                             await asyncio.sleep(pace["act_3_after_confirm_click"])
                             act3_completed = True
                             log("ACT 3 완료 — TimeBar 합의 + 호스트 확정 → maedeup_card (partial) 자동 발행 예정")
                         else:
-                            log("⚠️ ACT 3 — A3-2 '추천 시간 그대로 확정' 미발현, ACT 4로 fallback")
+                            # Commit 4 미적용 단계 안전망: A3-2 카드 "추천 시간 그대로 확정" 폴백
+                            log("[FALLBACK] TimeBar 버튼 미활성 — A3-2 카드 '추천 시간 그대로 확정' 시도")
+                            finalize_ok = await wait_for_enabled_button(page, "추천 시간 그대로 확정", timeout_s=10.0)
+                            if finalize_ok:
+                                log("[FALLBACK] 호스트 '추천 시간 그대로 확정' 클릭")
+                                await click_button_by_text(page, "추천 시간 그대로 확정", contains=True)
+                                await asyncio.sleep(pace["act_3_after_confirm_click"])
+                                act3_completed = True
+                                log("ACT 3 완료 (fallback 경로) — A3-2 카드 확정 → maedeup_card (partial) 자동 발행 예정")
+                            else:
+                                log("⚠️ ACT 3 — '이 시간으로 확정' + fallback '추천 시간 그대로 확정' 모두 미발현, ACT 4로 fallback")
 
         # ─────────────────────────────────────────────────
         hr("ACT 4 — Partial maedeup_card 자동 발행")

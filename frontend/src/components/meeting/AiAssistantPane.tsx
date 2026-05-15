@@ -114,8 +114,14 @@ export default function AiAssistantPane() {
   const setInfoPanePhaseCtx = meetingContext?.setInfoPanePhase;
   const setConfirmedPlaceIdCtx = meetingContext?.setConfirmedPlaceId;
   const currentPhaseCtx = meetingContext?.infoPanePhase;
+  // Option C 보존: scheduleConsensus 살아있는 동안은 호스트 in-card 확정 흐름을 보호하기 위해
+  // phase 자동 advance를 보류한다. 호스트가 명시적으로 "이 시간으로 확정" / "추천 시간 그대로 확정"을
+  // 누르면 onHostFinalize / A3-2 핸들러에서 setInfoPanePhase("timeConfirmed")를 직접 호출한다.
+  const scheduleConsensusCtx = meetingContext?.scheduleConsensus;
   useEffect(() => {
     if (!activeMaedeupCard) return;
+    // Option C: scheduleConsensus 살아있으면 호스트 in-card 확정 흐름 보존 — phase 자동 advance 보류.
+    if (scheduleConsensusCtx) return;
     // forward-only — 이미 timeConfirmed/placeConfirmed/done이면 noop (setInfoPanePhase는
     // 같은 phase 호출을 무시함)
     if (currentPhaseCtx === "idle" || currentPhaseCtx === "dateSelected" || currentPhaseCtx === "dateConfirmed") {
@@ -125,7 +131,7 @@ export default function AiAssistantPane() {
       ?? (activeMaedeupCard.selected_place as { place_id?: string; id?: string } | undefined)?.id
       ?? null;
     if (placeId) setConfirmedPlaceIdCtx?.(placeId);
-  }, [activeMaedeupCard, currentPhaseCtx, setInfoPanePhaseCtx, setConfirmedPlaceIdCtx]);
+  }, [activeMaedeupCard, currentPhaseCtx, scheduleConsensusCtx, setInfoPanePhaseCtx, setConfirmedPlaceIdCtx]);
 
   const activeVoteCard = useMemo(
     () => [...activeCards].reverse().find((card) => card.type === "vote_card")?.payload ?? null,

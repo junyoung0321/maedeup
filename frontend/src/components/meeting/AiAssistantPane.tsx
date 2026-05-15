@@ -528,6 +528,7 @@ export default function AiAssistantPane() {
                   key={`card-${card.type}-${card.meeting_id}`}
                   voteCard={card.payload}
                   onMeetingResolved={removeCardByMeetingId}
+                  hideConfirmAction={!!meetingContext?.voteCard}
                 />
               );
             }

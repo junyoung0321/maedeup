@@ -721,25 +721,25 @@ async def run_demo(flags: DemoFlags) -> None:
             confirm_btn = []
         else:
             log("vote_card 발현 확인 (AI 일정 추천 헤더 노출)")
-            # 슬롯 클릭 먼저 수행 → selectedSlotId 세팅 → 그 후 "로 확정" 버튼 텍스트 생성
-            log("vote_card 슬롯 사전 클릭 (selectedSlotId 세팅 — '로 확정' 텍스트 생성용)")
+            # 슬롯 클릭: ScheduleRecommendationCard selectedSlotId 세팅 (시연 UI용).
+            # A4 적용 후 '로 확정' 버튼은 hide이므로 이 클릭은 UI 상태만 반영.
+            log("vote_card 슬롯 사전 클릭 (ScheduleRecommendationCard selectedSlotId 세팅)")
             pre_slot_ok = await click_first_vote_slot(page)
             if not pre_slot_ok:
                 await asyncio.sleep(0.8)
                 pre_slot_ok = await click_first_vote_slot(page)
             if pre_slot_ok:
                 await asyncio.sleep(0.5)
-            # 이제 "로 확정" 버튼이 렌더됐는지 확인 (최대 5s)
-            appeared = await wait_for_button(page, "로 확정", timeout_s=5.0)
+            # A4 적용 후 ScheduleRecommendationCard의 "로 확정" 버튼은 hide.
+            # 대신 VoteCardSection(InfoPane)의 "투표하기" 버튼 존재 여부로 gate 통과 판정.
+            # "투표하기"는 votedOptionIndex=null 상태의 각 슬롯 옵션에 렌더됨 (항상 복수).
+            appeared = await wait_for_button(page, "투표하기", timeout_s=5.0)
             if not appeared:
-                log("⚠️  슬롯 클릭 후에도 '로 확정' 버튼 미발견 — fallback: confirm_btn 비움")
+                log("⚠️  VoteCardSection '투표하기' 버튼 미발견 — confirm_btn 비움")
                 confirm_btn = []
             else:
-                confirm_btn = await js_eval(
-                    page,
-                    "Array.from(document.querySelectorAll('button')).filter(b => b.innerText && b.innerText.includes('로 확정') && b.offsetParent).map(b => b.innerText)",
-                )
-                log(f"vote_card 버튼 발견: {confirm_btn[0] if confirm_btn else '?'}")
+                confirm_btn = ["vote_card_present"]  # sentinel: VoteCardSection 마운트 확인
+                log("VoteCardSection '투표하기' 버튼 확인 — gate 통과")
 
         # ─────────────────────────────────────────────────
         # ACT 3 — ★시간대 변경 → 게스트 vote → 방장 확정
@@ -819,12 +819,20 @@ async def run_demo(flags: DemoFlags) -> None:
         # ─────────────────────────────────────────────────
 
         if not act3_completed and confirm_btn:
-            # B-8 시나리오 4 fallback: ACT 3 우회 → vote_card "○월 ○일로 확정" 직접 클릭
-            log(f"카드 확인 시간 ({pace['view_pause']}s) 후 vote_card 확정")
+            # A4 적용 후 ScheduleRecommendationCard "로 확정" 버튼 hide.
+            # fallback: InfoPane VoteCardSection "일정 확정하기" 활성 대기 + 클릭.
+            # (방장이 투표 완료 상태여야 버튼 활성 — 미투표 시 disabled 유지)
+            log(f"카드 확인 시간 ({pace['view_pause']}s) 후 VoteCardSection '일정 확정하기' 시도")
             await asyncio.sleep(pace["view_pause"])
-            log(f"클릭: {confirm_btn[0]}")
-            await click_button_by_text(page, "로 확정", contains=True)
-            await asyncio.sleep(pace["after_confirm"])
+            finalize_ok = await wait_for_enabled_button(page, "일정 확정하기", timeout_s=15.0)
+            if finalize_ok:
+                log("ACT 4 fallback — '일정 확정하기' 활성 → 클릭")
+                await click_button_by_text(page, "일정 확정하기")
+                await asyncio.sleep(1.0)
+                await click_button_by_text(page, "확정하기")
+                await asyncio.sleep(pace["after_confirm"])
+            else:
+                log("⚠️  ACT 4 fallback — '일정 확정하기' 미활성 (방장 미투표 or 버튼 미발견) — 진행 차단")
         elif act3_completed:
             # ACT 3에서 이미 확정 → maedeup_card (partial) WebSocket 수신 대기만
             log(f"Partial 카드 발행 대기 ({pace['view_pause']}s)")

@@ -47,11 +47,14 @@ function groupByDate(options: VoteCardPayload["time_options"]) {
 interface ScheduleRecommendationCardProps {
   voteCard?: VoteCardPayload | null;
   onMeetingResolved?: (meetingId: number) => void;
+  /** true일 때 host 전용 "확정" 버튼을 숨김. "시간대 변경" 버튼은 유지됨. */
+  hideConfirmAction?: boolean;
 }
 
 export default function ScheduleRecommendationCard({
   voteCard: voteCardProp,
   onMeetingResolved,
+  hideConfirmAction = false,
 }: ScheduleRecommendationCardProps = {}) {
   const {
     voteCard: contextVoteCard,
@@ -519,18 +522,20 @@ export default function ScheduleRecommendationCard({
         </div>
       ) : isHost ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <button
-            onClick={handleConfirm}
-            disabled={!selectedSlotId || isConfirming}
-            style={{
-              width: "100%", padding: "11px 14px", borderRadius: 12, border: "none",
-              background: !selectedSlotId || isConfirming ? "#cbd5e1" : "#4f46e5",
-              color: "#fff", fontSize: 14, fontWeight: 700, cursor: !selectedSlotId || isConfirming ? "not-allowed" : "pointer",
-              fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-            }}
-          >
-            {isConfirming ? "확정 중..." : selectedSlot ? `${selectedSlot.label}로 확정` : "시간을 선택해주세요"}
-          </button>
+          {!hideConfirmAction && (
+            <button
+              onClick={handleConfirm}
+              disabled={!selectedSlotId || isConfirming}
+              style={{
+                width: "100%", padding: "11px 14px", borderRadius: 12, border: "none",
+                background: !selectedSlotId || isConfirming ? "#cbd5e1" : "#4f46e5",
+                color: "#fff", fontSize: 14, fontWeight: 700, cursor: !selectedSlotId || isConfirming ? "not-allowed" : "pointer",
+                fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+              }}
+            >
+              {isConfirming ? "확정 중..." : selectedSlot ? `${selectedSlot.label}로 확정` : "시간을 선택해주세요"}
+            </button>
+          )}
           <button
             onClick={handleRequestTimeChange}
             disabled={!selectedSlotId || isConfirming}
@@ -545,7 +550,7 @@ export default function ScheduleRecommendationCard({
             시간대 변경
           </button>
         </div>
-      ) : (
+      ) : !hideConfirmAction ? (
         <button
           onClick={handleConfirm}
           disabled={!selectedSlotId || isConfirming}
@@ -558,7 +563,7 @@ export default function ScheduleRecommendationCard({
         >
           {isConfirming ? "확정 중..." : selectedSlot ? `${selectedSlot.label}로 확정` : "시간을 선택해주세요"}
         </button>
-      )}
+      ) : null}
       {error && <span style={{ fontSize: 12, color: "#dc2626", fontWeight: 500 }}>{error}</span>}
     </div>
   );

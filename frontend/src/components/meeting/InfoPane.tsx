@@ -351,6 +351,15 @@ export default function InfoPane() {
                 </div>
               )}
 
+              {/* B-9: VoteCardSection — vote_card WS 페이로드 도착 시 투표 카드 + "일정 확정하기" 버튼 렌더.
+                   isHost / votedOptionIndex / selectedSlotId 조건은 컴포넌트 내부(VoteCardSection.tsx:423-427)에서 평가.
+                   placeConfirmed / done phase에서는 자동 unmount. */}
+              {voteCard && infoPanePhase !== "placeConfirmed" && infoPanePhase !== "done" && (
+                <div style={{ margin: "0 4px" }}>
+                  <VoteCardSection mode="vote-only" />
+                </div>
+              )}
+
               {/* A3-2: TimeBar 전원 합의 → 호스트 "일정 확정하기" 버튼 노출.
                    비호스트는 "방장이 확정 대기 중" placeholder. */}
               {scheduleConsensus && currentUserId !== null && (() => {

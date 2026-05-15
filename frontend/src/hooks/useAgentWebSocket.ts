@@ -54,6 +54,9 @@ export interface VoteCardPayload {
   // 기본값은 "group" (다수결). 발화자/방장이 "내 선호" 기준으로 재추천 요청 가능.
   preference_source?: "group" | "speaker";
   preference_toggle_enabled?: boolean;
+  // P0 hydration: pending-vote 복구 시 서버가 본인 투표 인덱스를 미리 추출해 내려줌.
+  // WS vote_card 이벤트에는 없는 필드 (undefined). null = 미투표.
+  current_user_vote?: number | null;
 }
 
 export interface VoteUpdatePayload {
@@ -61,6 +64,7 @@ export interface VoteUpdatePayload {
   meeting_id: number;
   votes: Record<string, number>;
   total_voters: number;
+  user_votes?: Record<string, number>;
 }
 
 export interface PlaceRecommendationItem {

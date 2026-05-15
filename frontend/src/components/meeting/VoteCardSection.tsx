@@ -96,7 +96,9 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
     setIsConfirmingSchedule(false);
     setConfirmedMeetingId(voteCard.meeting_id ?? null);
     setConfirmedSlot(null);
-    setVotedOptionIndex(null);
+    // P0 hydration: pending-vote 복구 시 서버가 내려준 본인 투표 인덱스로 초기화.
+    // WS vote_card 이벤트(current_user_vote === undefined)이면 null로 리셋.
+    setVotedOptionIndex(voteCard.current_user_vote ?? null);
     setVoteCounts({});
     setTotalVoters(0);
     setIsVoting(false);
@@ -110,7 +112,13 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
     setVoteCounts(voteUpdate.votes);
     setTotalVoters(voteUpdate.total_voters);
     setVoteError(null);
-  }, [activeMeetingId, voteUpdate]);
+    if (voteUpdate.user_votes && currentUserId !== null) {
+      const myVote = voteUpdate.user_votes[String(currentUserId)];
+      // P1: myVote === undefined → 본인 항목 없음 (미투표 또는 unvote) → null 복귀.
+      // undefined 체크를 in 연산자로 하지 않고 값으로 처리해 partial dict 방어.
+      setVotedOptionIndex(myVote !== undefined ? myVote : null);
+    }
+  }, [activeMeetingId, currentUserId, voteUpdate]);
 
   // Reset place state when new recommendation arrives
   useEffect(() => {

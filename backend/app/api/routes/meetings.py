@@ -320,6 +320,9 @@ async def get_pending_vote_card(
     if meeting is None or not meeting.vote_options:
         return None
 
+    votes = meeting.votes or {}
+    current_user_vote = votes.get(str(user_id))  # int | None
+
     return {
         "type": "vote_card",
         "title": meeting.title,
@@ -327,7 +330,8 @@ async def get_pending_vote_card(
         "meeting_id": meeting.id,
         "time_options": meeting.vote_options,
         "headcount": None,
-        "votes": meeting.votes or {},
+        "votes": votes,
+        "current_user_vote": current_user_vote,
     }
 
 
@@ -633,6 +637,7 @@ async def vote_meeting(
         "meeting_id": meeting.id,
         "votes": aggregated_votes,
         "total_voters": total_voters,
+        "user_votes": votes,
     }
     redis_client = aioredis.from_url(
         settings.REDIS_URL,

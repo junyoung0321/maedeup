@@ -79,7 +79,9 @@ export default function ScheduleRecommendationCard({
   const [hostUserId, setHostUserId] = useState<number | null>(null);
   const [hostLoading, setHostLoading] = useState(true);
   const currentUserId = useMemo(() => getCurrentUserIdFromToken(), []);
-  const isHost = currentUserId !== null && hostUserId === currentUserId;
+  // hostLoading 중에는 일단 호스트 UI 표시 (낙관적 렌더) — API 응답 후 비호스트 확인 시 전환.
+  // race condition 방지: 카드 mount 직후 API 완료 전에 "시간대 변경" 버튼이 미노출되는 문제 해소.
+  const isHost = hostLoading ? currentUserId !== null : (currentUserId !== null && hostUserId === currentUserId);
 
   // vote 실시간 집계 state (voteUpdate WS 구독)
   const [voteCounts, setVoteCounts] = useState<Record<string, number>>({});

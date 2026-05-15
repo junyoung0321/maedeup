@@ -560,6 +560,7 @@ export default function AiAssistantPane() {
               );
             }
 
+            if (card.type !== "maedeup_card") return null;
             const maedeupCard = card.payload;
             const partialCard = maedeupCard as NonNullable<typeof maedeupCard> & {
               place_pending?: boolean;

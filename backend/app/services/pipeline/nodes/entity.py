@@ -211,6 +211,11 @@ async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
         "}\n\n"
         "date_hint: 첫 번째 날짜 표현. 가능하면 YYYY-MM-DD 형식으로 변환, 범위면 "
         "'YYYY-MM-DD~YYYY-MM-DD'\n"
+        "  날짜 표현 예시:\n"
+        '  - "다음주 월요일" → next_monday (date_hint)\n'
+        '  - "차주 월요일" → next_monday (date_hint, "차주" = "다음주" 동의어)\n'
+        '  - "그 다음주 화요일" → next_next_tuesday (date_hint, 오늘 기준 2주 후)\n'
+        '  - "다다음주 수요일" → next_next_wednesday (date_hint, 오늘 기준 2주 후)\n'
         "date_hints: 여러 날짜가 선택지로 제시된 경우 모든 날짜 표현의 배열. "
         "예: '목요일에 볼까 금요일에 볼까' → [\"목요일\", \"금요일\"]\n"
         "place_hint: 구체적 한국 지명(동/구/역/로/길 등)이나 잘 알려진 지역명"

@@ -179,7 +179,15 @@ def _fallback_parse_natural_date(text: str, now_kst: datetime) -> dict[str, Any]
     elif "이번주말" in compact:
         target_date = _next_weekday(now_kst, 5, include_current_week=True)
         result["is_flexible"] = True
-    elif "다음주" in compact:
+    elif "그다음주" in compact or "다다음주" in compact:
+        # "그 다음주" / "그다음주" / "다다음주" → this_week_monday + 14일
+        weekday = _weekday_from_korean(normalized)
+        if weekday is not None:
+            this_week_monday = now_kst - timedelta(days=now_kst.weekday())
+            next_next_week_base = this_week_monday + timedelta(days=14)
+            target_date = next_next_week_base + timedelta(days=weekday)
+    elif "다음주" in compact or "차주" in compact:
+        # "다음주" / "차주" → this_week_monday + 7일
         weekday = _weekday_from_korean(normalized)
         if weekday is not None:
             this_week_monday = now_kst - timedelta(days=now_kst.weekday())

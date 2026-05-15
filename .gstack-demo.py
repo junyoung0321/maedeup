@@ -162,7 +162,7 @@ PACE_DEMO = {
     "act_3_after_change": 5.0,      # "시간대 변경" 후 VoteCardSection 렌더 시청 (2.5→5.0)
     "act_3_after_votes": 4.0,       # 게스트 3명 vote 완료 후 vote count 변화 시청 시간
     "act_3_after_popup": 3.0,       # 확정 팝업 시청 (ACT 4 fallback용으로만 잔존)
-    "act_3_host_click_gap": 0.8,     # 호스트 TimeBar start/end slot 클릭 사이 간격
+    "act_3_host_click_gap": 2.5,     # 호스트 TimeBar start/end slot 클릭 사이 간격 (0.8→2.5: 시각 인지)
     "act_3_after_host_vote": 5.0,   # 방장 vote 후 ScheduleRecommendationCard 변화 시청
     "act_3_after_confirm_click": 5.0,  # "로 확정" 클릭 후 confirm 전환 / maedeup_card 시청
     "act_5_5_after_toggle": 7.0,

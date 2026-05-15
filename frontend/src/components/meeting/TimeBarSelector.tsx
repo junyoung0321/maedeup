@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, Clock } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
@@ -99,6 +99,9 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
   const [selectionStart, setSelectionStart] = useState<number | null>(null);
   const [selectionEnd, setSelectionEnd] = useState<number | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
+  // server prefill(myTimeSelection) restore 직후 broadcast echo-back 방지 guard.
+  // restore effect 가 true 로 세팅 → sendTimeSelection useEffect 에서 1회 skip → 즉시 false 로 reset.
+  const restoredFromServer = useRef<boolean>(false);
 
   const { user } = useAuth();
   const myName = user?.name ?? "나";
@@ -117,8 +120,10 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
     infoPanePhase === "done";
 
   // 리프레시 복구: 마운트 + date 변경 시 서버가 push한 내 이전 선택이 있으면 복원.
+  // restoredFromServer guard 마킹 → 아래 sendTimeSelection useEffect 가 echo-back broadcast skip.
   useEffect(() => {
     if (myTimeSelection && myTimeSelection.date === date) {
+      restoredFromServer.current = true;
       setSelectionStart(myTimeSelection.start);
       setSelectionEnd(myTimeSelection.end);
     }
@@ -200,8 +205,14 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
 
   // 내 선택 변경 시 브로드캐스트 — range 완성 후에만 (단일 슬롯 race 방지).
   // 시작만 클릭한 상태에서는 backend availability 부분 등록 차단 — TimeBar 즉시 unmount 방지.
+  // server prefill restore 직후 1회 echo-back 방지: restoredFromServer guard 체크.
   useEffect(() => {
     if (!sendTimeSelection) return;
+    // server prefill restore 직후 broadcast skip (echo-back → 즉시 consensus 방지)
+    if (restoredFromServer.current) {
+      restoredFromServer.current = false;
+      return;
+    }
     if (selectionStart === null) {
       // 선택 클리어
       sendTimeSelection(date, null, null);

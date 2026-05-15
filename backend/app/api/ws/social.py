@@ -78,8 +78,17 @@ async def _maybe_emit_proposal(
     if not availability:
         return
 
-    # 전원 시간대 선택 완료 체크: availability에 등록된 수 >= 멤버 수
-    if len(availability) < member_count:
+    # 전원 시간대 선택 완료 체크: availability에 등록된 수 >= 멤버 수.
+    # 단일 슬롯(start == end) 엔트리는 server prefill 잔재로 간주, 명시적 선택 X → 카운트 제외.
+    def _is_explicit(entries: list) -> bool:
+        """entry list 중 start < end 인 유효 범위가 하나라도 있으면 True."""
+        for e in entries:
+            if isinstance(e, dict) and int(e.get("end", 0)) > int(e.get("start", 0)):
+                return True
+        return False
+
+    explicit_count = sum(1 for entries in availability.values() if _is_explicit(entries))
+    if explicit_count < member_count:
         return
 
     # 중복 트리거 방지: 같은 availability 스냅샷이면 스킵

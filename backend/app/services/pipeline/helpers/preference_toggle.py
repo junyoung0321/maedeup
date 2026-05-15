@@ -72,10 +72,19 @@ def _lightweight_speaker_matches_group(state: GraphState) -> bool:
 def compute_preference_toggle_enabled(state: GraphState) -> bool:
     """Q7-c: false 조건 = C1 ∨ C3 ∨ C4 (게스트 C2 제외).
 
+    C0 (feature flag): 운영자가 PREFERENCE_TOGGLE_ENABLED=false 설정 시 항상 false.
+        시연 시나리오에 포함하기 애매한 경우 옵션 B (UI dormant) 로 활용.
     C1: 발화자의 share_*_data 어느 하나라도 False
     C3: 그룹·speaker 결과 동일 — PR-V1.5 lightweight 비교 (home_base + food prefs)
     C4: requester_home_base AND requester_preferences 모두 None
     """
+    # C0: feature flag — 운영 환경변수로 토글 자체를 dormant 시킬 수 있음.
+    # (frontend 의 ScheduleRecommendationCard / PlaceRecommendationCard 는 이 값이
+    # false 면 토글 UI 안 렌더 → ACT 5.5 시연 항목 skip 가능)
+    import os
+    if os.getenv("PREFERENCE_TOGGLE_ENABLED", "true").lower() in ("false", "0", "no"):
+        return False
+
     prefs: dict[str, Any] | None = state.get("requester_preferences")
     home_base = state.get("requester_home_base")
 

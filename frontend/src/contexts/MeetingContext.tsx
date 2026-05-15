@@ -409,6 +409,10 @@ export function MeetingProvider({
         updates.voteAwaitingTimeMeetingId = null;
       } else if (phase === "dateConfirmed") {
         updates.confirmedTimeRange = null;
+      } else if (phase === "timeConfirmed") {
+        // Option C 안전망: timeConfirmed 진입 시 scheduleConsensus stale state 차단.
+        // TimeBar unmount 타이밍과 WS broadcast 도달 순서 역전 방지.
+        updates.scheduleConsensus = null;
       }
       return { ...prev, ...updates };
     });

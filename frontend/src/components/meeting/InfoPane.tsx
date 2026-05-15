@@ -338,8 +338,9 @@ export default function InfoPane() {
               {/* Phase: dateSelected → CalendarPane의 DateCard가 보여줌 (여기서 추가 UI 불필요) */}
 
               {/* Phase: dateConfirmed → TimeBarSelector.
-                  scheduleConsensus 도달 시 A3-2 카드가 host action source 가 되므로 TimeBar 는 unmount. */}
-              {infoPanePhase === "dateConfirmed" && confirmedDate && !scheduleConsensus && (
+                  Option C: scheduleConsensus 도달 시에도 TimeBar 유지 — 호스트는 TimeBar 안의
+                  "이 시간으로 확정" 버튼으로 최종 합의. timeConfirmed phase 진입 시에만 unmount. */}
+              {infoPanePhase === "dateConfirmed" && confirmedDate && (
                 <div style={{ padding: "0 4px" }}>
                   <TimeBarSelector
                     date={confirmedDate}
@@ -347,6 +348,37 @@ export default function InfoPane() {
                     onConfirm={handleTimeConfirm}
                     onBack={() => setInfoPanePhase("dateSelected")}
                     preferredTimeRange={preferredTimeRangeForDate}
+                    // Option C: 호스트 in-card 확정 콜백 — POST /schedule-confirm 직접 호출.
+                    onHostFinalize={async (snapshotHash) => {
+                      try {
+                        await apiFetch<unknown>(
+                          `/api/v1/rooms/${roomId}/schedule-confirm`,
+                          {
+                            method: "POST",
+                            body: JSON.stringify({
+                              snapshot_hash: snapshotHash,
+                              mode: "auto",
+                            }),
+                          },
+                        );
+                        setScheduleConsensus(null);
+                        setInfoPanePhase("timeConfirmed");
+                      } catch (err: unknown) {
+                        // snapshot_outdated (409): apiFetch가 body.detail을 에러 메시지로 변환.
+                        // "snapshot" 또는 "conflict" 키워드로 구분 (백엔드 HTTPException detail 기반).
+                        if (
+                          err instanceof Error &&
+                          (err.message.toLowerCase().includes("snapshot") ||
+                            err.message.toLowerCase().includes("conflict"))
+                        ) {
+                          alert(
+                            "다른 멤버가 시간을 변경했어요. 새 추천을 확인하고 다시 눌러주세요.",
+                          );
+                          return;
+                        }
+                        console.error("[Option C] schedule-confirm failed", err);
+                      }
+                    }}
                   />
                 </div>
               )}

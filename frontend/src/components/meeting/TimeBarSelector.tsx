@@ -46,6 +46,8 @@ interface TimeBarSelectorProps {
   // 방 선호 시간대 ({start: 18, end: 21} 같은 hour range, end는 exclusive).
   // null/undefined면 기존 동작 (전체 범위 longest streak).
   preferredTimeRange?: { start: number; end: number } | null;
+  // Option C: 호스트 in-card 확정 콜백 — schedule_consensus_ready 도달 후 호스트만 호출.
+  onHostFinalize?: (snapshotHash: string) => Promise<void>;
 }
 
 function slotToTime(slotIndex: number): string {
@@ -92,7 +94,7 @@ function isBusyAtSlot(
   return false;
 }
 
-export default function TimeBarSelector({ date, roomId, onConfirm, onBack, preferredTimeRange }: TimeBarSelectorProps) {
+export default function TimeBarSelector({ date, roomId, onConfirm, onBack, preferredTimeRange, onHostFinalize }: TimeBarSelectorProps) {
   const [memberData, setMemberData] = useState<Record<string, MemberBusyPeriod[]> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -118,6 +120,32 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
     infoPanePhase === "timeConfirmed" ||
     infoPanePhase === "placeConfirmed" ||
     infoPanePhase === "done";
+
+  // Option C: 호스트 in-card 확정 — scheduleConsensus 도달 시 호스트 버튼 노출.
+  const scheduleConsensus = meeting?.scheduleConsensus ?? null;
+  const consensusReached = scheduleConsensus !== null;
+  // 호스트 식별: InfoPane.tsx:65~83 의 getCurrentUserIdFromToken 패턴 인라인 복제.
+  // utils 추출은 Commit 4 단계 (현재는 변경 최소화 원칙).
+  const currentUserId = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    const token = localStorage.getItem("auth_token");
+    if (!token) return null;
+    try {
+      const payloadPart = token.split(".")[1];
+      if (!payloadPart) return null;
+      const normalized = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
+      const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+      const decoded = JSON.parse(atob(padded));
+      if (decoded?.sub) {
+        const asNum = Number(decoded.sub);
+        if (Number.isFinite(asNum)) return asNum;
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }, []);
+  const isHost = consensusReached && scheduleConsensus.host_user_id === currentUserId;
 
   // 리프레시 복구: 마운트 + date 변경 시 서버가 push한 내 이전 선택이 있으면 복원.
   // restoredFromServer guard 마킹 → 아래 sendTimeSelection useEffect 가 echo-back broadcast skip.
@@ -675,41 +703,92 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
         </div>
       )}
 
-      {/* Confirm button — F-5: 그룹 일정 확정 후 비활성화 + 안내 메시지 */}
-      {isMeetingConfirmed ? (
+      {/* Option C: 호스트 in-card 확정 — schedule_consensus_ready 도달 + 본인이 호스트일 때만 */}
+      {consensusReached && isHost && !isMeetingConfirmed && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+          <div style={{
+            padding: "10px 12px", borderRadius: 10,
+            background: "#eef2ff", border: "1px solid #c7d2fe",
+            fontSize: 13, fontWeight: 600, color: "#4338ca",
+            fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+          }}>
+            ✅ 모두 시간대를 골랐어요 — 위 그래프 확인 후 확정해주세요
+          </div>
+          <button
+            onClick={async () => {
+              if (!onHostFinalize || !scheduleConsensus) return;
+              setIsConfirming(true);
+              try {
+                await onHostFinalize(scheduleConsensus.snapshot_hash);
+              } finally {
+                setIsConfirming(false);
+              }
+            }}
+            disabled={isConfirming}
+            style={{
+              width: "100%",
+              padding: "11px 14px", borderRadius: 10, border: "none",
+              background: isConfirming ? "#cbd5e1" : "#4f46e5",
+              color: "#fff", fontSize: 14, fontWeight: 700,
+              cursor: isConfirming ? "not-allowed" : "pointer",
+              fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+            }}
+          >
+            {isConfirming ? "확정 중..." : "이 시간으로 확정"}
+          </button>
+        </div>
+      )}
+
+      {/* Option C: 게스트는 안내만 — 호스트 결재 대기 */}
+      {consensusReached && !isHost && !isMeetingConfirmed && (
         <div style={{
-          width: "100%",
-          padding: "10px 14px",
-          borderRadius: 14,
-          background: "#ecfdf5",
-          border: "1px solid #86efac",
-          color: "#166534",
-          fontSize: 13,
-          fontWeight: 700,
-          textAlign: "center",
+          padding: "10px 12px", borderRadius: 10,
+          background: "#f1f5f9", color: "#64748b",
+          fontSize: 13, fontWeight: 500, textAlign: "center", marginTop: 8,
           fontFamily: "Pretendard Variable, Pretendard, sans-serif",
         }}>
-          ✓ 일정이 확정되었습니다
+          ⏳ 방장 확정 대기 중 — 시간은 자유롭게 변경 가능합니다
         </div>
-      ) : (
-        <button
-          onClick={handleConfirm}
-          disabled={selectionStart === null || selectionEnd === null || isConfirming}
-          style={{
+      )}
+
+      {/* Confirm button — F-5: 그룹 일정 확정 후 비활성화 + 안내 메시지.
+          Option C: consensus 도달 후에는 숨김 — 호스트 in-card 버튼이 대신함. */}
+      {!consensusReached && (
+        isMeetingConfirmed ? (
+          <div style={{
             width: "100%",
-            padding: "12px 14px",
+            padding: "10px 14px",
             borderRadius: 14,
-            border: "none",
-            background: selectionStart === null || selectionEnd === null || isConfirming ? "#cbd5e1" : "#4f46e5",
-            color: "#ffffff",
-            cursor: selectionStart === null || selectionEnd === null || isConfirming ? "not-allowed" : "pointer",
-            fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-            fontSize: 14,
+            background: "#ecfdf5",
+            border: "1px solid #86efac",
+            color: "#166534",
+            fontSize: 13,
             fontWeight: 700,
-          }}
-        >
-          {isConfirming ? "확정 중..." : selectionLabel ? `${selectionLabel}로 확정` : "시간을 선택해주세요"}
-        </button>
+            textAlign: "center",
+            fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+          }}>
+            ✓ 일정이 확정되었습니다
+          </div>
+        ) : (
+          <button
+            onClick={handleConfirm}
+            disabled={selectionStart === null || selectionEnd === null || isConfirming}
+            style={{
+              width: "100%",
+              padding: "12px 14px",
+              borderRadius: 14,
+              border: "none",
+              background: selectionStart === null || selectionEnd === null || isConfirming ? "#cbd5e1" : "#4f46e5",
+              color: "#ffffff",
+              cursor: selectionStart === null || selectionEnd === null || isConfirming ? "not-allowed" : "pointer",
+              fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+              fontSize: 14,
+              fontWeight: 700,
+            }}
+          >
+            {isConfirming ? "확정 중..." : selectionLabel ? `${selectionLabel}로 확정` : "시간을 선택해주세요"}
+          </button>
+        )
       )}
     </div>
   );

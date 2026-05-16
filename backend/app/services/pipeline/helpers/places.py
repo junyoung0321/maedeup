@@ -102,8 +102,11 @@ _OTHER_ENTITY_SIGNAL_PATTERN = re.compile(
 # 거부 날짜가 누락되는 사각지대가 생김 (audit-findings.md 해결점 O).
 # 패턴은 entity_extraction Gemini prompt의 "거부 키워드 예시"와 동일 (line 1183).
 _REJECT_SIGNAL_PATTERN = re.compile(
+    # 기본 (해결점 O)
     r"안\s*[돼되]|못\s*가|못\s*해|힘들|어려워|어렵다|어렵겠|"
-    r"불가능|패스|빠질|곤란|선약|일정.*있어|일정.*잡혀"
+    r"불가능|패스|빠질|곤란|선약|일정.*있어|일정.*잡혀|"
+    # demo-stab BE-2 보강 (시연 ACT 2 발언 직접 매칭): MT/본가/쉬고 싶다/약속 있다/건너뛰
+    r"MT\b|본가|쉬고\s*싶|약속\s*있|건너뛰"
 )
 
 

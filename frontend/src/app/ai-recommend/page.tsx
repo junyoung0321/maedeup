@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Sparkles, RefreshCw, Minus, Plus, X, MapPin, Zap, Heart } from "lucide-react";
+import { Sparkles, RefreshCw, Minus, Plus, X, MapPin, Zap, Heart, Search, UserPlus, UsersRound } from "lucide-react";
 import Header from "@/components/layout/Header";
 import { apiFetch } from "@/lib/api";
 
@@ -67,6 +67,8 @@ export default function AiRecommendPage() {
   const [selectedMoods, setSelectedMoods] = useState<string[]>(["아늑함"]);
   const [description, setDescription] = useState("");
   const [selectedDurations, setSelectedDurations] = useState<string[]>(["1~3시간"]);
+  const [friendInput, setFriendInput] = useState("");
+  const [friendChips, setFriendChips] = useState<string[]>([]);
 
   // Results state
   const [places, setPlaces] = useState<PlaceResult[]>([]);
@@ -164,6 +166,46 @@ export default function AiRecommendPage() {
                 <Plus size={14} />
               </button>
             </div>
+          </div>
+
+          {/* 참여 친구 */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+              <UsersRound size={13} className="text-primary-600" />
+              참여 친구
+              <span className="font-normal normal-case text-gray-400 ml-1">{friendChips.length}명 추가됨</span>
+            </label>
+            <div className="flex items-center gap-2 border border-gray-200 rounded-lg px-3 py-2 bg-gray-50">
+              <Search size={14} className="text-gray-400 shrink-0" />
+              <input
+                value={friendInput}
+                onChange={(e) => setFriendInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && friendInput.trim()) {
+                    setFriendChips((prev) => [...prev, friendInput.trim()]);
+                    setFriendInput("");
+                  }
+                }}
+                placeholder="이름 입력 후 Enter..."
+                className="flex-1 bg-transparent text-sm text-gray-800 outline-none"
+              />
+              <UserPlus size={16} className="text-primary-600 shrink-0" />
+            </div>
+            {friendChips.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {friendChips.map((name, idx) => (
+                  <span
+                    key={idx}
+                    className="flex items-center gap-1.5 bg-gray-100 border border-gray-200 rounded-full px-3 py-1 text-xs font-semibold text-gray-700"
+                  >
+                    {name}
+                    <button onClick={() => setFriendChips((prev) => prev.filter((_, i) => i !== idx))}>
+                      <X size={12} className="text-gray-400 hover:text-gray-600" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* 장소 선택 */}

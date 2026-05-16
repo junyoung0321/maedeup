@@ -18,6 +18,10 @@ import {
   Ellipsis,
   CalendarCheck,
   Route,
+  UsersRound,
+  Search,
+  UserPlus,
+  X as XIcon,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
@@ -29,6 +33,21 @@ interface MeetingListItem {
   title: string;
   scheduled_at: string;
 }
+
+interface MemberInfo {
+  user_id: number;
+  user_name: string;
+}
+
+interface PreferenceStatusResponse {
+  total_members: number;
+  submitted_count: number;
+  all_submitted: boolean;
+  preferences: MemberInfo[];
+}
+
+const AVATAR_COLORS = ["#818cf8", "#f472b6", "#fb923c", "#34d399", "#60a5fa", "#a78bfa"];
+function avatarColor(idx: number) { return AVATAR_COLORS[idx % AVATAR_COLORS.length]; }
 
 const MEETING_TYPES = ["회식", "스터디", "회의", "카페", "기타"];
 
@@ -58,6 +77,9 @@ function MeetingSetupContent() {
   const [meetingType, setMeetingType] = useState("회식");
   const [foodCategory, setFoodCategory] = useState("한식");
   const [locationPath, setLocationPath] = useState("");
+  const [allMembers, setAllMembers] = useState<MemberInfo[]>([]);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<Set<number>>(new Set());
+  const [friendSearch, setFriendSearch] = useState("");
 
   useEffect(() => {
     try {
@@ -68,6 +90,13 @@ function MeetingSetupContent() {
       }
     } catch {}
   }, []);
+
+  useEffect(() => {
+    if (authLoading || !user || !roomId) return;
+    apiFetch<PreferenceStatusResponse>(`/api/v1/rooms/${roomId}/preferences`)
+      .then((res) => setAllMembers(res.preferences ?? []))
+      .catch(() => null);
+  }, [authLoading, user, roomId]);
 
   useEffect(() => {
     if (authLoading || !user || !roomId) return;
@@ -89,11 +118,29 @@ function MeetingSetupContent() {
     }
   }, [room]);
 
+  const selectedMembers = allMembers.filter((m) => selectedMemberIds.has(m.user_id));
+  const searchResults = friendSearch
+    ? allMembers.filter((m) => m.user_name.includes(friendSearch) && !selectedMemberIds.has(m.user_id))
+    : [];
+
+  function toggleMember(id: number) {
+    setSelectedMemberIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
   function handleCta() {
     try {
       sessionStorage.setItem(
         "meetingWizard",
-        JSON.stringify({ meetingType, foodCategory, locationPath })
+        JSON.stringify({
+          meetingType,
+          foodCategory,
+          locationPath,
+          selectedFriends: selectedMembers.map((m) => m.user_name),
+        })
       );
     } catch {}
     router.push(`/m/place/ai-result?roomId=${roomId}`);
@@ -199,6 +246,145 @@ function MeetingSetupContent() {
             {locationPath || "지역 선택"}
           </span>
           <ChevronRight size={20} color="#94a3b8" style={{ flexShrink: 0 }} />
+        </div>
+
+        {/* Friends card */}
+        <div
+          style={{
+            borderRadius: 12,
+            background: "#ffffff",
+            border: "1px solid #e2e8f0",
+            padding: "12px 14px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          {/* Header */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <UsersRound size={18} color="#4f46e5" style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: 13, fontWeight: 700, color: "#1e293b" }}>
+              참여 친구
+            </span>
+            <div style={{ flex: 1 }} />
+            <span style={{ fontSize: 11, fontWeight: 600, color: "#94a3b8" }}>
+              {selectedMemberIds.size}명 선택됨
+            </span>
+          </div>
+
+          {/* Search */}
+          <div
+            style={{
+              borderRadius: 10,
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
+              padding: "10px 12px",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            <Search size={16} color="#94a3b8" style={{ flexShrink: 0 }} />
+            <input
+              value={friendSearch}
+              onChange={(e) => setFriendSearch(e.target.value)}
+              placeholder="친구 이름으로 검색..."
+              style={{
+                flex: 1,
+                border: "none",
+                background: "transparent",
+                fontSize: 12,
+                color: "#1e293b",
+                outline: "none",
+              }}
+            />
+            <UserPlus size={18} color="#4f46e5" style={{ flexShrink: 0 }} />
+          </div>
+
+          {/* Search results dropdown */}
+          {searchResults.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {searchResults.map((m, idx) => (
+                <div
+                  key={m.user_id}
+                  onClick={() => { toggleMember(m.user_id); setFriendSearch(""); }}
+                  style={{
+                    borderRadius: 8,
+                    background: "#f1f5f9",
+                    padding: "8px 12px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    cursor: "pointer",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 24,
+                      height: 24,
+                      borderRadius: 12,
+                      background: avatarColor(idx),
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#ffffff" }}>
+                      {m.user_name.charAt(0)}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: "#1e293b" }}>
+                    {m.user_name}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Selected chips */}
+          {selectedMembers.length > 0 && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {selectedMembers.map((m, idx) => (
+                <div
+                  key={m.user_id}
+                  style={{
+                    borderRadius: 18,
+                    background: "#f1f5f9",
+                    border: "1px solid #e2e8f0",
+                    padding: "4px 10px 4px 4px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 24,
+                      height: 24,
+                      borderRadius: 12,
+                      background: avatarColor(idx),
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#ffffff" }}>
+                      {m.user_name.charAt(0)}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: "#1e293b" }}>
+                    {m.user_name}
+                  </span>
+                  <XIcon
+                    size={14}
+                    color="#94a3b8"
+                    style={{ cursor: "pointer" }}
+                    onClick={() => toggleMember(m.user_id)}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Meeting type */}

@@ -10,8 +10,17 @@
 - 결정성: tool 시퀀스 100% 동일 (top_p=0.1, top_k=1 효과)
 - 회귀: 0건
 
-### 시연 자동화
-`python .gstack-browser-launch.py` (터미널 1) + `python .gstack-demo.py` (터미널 2). 사전에 `.gstack-demo-token` 파일에 JWT 저장. JWT 발급: `docker exec maedeup-api python -c "from app.core.security import issue_jwt; print(issue_jwt(user_id=1, email='dnfltkagudwp123@gmail.com', name='정준영', picture=None, calendar_consent=True))"`.
+### 시연 자동화 (순서 엄수)
+**사전 절차 (시연 시작 전 1회):**
+1. `.env`에 `DEMO_FALLBACK_ENABLED=true` 설정 (없으면 personal_data_extractor canned fallback 비활성 → ACT 6 학습 안 됨)
+2. `docker exec maedeup-api python -m scripts.seed_demo` — 시연 멤버(지민·수현·민수) DB 시드 + personal data 사전 학습
+3. JWT 발급: `docker exec maedeup-api python -c "from app.core.security import issue_jwt; print(issue_jwt(user_id=1, email='dnfltkagudwp123@gmail.com', name='정준영', picture=None, calendar_consent=True))"` → `.gstack-demo-token`에 저장
+
+**실행:**
+- 터미널 1: `python .gstack-browser-launch.py`
+- 터미널 2: `python .gstack-demo.py` (`--fast` 옵션 가능)
+
+**ACT 6 학습 모먼트 검증:** `docker logs maedeup-api | Select-String "users affected"` — `0 users affected` 보이면 seed_demo 실행 필요. 1+ 보이면 정상.
 
 ### 시연 후 보완 항목 (D+ 작업)
 1. 해결점 P 정교화 (번복 처리, 게스트 정책) — 시연 시나리오에 등장 안 함, 우선순위 낮음

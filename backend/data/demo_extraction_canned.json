@@ -1,7 +1,14 @@
 {
   "scenario": "graduation_demo_v2_4person",
-  "_comment": "졸업 시연 통합 시나리오용 canned extraction. user_email은 seed_demo.py가 생성하는 demo 계정과 일치. value/source_quote/confidence는 시연 chat transcript의 발화와 verbatim 매칭. ACT 6 학습 모먼트는 지민의 'food_restrictions: 비린 음식'.",
+  "_comment": "졸업 시연 통합 시나리오용 canned extraction. user_email은 seed_demo.py가 생성하는 demo 계정 + 호스트 본인 계정 모두 cover. ACT 6 학습 모먼트(host 메인 위젯 ✨)는 host의 food_restrictions로 노출. value/source_quote/confidence는 시연 chat transcript의 발화와 verbatim 매칭.",
   "extractions": [
+    {
+      "user_email": "dnfltkagudwp123@gmail.com",
+      "category": "food_restrictions",
+      "value": ["비린 음식"],
+      "confidence": 0.95,
+      "source_quote": "나 비린 거 별로야. 회집은 빼자"
+    },
     {
       "user_email": "jimin@maedeup.app",
       "category": "food_restrictions",

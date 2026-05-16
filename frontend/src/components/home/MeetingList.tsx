@@ -12,6 +12,11 @@ const CATEGORY_MAP: Record<string, { badge: string; badgeColor: string }> = {
   dining: { badge: "식사",    badgeColor: "#059669" },
   sports: { badge: "스포츠",  badgeColor: "#ea580c" },
   hobby:  { badge: "취미",    badgeColor: "#7c3aed" },
+  // 한글 카테고리값으로 저장되는 경우(meeting/new 폼)도 매핑
+  스터디: { badge: "스터디",  badgeColor: "#4f46e5" },
+  식사:   { badge: "식사",    badgeColor: "#059669" },
+  스포츠: { badge: "스포츠",  badgeColor: "#ea580c" },
+  취미:   { badge: "취미",    badgeColor: "#7c3aed" },
 };
 
 function mapRoom(room: Room): MeetingItem {

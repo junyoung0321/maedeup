@@ -189,9 +189,11 @@ def _extract_korean_place_keyword(text: str) -> str | None:
     cleaned = re.sub(
         # 조사 (Fix 13에서 확장)
         r"(이랑|랑|와|과|에서|에|은|는|이|가|을|를|로|으로|도|만|"
-        # 사람 명사 (Fix 13 신규)
-        r"친구들|친구|사람들|사람|멤버|동료|동기|선배|후배|"
-        r"우리|저희|모두|다같이|같이|함께|"
+        # 사람 명사 (Fix 13 신규 + 2026-05-16 review 보강)
+        r"친구들|친구네|친구|사람들|사람|멤버|동료|동기들|동기|선배|후배|"
+        r"우리네|우리|저희|모두|다같이|같이|함께|"
+        # 사람 + 장소 합성 (review P1: "친구네집", "우리네집" 같은 noise 차단)
+        r"네집|네\s*집|"
         # 시간/날짜 표현 (Fix 13 신규)
         r"내일|모레|오늘|이번|다음|주말|평일|"
         r"오전|오후|저녁|아침|밤|새벽|점심|"
@@ -206,7 +208,8 @@ def _extract_korean_place_keyword(text: str) -> str | None:
         r"\s+)",
         "", text
     ).strip()
-    if 2 <= len(cleaned) <= 20:
+    # 길이 ≥ 3 (이전 2)로 강화 — 1~2자 noise 차단 (review P1).
+    if 3 <= len(cleaned) <= 20:
         return cleaned
 
     return None

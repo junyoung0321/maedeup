@@ -88,6 +88,16 @@ async def _run_place_self_correction(
     if not corrected_places:
         return place_list
 
+    # P1 fix (2026-05-16 review): corrected 결과가 너무 짧으면 (입력의 절반 미만)
+    #   Gemini가 disliked 외 항목까지 임의 누락한 회귀로 간주, 원본 유지.
+    #   ex: 입력 5개 → corrected 1개 = 사용자 카드 후보 80% 손실 silently.
+    if len(corrected_places) < max(1, len(place_list) // 2):
+        logger.warning(
+            "[OPT] self_correction returned %d items (input %d) — too few, keeping original",
+            len(corrected_places), len(place_list),
+        )
+        return place_list
+
     original_by_id = {
         str(place.get("place_id")): dict(place)
         for place in place_list

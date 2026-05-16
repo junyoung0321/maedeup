@@ -854,7 +854,8 @@ async def agent_ws(
                 continue
 
             role = payload.get("role", "user")
-            content = payload.get("content", "")
+            # P0 fix: content가 None인 잘못된 클라이언트 페이로드 방어 (모바일 push 등).
+            content = payload.get("content", "") or ""
             sender = payload.get("sender")
 
             # 메시지 길이 제한 (2000자)
@@ -913,18 +914,29 @@ async def agent_ws(
                     int(slot_context.get("total_message_count") or 0) > 10
                     and int(slot_context.get("total_message_count") or 0) % 10 == 0
                 ):
-                    async with AsyncSessionLocal() as session:
-                        summary_context = await MessageReader.load_agent_context(
-                            session=session,
-                            room_id=room_pk,
-                            viewer_user_id=user_id_check,
-                            limit=10,
-                        )
-                    summary = await _build_conversation_summary(
-                        summary_context.messages
-                    )
-                    if summary:
-                        slot_context["conversation_summary"] = summary
+                    # P0 fix (2026-05-16, 실사용자 관점 review): conversation_summary 빌드를
+                    #   receive loop 안에서 직렬 await로 호출하면 Gemini ~15s 동안 다음 메시지/
+                    #   slot_select 처리 불가 → 사용자가 "프로그램 멈췄나?" 인식.
+                    #   fire-and-forget으로 background 실행. 완료 시 slot_context에 갱신
+                    #   (race는 다음 트리거 시점까지 무해 — summary는 hint 용도).
+                    async def _spawn_summary() -> None:
+                        try:
+                            async with AsyncSessionLocal() as session:
+                                ctx = await MessageReader.load_agent_context(
+                                    session=session,
+                                    room_id=room_pk,
+                                    viewer_user_id=user_id_check,
+                                    limit=10,
+                                )
+                            s = await _build_conversation_summary(ctx.messages)
+                            if s:
+                                slot_context["conversation_summary"] = s
+                        except Exception as exc:
+                            logger.warning(
+                                "background conversation_summary failed: %s", exc, exc_info=True,
+                            )
+
+                    asyncio.create_task(_spawn_summary())
 
                 # AI 패널에서 직접 보낸 메시지는 항상 파이프라인 실행
                 # (사용자가 명시적으로 AI에게 말한 것이므로 debounce 없음)
@@ -968,6 +980,9 @@ async def agent_ws(
 
                 slot_context["trigger_reason"] = "direct_request"
                 slot_context["direct_request_kind"] = qc["kind"]
+                # P0 fix: trigger_message_text 박아서 intent.py fast-path가 latest_user_message
+                #   대신 현재 입력을 우선 사용. 채팅 잔존 메시지로 오분류 차단.
+                slot_context["trigger_message_text"] = content
 
                 async with AsyncSessionLocal() as session:
                     context = await MessageReader.load_agent_context(
@@ -983,6 +998,7 @@ async def agent_ws(
                     finally:
                         slot_context.pop("trigger_reason", None)
                         slot_context.pop("direct_request_kind", None)
+                        slot_context.pop("trigger_message_text", None)
 
                 # 슬롯 컨텍스트 업데이트 (다음 메시지에서 이어받기)
                 for key in (

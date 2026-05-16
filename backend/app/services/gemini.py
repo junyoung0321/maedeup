@@ -7,10 +7,9 @@ from google.api_core.exceptions import GoogleAPICallError, ResourceExhausted
 from app.core.config import settings
 
 
-# Track C 본래 (2026-05-16): agent_v2 실험에서 얻은 결정성 인사이트 백포팅.
-#   temperature=0.0 단독으론 Gemini 2.5 Flash가 stochastic이라 동일 입력 다른 결과 가능.
-#   top_p=0.1, top_k=1 추가로 결정성 강화. 분류·추출·요약 작업에 안전.
-#   narrator 응답이 다양성 필요한 경우 호출자가 generation_config override 가능.
+# 결정성 강화 (2026-05-16): temperature=0.0 단독으론 Gemini 2.5 Flash가 stochastic.
+#   top_p=0.1, top_k=1 추가로 분류·추출·요약 작업의 결정성 ↑. narrator 응답이
+#   다양성 필요한 경우 호출자가 generation_config 인자로 override 가능.
 _DEFAULT_GENERATION_CONFIG: dict[str, Any] = {
     "temperature": 0.0,
     "top_p": 0.1,
@@ -26,7 +25,7 @@ async def call_gemini(
     """Gemini API를 호출하고 응답 텍스트를 반환합니다.
 
     Fix 5 (2026-05-14): 기본 15s timeout. SDK hang → 백엔드 멈춤 위험 차단.
-    Track C (2026-05-16): default generation_config로 결정성 강화 (temp=0, top_p=0.1, top_k=1).
+    결정성 강화 (2026-05-16): default generation_config (temp=0, top_p=0.1, top_k=1).
       override 원하면 generation_config 인자로 전달 (예: narrator 다양성 필요 시).
     quick_classify는 자체 1.5s wait_for 사용 — 호환.
     """

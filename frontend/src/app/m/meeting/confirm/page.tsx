@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -125,8 +125,8 @@ function MeetingConfirmPageContent() {
 
   return (
     <div
-      className="flex flex-col bg-white overflow-hidden"
-      style={{ width: 390, height: 844, fontFamily: "Pretendard, sans-serif" }}
+      className="flex flex-col bg-white"
+      style={{ width: "100%", height: "844px", fontFamily: "Pretendard, sans-serif" }}
     >
       {/* Header */}
       <div

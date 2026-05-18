@@ -16,16 +16,19 @@ QuickKind = Literal["schedule", "place", "schedule+place", "general"]
 # 저녁 식사 추천해줘" 같은 자연스러운 입력은 Gemini fallback → general 분류 →
 # 카드 안 뜨고 되묻기만 하는 버그 발생.
 # /review fix (2026-05-18): "모임 이름 추천", "약속 이미지 정리" 같은 비-일정 입력
-#   오분류 방지 — 모임/약속은 schedule-context verb (잡|만나|볼까)와만 매칭. 일반
-#   추천/정리/제안 verb로는 schedule 분류 안 함 (단, 다른 schedule 키워드와 결합 시 OK).
+#   오분류 방지 — 모임/약속은 schedule-context verb (잡|만나|볼까)와만 매칭.
+# 통합 머지 (2026-05-18 main): sanigod의 verb 확장(정하|확인|조율|맞추) + "언제 만날/볼/모일"
+#   그룹 모두 흡수. 양쪽 expansion union.
 _SCHEDULE_RE = re.compile(
     r"(일정|날짜|언제|시간|"
     r"내일|모레|오늘|"
     r"다음\s*주|이번\s*주|다음\s*주말|이번\s*주말|"
     r"[월화수목금토일]요일)"
-    r".*(추천|뽑|정리|제안|잡|어때|만나|볼까|찾)"
+    r".*(추천|뽑|정리|제안|잡|어때|만나|볼까|찾|정하|확인|조율|맞추)"
     # demo-stab BE-1: 모임/약속은 schedule-context verb만 (이름 추천/이미지 정리 같은 오탐 차단).
-    r"|(모임|약속).*(잡|만나|볼까|언제|어때)",
+    r"|(모임|약속).*(잡|만나|볼까|언제|어때)"
+    # sanigod main 백포팅: "언제 만날/만나/볼/모일/...".
+    r"|(언제\s*(만날|만나|볼|모일|모이|갈|할|보자))",
     re.IGNORECASE,
 )
 # 해결점 A5-1 보강 (2026-05-07) + Fix 12 (2026-05-14) + demo-stab BE-1 (2026-05-13 백포팅):

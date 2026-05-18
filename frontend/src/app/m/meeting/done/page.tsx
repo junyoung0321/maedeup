@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -64,7 +64,7 @@ function MeetingDonePageContent() {
   return (
     <div
       className="relative flex flex-col"
-      style={{ width: 390, height: 844, overflow: "hidden", backgroundColor: "#ffffff" }}
+      style={{ width: "100%", height: "844px", backgroundColor: "#ffffff" }}
     >
       {/* Header */}
       <div className="relative shrink-0" style={{ height: 56, backgroundColor: "#4f46e5" }}>

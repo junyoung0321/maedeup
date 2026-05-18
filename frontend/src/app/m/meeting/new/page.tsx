@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -102,8 +102,8 @@ export default function MeetingNewPage() {
     <div
       className="relative flex flex-col overflow-hidden"
       style={{
-        width: 390,
-        height: 1090,
+        width: "100%",
+        height: "844px",
         backgroundColor: "#ffffffff",
         fontFamily: "Pretendard, sans-serif",
       }}

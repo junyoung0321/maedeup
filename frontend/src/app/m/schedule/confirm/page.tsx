@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -63,7 +63,7 @@ function ScheduleConfirmPageContent() {
   return (
     <div
       className="relative flex flex-col bg-white"
-      style={{ width: 390, height: 844, overflow: "hidden", fontFamily: "Pretendard, sans-serif" }}
+      style={{ width: "100%", height: "844px", fontFamily: "Pretendard, sans-serif" }}
     >
       {/* Header */}
       <div

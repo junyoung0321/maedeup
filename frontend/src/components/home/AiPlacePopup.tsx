@@ -41,12 +41,27 @@ export default function AiPlacePopup({ open, onClose }: Props) {
     if (!open) return;
     const cat = categories[selectedCat].label;
     setLoading(true);
-    apiFetch<NearbyPlacesResponse>(
-      `/api/v1/recommendations/nearby-places?category=${encodeURIComponent(cat)}&limit=3`
-    )
-      .then(setData)
-      .catch(() => setData(null))
-      .finally(() => setLoading(false));
+    const run = async () => {
+      let district = "";
+      try {
+        const raw = sessionStorage.getItem("locationWizard");
+        if (raw) {
+          const parsed = JSON.parse(raw) as Record<string, string>;
+          district = parsed.district ?? "";
+        }
+      } catch {}
+      if (district) {
+        await apiFetch("/api/v1/users/me/preferences", {
+          method: "PATCH",
+          body: JSON.stringify({ home_base: district }),
+        }).catch(() => null);
+      }
+      const result = await apiFetch<NearbyPlacesResponse>(
+        `/api/v1/recommendations/nearby-places?category=${encodeURIComponent(cat)}&limit=3`
+      ).catch(() => null);
+      setData(result);
+    };
+    run().finally(() => setLoading(false));
   }, [open, selectedCat]);
 
   if (!open) return null;
@@ -159,15 +174,7 @@ export default function AiPlacePopup({ open, onClose }: Props) {
             <div style={{ display: "flex", justifyContent: "center", padding: "24px 0" }}>
               <Loader2 size={24} color="#0ea5e9" className="animate-spin" />
             </div>
-          ) : reason ? (
-            <div style={{ padding: "16px 0", textAlign: "center" }}>
-              <span style={{ fontSize: 13, color: "#94a3b8" }}>{reason}</span>
-            </div>
-          ) : places.length === 0 ? (
-            <div style={{ padding: "16px 0", textAlign: "center" }}>
-              <span style={{ fontSize: 13, color: "#94a3b8" }}>추천 장소를 찾을 수 없습니다</span>
-            </div>
-          ) : (
+          ) : places.length > 0 ? (
             places.map((p, idx) => (
               <div
                 key={p.id}
@@ -228,6 +235,14 @@ export default function AiPlacePopup({ open, onClose }: Props) {
                 </div>
               </div>
             ))
+          ) : reason ? (
+            <div style={{ padding: "16px 0", textAlign: "center" }}>
+              <span style={{ fontSize: 13, color: "#94a3b8" }}>{reason}</span>
+            </div>
+          ) : (
+            <div style={{ padding: "16px 0", textAlign: "center" }}>
+              <span style={{ fontSize: 13, color: "#94a3b8" }}>추천 장소를 찾을 수 없습니다</span>
+            </div>
           )}
         </div>
 

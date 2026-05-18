@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -108,14 +108,12 @@ export default function CalendarPage() {
   return (
     <div
       style={{
-        width: 390,
-        height: 844,
-        overflow: "hidden",
+        width: "100%",
+        height: "844px",
         display: "flex",
         flexDirection: "column",
         background: "#f8fafc",
         fontFamily: "Pretendard, sans-serif",
-        margin: "0 auto",
       }}
     >
       {/* Header */}

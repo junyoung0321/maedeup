@@ -207,23 +207,25 @@ async def _sync_chat_rejected_to_unavailability(
     room_pk: int,
     signals: dict | None,
 ) -> None:
-    """해결점 P (임시 구현, B 옵션):
-    `_analyze_conversation`이 추출한 `rejected_dates`를 멤버별 unavailability로 동기화 →
-    캘린더 X/Y 카운트가 채팅 자연어 거부 발언을 반영하도록 함.
+    """채팅 대화에서 추출한 rejected_dates/accepted_dates를 멤버별 unavailability로 동기화.
 
-    안전한 부분만 — authed 멤버 + user 명시 + 이름 유일 매핑만. 게스트/null user/이름충돌은 skip.
-    번복 처리는 미구현 (시연 후 보완).
+    안전 조건: 비게스트 authed 멤버 + 이름 명시 + 이름 유일 매핑만. 이름 충돌 발생 시 해당 이름 skip.
     """
     if not isinstance(signals, dict):
         return
     rejected = signals.get("rejected_dates") or []
-    if not isinstance(rejected, list) or not rejected:
+    accepted = signals.get("accepted_dates") or []
+    if not isinstance(rejected, list):
+        rejected = []
+    if not isinstance(accepted, list):
+        accepted = []
+    if not rejected and not accepted:
         return
     if redis_client is None:
         return
 
     names: set[str] = set()
-    for entry in rejected:
+    for entry in rejected + accepted:
         if isinstance(entry, dict) and isinstance(entry.get("user"), str):
             name = entry["user"].strip()
             if name:
@@ -233,12 +235,12 @@ async def _sync_chat_rejected_to_unavailability(
 
     try:
         async with AsyncSessionLocal() as db:
-            # 게스트도 포함 — 시뮬/시연 멤버 다양성 대응 (임시).
             stmt = (
                 select(User.id, User.name)
                 .join(RoomMember, RoomMember.user_id == User.id)
                 .where(RoomMember.room_id == room_pk)
                 .where(User.name.in_(names))
+                .where(User.is_guest.is_(False))
             )
             rows = (await db.execute(stmt)).all()
     except Exception:
@@ -260,30 +262,32 @@ async def _sync_chat_rejected_to_unavailability(
 
     social_channel = f"social:{room_pk}"
     applied_count = 0
-    for entry in rejected:
+
+    async def _toggle_and_publish(entry: dict, unavailable: bool) -> None:
+        nonlocal applied_count
         if not isinstance(entry, dict):
-            continue
+            return
         user_name = entry.get("user")
         date = entry.get("date")
         if not isinstance(user_name, str) or not isinstance(date, str):
-            continue
+            return
         uid = name_to_id.get(user_name.strip())
         if uid is None:
-            continue
+            return
         try:
             dates_after = await sr.record_unavailable_toggle(
                 redis_client,
                 room_id=room_pk,
                 user_id=uid,
                 date=date,
-                unavailable=True,
+                unavailable=unavailable,
             )
         except Exception:
             logger.warning(
                 "record_unavailable_toggle failed room=%s uid=%s date=%s",
                 room_pk, uid, date, exc_info=True,
             )
-            continue
+            return
         applied_count += 1
         out = json.dumps(
             {
@@ -299,9 +303,14 @@ async def _sync_chat_rejected_to_unavailability(
         except Exception:
             logger.warning("Publish peer_unavailable_update failed room=%s", room_pk, exc_info=True)
 
+    for entry in rejected:
+        await _toggle_and_publish(entry, unavailable=True)
+    for entry in accepted:
+        await _toggle_and_publish(entry, unavailable=False)
+
     if applied_count:
         logger.info(
-            "[CHAT_UNAVAIL_SYNC] Applied %d rejected_dates to unavailability (room=%s)",
+            "[CHAT_UNAVAIL_SYNC] Applied %d unavailability toggles (room=%s)",
             applied_count, room_pk,
         )
 

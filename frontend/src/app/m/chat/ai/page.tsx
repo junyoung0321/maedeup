@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -49,9 +49,8 @@ function AiChatPageContent() {
   return (
     <div
       style={{
-        width: 390,
-        height: 844,
-        overflow: "clip",
+        width: "100%",
+        height: "844px",
         background: "#ffffff",
         display: "flex",
         flexDirection: "column",
@@ -123,7 +122,7 @@ function AiChatPageContent() {
         >
           <Sparkles size={28} color="#ffffff" />
           <span style={{ fontSize: 18, fontWeight: 700, color: "#ffffff" }}>안녕하세요! AI 비서입니다</span>
-          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.8)", lineHeight: 1.5 }}>
+          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.8)", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
             {"모임 일정 조율, 장소 추천, 빠른 매칭 등\n무엇이든 도와드릴게요 😊"}
           </span>
         </div>

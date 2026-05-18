@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -80,13 +80,12 @@ function ScheduleVotePageContent() {
   return (
     <div
       style={{
-        width: 390,
-        height: 844,
-        overflow: "hidden",
+        width: "100%",
+        height: "844px",
         backgroundColor: "#ffffff",
         fontFamily: "Pretendard, sans-serif",
       }}
-      className="flex flex-col mx-auto"
+      className="flex flex-col"
     >
       {/* 1. Header */}
       <div

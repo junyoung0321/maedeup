@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -43,10 +43,10 @@ export default function ConsentPage() {
 
   return (
     <div
-      className="flex flex-col overflow-hidden"
+      className="flex flex-col"
       style={{
-        width: 390,
-        height: 844,
+        width: "100%",
+        height: "844px",
         fontFamily: "Pretendard, sans-serif",
       }}
     >

@@ -96,6 +96,9 @@ async def _analyze_conversation(
         '    "rejected_dates": ['
         '{"date": "YYYY-MM-DD", "user": "발신자 또는 null", "reason": "거부 이유 또는 null"}'
         "],\n"
+        '    "accepted_dates": ['
+        '{"date": "YYYY-MM-DD", "user": "발신자 또는 null"}'
+        "],\n"
         '    "place_hint": "구체적 장소 힌트 또는 null",\n'
         '    "headcount": 0,\n'
         '    "meeting_type": "모임 유형 또는 null",\n'
@@ -122,6 +125,9 @@ async def _analyze_conversation(
         "  거부 키워드: \"안 돼\", \"못 가\", \"힘들어\", \"불가능\", \"어려워\", \"패스\", \"어렵다\"\n"
         "  - 한 명이라도 거부하면 무조건 여기. 다른 사람의 선호와 충돌하더라도 거부 우선.\n"
         "  - 단순한 미언급/무관심은 거부 아님.\n\n"
+        "accepted_dates: 이전에 거부했던 날짜를 명시적으로 번복한 경우.\n"
+        "  번복 키워드: \"그날 가능해\", \"일정 취소됐어\", \"괜찮아졌어\", \"다시 생각해보니\"\n"
+        "  - 명시적 번복 없이 단순 재언급은 포함하지 않음.\n\n"
         "conflict_options: 서로 다른 사람이 서로 다른 날짜를 선호하지만, 누구도 거부하지 않은 옵션들만.\n"
         "  - \"A는 X를 원함\" + \"B는 Y를 원함\" + 둘 다 명시적 거부 없음 → conflict_options=[X, Y]\n"
         "  - 단 한 명이라도 어떤 옵션에 거부를 표시하면 그 날짜는 conflict_options에서 빠지고 rejected_dates로.\n\n"
@@ -175,6 +181,7 @@ async def _analyze_conversation(
         "      {\"date\": \"2026-05-09\", \"user\": \"민수\", \"reason\": \"본가\"},\n"
         "      {\"date\": \"2026-05-10\", \"user\": \"예린\", \"reason\": \"휴식 원함\"}\n"
         "    ]\n"
+        "    accepted_dates: []\n"
         "    place_hint: null\n"
         "    headcount: 0\n"
         "    meeting_type: \"회식\"\n"

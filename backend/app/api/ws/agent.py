@@ -599,6 +599,11 @@ async def agent_ws(
 ) -> None:
     await websocket.accept()
 
+    # /review fix (2026-05-18): fire-and-forget background tasks 강한 참조 유지용.
+    #   asyncio.create_task 반환값을 set에 add하지 않으면 GC가 mid-execution에 task를
+    #   회수해 summary 빌드가 무성하게 끊길 수 있음. add_done_callback(discard)로 정리.
+    _background_tasks: set[asyncio.Task] = set()
+
     # 토큰 검증
     if not token:
         await websocket.close(code=1008, reason="Missing token")
@@ -919,6 +924,9 @@ async def agent_ws(
                     #   slot_select 처리 불가 → 사용자가 "프로그램 멈췄나?" 인식.
                     #   fire-and-forget으로 background 실행. 완료 시 slot_context에 갱신
                     #   (race는 다음 트리거 시점까지 무해 — summary는 hint 용도).
+                    # /review fix (2026-05-18): asyncio.create_task가 반환한 Task에 강한 참조를
+                    #   유지하지 않으면 GC가 회수해 mid-execution에서 사라질 수 있음
+                    #   (Python docs 경고). connection-scope set에 보관하고 완료 시 discard.
                     async def _spawn_summary() -> None:
                         try:
                             async with AsyncSessionLocal() as session:
@@ -936,7 +944,9 @@ async def agent_ws(
                                 "background conversation_summary failed: %s", exc, exc_info=True,
                             )
 
-                    asyncio.create_task(_spawn_summary())
+                    _summary_task = asyncio.create_task(_spawn_summary())
+                    _background_tasks.add(_summary_task)
+                    _summary_task.add_done_callback(_background_tasks.discard)
 
                 # AI 패널에서 직접 보낸 메시지는 항상 파이프라인 실행
                 # (사용자가 명시적으로 AI에게 말한 것이므로 debounce 없음)

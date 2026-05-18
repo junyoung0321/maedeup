@@ -52,14 +52,10 @@ export default function ExplorePage() {
       </main>
 
       {/* Floating bottom bar — mobile에선 버튼 stack, desktop은 가로 배치 */}
+      {/* NOTE: "모임 초대" 버튼은 mock 데이터 InviteModal을 띄우므로 시연용 임시 숨김.
+                게스트 링크/멤버 초대는 채팅방 상단 "초대" 버튼에서 발급 (실 API 연동됨). */}
       <div className="fixed bottom-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md border-t border-[#e2e8f0]">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-8 lg:px-[55px] py-3 sm:py-4 flex flex-col sm:flex-row sm:justify-end gap-2 sm:gap-4 lg:gap-6">
-          <button
-            onClick={() => setInviteOpen(true)}
-            className="w-full sm:w-[180px] lg:w-[215px] h-[48px] sm:h-[64px] lg:h-[76px] rounded-[15px] bg-[#4f46e5] text-white text-[16px] sm:text-[22px] lg:text-[30px] font-semibold hover:bg-[#4338ca] transition-colors shadow-lg"
-          >
-            모임 초대
-          </button>
           <button
             onClick={() => router.push("/meeting/new")}
             className="w-full sm:w-[180px] lg:w-[215px] h-[48px] sm:h-[64px] lg:h-[76px] rounded-[15px] bg-[#4f46e5] text-white text-[16px] sm:text-[22px] lg:text-[30px] font-semibold hover:bg-[#4338ca] transition-colors shadow-lg"

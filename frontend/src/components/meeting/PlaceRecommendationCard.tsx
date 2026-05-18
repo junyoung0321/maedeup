@@ -176,6 +176,25 @@ export default function PlaceRecommendationCard({
                 )}
               </div>
               <span style={{ fontSize: 13, lineHeight: 1.5, color: "#1e293b" }}>{place.address}</span>
+              {place.reason && (
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 6,
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    background: "#fef3c7",
+                    border: "1px solid #fde68a",
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    color: "#78350f",
+                    fontWeight: 500,
+                  }}
+                >
+                  <span style={{ flexShrink: 0 }}>✨</span>
+                  <span>{place.reason}</span>
+                </div>
+              )}
               {isPlaceConfirmed && isSelected ? (
                 <div style={{ padding: "8px 12px", borderRadius: 10, background: "#ecfdf5", border: "1px solid #86efac", color: "#166534", fontSize: 13, fontWeight: 700 }}>
                   ✓ 장소가 확정되었습니다

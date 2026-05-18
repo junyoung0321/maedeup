@@ -56,6 +56,11 @@ async def supervisor_validation(state: GraphState) -> GraphState:
             errors.append("headcount exceeds current recommendation constraints")
 
         if not is_location_first:
+            # Fix (2026-05-18): 과거 슬롯은 조용히 필터 (errors에 추가 X). 이전 동작은
+            # 미래 슬롯이 충분한데도 과거 슬롯 1개만 있어도 validation_passed=False로
+            # 떨어져서 vote_card 생성 실패. 늦은 시간(예: 22시) 데모에서 항상 재현.
+            # 슬롯 timestamp 자체가 손상된 경우(parse 실패, end<=start)만 진짜 errors.
+            past_slot_count = 0
             for slot in state.get("calendar_free_slots", []):
                 start_at = _parse_iso_datetime(slot.get("start_at"))
                 end_at = _parse_iso_datetime(slot.get("end_at"))
@@ -63,12 +68,17 @@ async def supervisor_validation(state: GraphState) -> GraphState:
                     errors.append("calendar slot has invalid timestamps")
                     continue
                 if start_at < now:
-                    errors.append("calendar slot is in the past")
+                    past_slot_count += 1
                     continue
                 if end_at <= start_at:
                     errors.append("calendar slot duration is invalid")
                     continue
                 valid_slots.append(slot)
+            if past_slot_count:
+                logger.info(
+                    "[VALIDATION] filtered %d past slots (room=%s, valid_remaining=%d)",
+                    past_slot_count, state.get("room_id"), len(valid_slots),
+                )
 
         valid_places: list[dict[str, Any]] = []
         for place in state.get("place_search_results", []):

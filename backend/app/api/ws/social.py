@@ -546,10 +546,15 @@ async def social_ws(
 
 
 # ── 합의/결론 감지 패턴 ──────────────────────────────────────────────
+# Fix (2026-05-18): "[시간]시 하자" / "[요일] 하자" 류 명확한 결정 패턴 추가.
+# 기존엔 "그걸로/그날로/거기로/그렇게/그러자/좋아.../ㅇㅇ.../콜/확정/결정" 같은
+# 추상 대명사 기반만 잡혀서 "금요일 저녁 7시로 하자!" 같은 구체 결정을 놓쳤음.
 _CONCLUSION_PATTERNS = re.compile(
     r"확정|그걸로\s*하자|그때\s*보자|오케이.*보자|ㅇㅋ.*보자|그러자|좋아.*하자|"
     r"그렇게\s*하자|그날로\s*하자|거기로\s*하자|거기서\s*보자|그럼\s*그때|"
-    r"콜|ㅇㅇ.*하자|결정|최종|fix"
+    r"콜|ㅇㅇ.*하자|결정|최종|fix|"
+    r"\d+\s*시[^.!?\n]{0,10}하자|"
+    r"(?:월|화|수|목|금|토|일)요일[^.!?\n]{0,20}하자"
 )
 
 
@@ -569,14 +574,21 @@ async def _detect_and_notify_intent(
 
     1단계 — 경량 필터 (비용 0):
         - classify_intent로 의도 추출 (meeting_schedule / place_suggestion / general)
-        - 모임 관련 의도면 intent_detected 이벤트 발행 (프론트 배너용)
-        - 모든 user 메시지에 대해 카운터 +1
+        - NOTIFIABLE 의도 메시지에만 카운터 +1 (잡담은 카운트 안 함)
+          Fix (2026-05-18): 이전엔 intent 무관 모든 메시지 +1이었으나, 잡담N+모임1
+          시점에서 judge가 호출돼 "초기 상태"로 false 판정 → 60s 쿨다운으로 후속
+          모임 메시지가 갇히는 버그. NOTIFIABLE만 카운트하면 모임 4턴 모일 때까지
+          judge 호출이 연기됨.
 
     2단계 — 조건부 LLM 판정 (쿨다운 있음):
-        - 카운터 >= 3 이고 60초 쿨다운 해제된 상태에서
+        - NOTIFIABLE 카운터 >= 3 이고 60초 쿨다운 해제된 상태에서
         - 최근 10개 메시지를 judge_stalemate에 보내 교착 여부 판정
         - yes → auto_trigger 발행 + 카운터 리셋
         - no → 쿨다운만 설정 (카운터 유지, 다음 메시지 기다림)
+
+    임계값 (2026-05-18): 4 → 3. NOTIFIABLE 필터를 통과한 메시지만 카운트하므로
+    4 turn 활동 보장 효과가 사라짐 → 3 모임 메시지면 judge 호출 (judge가 false 시
+    자연스럽게 cooldown으로 방어).
 
     3단계 — 합의 감지 (regex 폴백):
         - 확정/결정 패턴이 명확히 보이면 즉시 정리 카드 트리거
@@ -619,13 +631,22 @@ async def _detect_and_notify_intent(
                 )
             return
 
-        # ── 카운터 증가 (모든 user 메시지 대상) ──────────────────────────
+        # ── 카운터 증가 (NOTIFIABLE 의도 메시지만) ─────────────────────────
+        # Fix (2026-05-18): 잡담은 카운트 안 함. 위 docstring 참고.
+        if result["intent"] not in _NOTIFIABLE_INTENTS:
+            logger.debug(
+                "Social msg intent=%s for room %s — not NOTIFIABLE, counter unchanged",
+                result["intent"],
+                room_id,
+            )
+            return
+
         count = await r.incr(counter_key)
         await r.expire(counter_key, 600)
 
-        if count < 4:
+        if count < 3:
             logger.debug(
-                "Social msg count for room %s: %d (threshold: 4, skipping judge)",
+                "Social NOTIFIABLE count for room %s: %d (threshold: 3, skipping judge)",
                 room_id,
                 count,
             )

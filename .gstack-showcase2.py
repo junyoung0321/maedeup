@@ -195,6 +195,16 @@ async def run_showcase() -> None:
             print("\n[ERROR] localStorage에 auth_token 없음.", file=sys.stderr)
             return
 
+        # Gemini 헬스체크 — quota/키 이상 시 즉시 abort
+        try:
+            with urllib.request.urlopen(f"{API}/api/v1/health/gemini", timeout=8) as r:
+                h = json.loads(r.read())
+            if not h.get("ok"):
+                raise RuntimeError(f"Gemini 헬스체크 실패: {h}. quota/키 확인 필요.")
+            log(f"Gemini 헬스체크 OK (응답 len={h.get('len')})")
+        except Exception as e:
+            raise RuntimeError(f"Gemini unavailable: {e}") from e
+
         await page.goto("http://localhost:3000/", wait_until="networkidle", timeout=15000)
         await asyncio.sleep(pace["between_steps"])
 
@@ -252,8 +262,8 @@ async def run_showcase() -> None:
         # ─────────────────────────────────────────────────
 
         # 호스트 메시지 1번은 canned data의 source_quote와 verbatim 일치 → 모달 자연스러움
-        log("[호스트] '우리 이번 주에 밥 먹자! 나 비린 거 별로야. 회집은 빼자'")
-        await fill_input(page, "메세지", "우리 이번 주에 밥 먹자! 나 비린 거 별로야. 회집은 빼자")
+        log("[호스트] '우리 이번 주에 밥 먹자! 나 매운 거 못 먹어ㅠ 안 매운 한식 어때?'")
+        await fill_input(page, "메세지", "우리 이번 주에 밥 먹자! 나 매운 거 못 먹어ㅠ 안 매운 한식 어때?")
         await asyncio.sleep(0.4)
         await page.keyboard.press("Enter")
         await asyncio.sleep(pace["after_msg"])
@@ -266,8 +276,8 @@ async def run_showcase() -> None:
         await send_chat(room_id, minsu, "금요일은 알바라 안 돼 ㅠ 토요일은?")
         await asyncio.sleep(pace["after_msg"])
 
-        log("[호스트] '토요일은 가족 모임. 평일 저녁이 편해'")
-        await fill_input(page, "메세지", "토요일은 가족 모임. 평일 저녁이 편해")
+        log("[호스트] '토요일은 가족 모임. 평일 저녁이 편해, 강남 자주 가니까 강남 좋아'")
+        await fill_input(page, "메세지", "토요일은 가족 모임. 평일 저녁이 편해, 강남 자주 가니까 강남 좋아")
         await asyncio.sleep(0.4)
         await page.keyboard.press("Enter")
 
@@ -403,31 +413,34 @@ async def run_showcase() -> None:
             # 모달 로드 대기 (receipts API 호출 시간)
             await asyncio.sleep(2.5)
 
-            # 모달 내용 캡처 — 모달 컨테이너 찾기 ("위 발화에서" 텍스트의 가장 가까운 직속 부모)
+            # 모달 내용 캡처 — "AI 학습 출처" SPAN → closest 모달 root → innerText
             modal_text = await js_eval(page, """
                 (() => {
-                  // 가장 깊은 element 중 "AI 학습 출처" 헤더 직속 컨테이너 찾기
-                  const all = Array.from(document.querySelectorAll('div'));
-                  const candidates = all.filter(e => {
-                    if (!e.offsetParent) return false;
-                    const t = e.innerText || '';
-                    return t.includes('AI 학습 출처') && t.includes('위 발화에서');
-                  });
-                  if (!candidates.length) {
-                    // fallback: 모달이 안 열렸을 수도 — 토스트라도 잡기
-                    const toast = all.find(e => e.offsetParent &&
-                      (e.innerText || '').includes('AI가 대화에서 정보를 학습'));
-                    return toast ? toast.innerText.slice(0, 400) : null;
+                  // 1. visible "AI 학습 출처" SPAN 찾기
+                  const span = Array.from(document.querySelectorAll('span')).find(
+                    e => e.offsetParent && (e.innerText || '').trim() === 'AI 학습 출처'
+                  );
+                  if (!span) return null;
+                  // 2. 조상 중 모달 root (max-w-[420px] 또는 shadow-2xl 클래스 포함) 찾기
+                  let el = span.parentElement;
+                  while (el) {
+                    const cls = el.className || '';
+                    if (cls.includes('max-w-[420px]') || cls.includes('shadow-2xl')) break;
+                    el = el.parentElement;
                   }
-                  // 가장 좁은 (자식 포함 X) 컨테이너 = 모달 root
-                  candidates.sort((a, b) => a.innerText.length - b.innerText.length);
-                  return candidates[0].innerText.slice(0, 500);
+                  if (!el) return null;
+                  // 3. innerText 전체 리턴 (600자 제한)
+                  return el.innerText.slice(0, 600);
                 })()
             """)
-            if modal_text:
-                log(f"출처 모달 내용:\n{modal_text}")
+            if modal_text is None:
+                log("출처 모달 미발견")
+            elif "출처 기록이 없습니다" in modal_text:
+                log(f"출처 모달 — 출처 없음 상태:\n{modal_text}")
+            elif "위 발화에서" in modal_text:
+                log(f"출처 모달 — quote 노출됨:\n{modal_text}")
             else:
-                log("⚠️  출처 모달 텍스트 추출 실패")
+                log(f"출처 모달 — 알 수 없는 상태:\n{modal_text}")
 
             log(f"모달 관찰 시간 ({pace['modal_observe']}s)")
             await asyncio.sleep(pace["modal_observe"])

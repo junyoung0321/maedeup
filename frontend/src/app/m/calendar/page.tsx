@@ -16,6 +16,17 @@ interface MeetingListItem {
   location_name?: string | null;
 }
 
+interface MyCalendarEvent {
+  id: string;
+  title: string;
+  starts_at: string;
+}
+
+interface MyCalendarResponse {
+  events: MyCalendarEvent[];
+  connected: boolean;
+}
+
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const BAR_COLORS = ["#4f46e5", "#22c55e", "#f59e0b", "#ec4899", "#06b6d4", "#8b5cf6"];
 const EVENT_COLORS = [
@@ -59,6 +70,7 @@ export default function CalendarPage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const [meetings, setMeetings] = useState<MeetingListItem[]>([]);
+  const [gcalEvents, setGcalEvents] = useState<{ day: number; label: string }[]>([]);
 
   const now = new Date();
   const [viewYear, setViewYear] = useState(now.getFullYear());
@@ -75,6 +87,23 @@ export default function CalendarPage() {
       .then(setMeetings)
       .catch(() => null);
   }, [authLoading, user]);
+
+  useEffect(() => {
+    if (authLoading || !user) return;
+    apiFetch<MyCalendarResponse>(`/api/v1/calendar/my-events?year=${viewYear}&month=${viewMonth + 1}`)
+      .then((res) => {
+        if (!res.connected) return;
+        const parsed = res.events
+          .map((ev) => {
+            const d = new Date(ev.starts_at);
+            if (d.getFullYear() !== viewYear || d.getMonth() !== viewMonth) return null;
+            return { day: d.getDate(), label: ev.title.length > 4 ? ev.title.slice(0, 4) : ev.title };
+          })
+          .filter((x): x is { day: number; label: string } => x !== null);
+        setGcalEvents(parsed);
+      })
+      .catch(() => null);
+  }, [authLoading, user, viewYear, viewMonth]);
 
   function prevMonth() {
     if (viewMonth === 0) { setViewYear(y => y - 1); setViewMonth(11); }
@@ -97,6 +126,11 @@ export default function CalendarPage() {
         const label = m.title.length > 4 ? m.title.slice(0, 4) : m.title;
         eventsByDay[day] = { label, colorIdx: i % EVENT_COLORS.length };
       }
+    }
+  });
+  gcalEvents.forEach((ev, i) => {
+    if (!eventsByDay[ev.day]) {
+      eventsByDay[ev.day] = { label: ev.label, colorIdx: (meetings.length + i) % EVENT_COLORS.length };
     }
   });
 

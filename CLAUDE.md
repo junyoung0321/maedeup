@@ -14,7 +14,8 @@
 **사전 절차 (시연 시작 전 1회):**
 1. `.env`에 `DEMO_FALLBACK_ENABLED=true` 설정 (없으면 personal_data_extractor canned fallback 비활성 → ACT 6 학습 안 됨)
 2. `docker exec maedeup-api python -m scripts.seed_demo` — 시연 멤버(지민·수현·민수) DB 시드 + personal data 사전 학습
-3. JWT 발급: `docker exec maedeup-api python -c "from app.core.security import issue_jwt; print(issue_jwt(user_id=1, email='dnfltkagudwp123@gmail.com', name='정준영', picture=None, calendar_consent=True))"` → `.gstack-demo-token`에 저장
+3. `curl -X POST http://localhost:8000/api/v1/intents/seed` — RAG intent 예시 55개 시드. **누락 시 모든 채팅이 intent=general 분류 → NOTIFIABLE 카운터 0 → 트리거 게이트 영원히 미발화 → ACT 2 추천 카드 안 뜸.** 검증: `docker exec maedeup-postgres psql -U maedeup -d maedeup -c "SELECT intent, COUNT(*) FROM intent_examples GROUP BY intent;"` → 3 row(general 10 / meeting_schedule 15 / place_suggestion 30).
+4. JWT 발급: `docker exec maedeup-api python -c "from app.core.security import issue_jwt; print(issue_jwt(user_id=1, email='dnfltkagudwp123@gmail.com', name='정준영', picture=None, calendar_consent=True))"` → `.gstack-demo-token`에 저장
 
 **실행:**
 - 터미널 1: `python .gstack-browser-launch.py`

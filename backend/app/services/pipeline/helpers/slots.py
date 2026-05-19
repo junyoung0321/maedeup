@@ -553,8 +553,9 @@ def _build_multi_date_slots(
     busy_by_user: Optional[dict[str, list[dict[str, Any]]]] = None,
 ) -> list[dict[str, Any]]:
     """여러 날짜 힌트로부터 투표용 슬롯을 생성합니다.
-    busy_by_user가 주어지면 멤버 GCal busy를 라벨/카운트에 반영하고 전원 불참 슬롯은 skip
-    (b56aa4b _build_preference_time_slots 패턴 재사용)."""
+    busy_by_user가 주어지면 멤버 GCal busy를 라벨/카운트에 반영하고 has_conflict/unavailable_users
+    필드로 부분 충돌을 표시합니다. Fix#1(2026-05-20): 전원 불참 슬롯도 skip 없이 포함 —
+    호스트 캘린더 상태에 관계없이 vote_card 생성 보장."""
     date_hints = state.get("date_hints") or []
     now_kst = datetime.now(KST)
     slots: list[dict[str, Any]] = []
@@ -608,14 +609,14 @@ def _build_multi_date_slots(
         holiday = _get_korean_holiday(target_date)
 
         # F-8 v2 후속 #2 (2026-05-08): GCal busy 정밀 반영 — b56aa4b _build_preference_time_slots 패턴.
+        # Fix#1 (2026-05-20): 전원 conflict여도 슬롯 발급 — 호스트 캘린더 상태에 의존해
+        # vote_card 자체가 안 만들어지는 문제 해결. has_conflict/unavailable_users 필드로
+        # 투표 카드 UI에서 "N명 못 옴" 표시. 완전 차단 대신 정보 제공 방식으로 전환.
         unavailable: list[str] = []
         if busy_by_user:
             for user_key, busy_periods in busy_by_user.items():
                 if _is_busy_during(busy_periods, start_at, end_at):
                     unavailable.append(_user_display_name(user_key))
-            # 모두 못 가는 슬롯 skip — 의미 없는 추천 회피
-            if len(unavailable) == len(busy_by_user):
-                continue
 
         slots.append({
             "slot_id": f"date-option-{index}",

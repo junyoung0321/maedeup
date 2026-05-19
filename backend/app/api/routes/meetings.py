@@ -392,9 +392,19 @@ async def confirm_meeting(
             # defensive — scheduling_round is the source of truth for state.
             raise HTTPException(status_code=403, detail=str(exc))
 
-    # DB는 naive datetime을 사용하므로 timezone 제거
-    scheduled_at = body.scheduled_at.replace(tzinfo=None) if body.scheduled_at.tzinfo else body.scheduled_at
-    end_at = body.end_at.replace(tzinfo=None) if body.end_at.tzinfo else body.end_at
+    # DB는 naive UTC datetime을 사용 (CLAUDE.md 컨벤션). tz-aware 입력은 UTC로
+    # 변환 후 tzinfo 제거 — 단순 .replace(tzinfo=None)은 KST 클럭값을 그대로 떨어뜨려
+    # 다운스트림 format_korean_meeting_time(가정: naive=UTC)이 +9h 이중변환하는 버그.
+    scheduled_at = (
+        body.scheduled_at.astimezone(timezone.utc).replace(tzinfo=None)
+        if body.scheduled_at.tzinfo
+        else body.scheduled_at
+    )
+    end_at = (
+        body.end_at.astimezone(timezone.utc).replace(tzinfo=None)
+        if body.end_at.tzinfo
+        else body.end_at
+    )
 
     if body.meeting_id is not None:
         # 기존 pending 미팅을 confirmed로 승격

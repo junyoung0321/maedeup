@@ -298,8 +298,9 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
     setIsConfirming(true);
     const startTime = slotToTime(selectionStart);
     const endTime = slotToTime(selectionEnd + 1); // +1 because end is inclusive
-    const startAt = `${date}T${startTime}:00`;
-    const endAt = `${date}T${endTime}:00`;
+    // KST(+09:00) 명시 — naive 보내면 백엔드가 UTC로 가정해서 +9h 이중변환.
+    const startAt = `${date}T${startTime}:00+09:00`;
+    const endAt = `${date}T${endTime}:00+09:00`;
     try {
       await onConfirm(startAt, endAt);
     } finally {

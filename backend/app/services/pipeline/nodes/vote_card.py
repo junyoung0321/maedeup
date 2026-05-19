@@ -149,10 +149,11 @@ async def _ensure_pending_meeting_id(state: GraphState, title: str) -> int:
         slot_start = datetime.now(timezone.utc).replace(tzinfo=None)
     if slot_end is None:
         slot_end = slot_start + timedelta(hours=2)
+    # DB는 naive UTC. tz-aware (예: KST "+09:00") → UTC 변환 후 strip.
     if slot_start.tzinfo is not None:
-        slot_start = slot_start.replace(tzinfo=None)
+        slot_start = slot_start.astimezone(timezone.utc).replace(tzinfo=None)
     if slot_end.tzinfo is not None:
-        slot_end = slot_end.replace(tzinfo=None)
+        slot_end = slot_end.astimezone(timezone.utc).replace(tzinfo=None)
 
     new_meeting = MeetingSchedule(
         room_id=room_pk,
@@ -266,11 +267,17 @@ async def vote_card_creation(state: GraphState) -> GraphState:
             first_slot = vote_slots[0] if vote_slots else {}
             slot_start = _parse_iso_datetime(first_slot.get("start_at")) if first_slot.get("start_at") else datetime.now(timezone.utc).replace(tzinfo=None)
             slot_end = _parse_iso_datetime(first_slot.get("end_at")) if first_slot.get("end_at") else slot_start + timedelta(hours=2)
+            # DB는 naive UTC. tz-aware → UTC 변환 후 strip (단순 .replace(tzinfo=None)
+            # 은 KST 클럭값을 그대로 보존해서 다운스트림 formatter가 +9h 이중변환).
+            if hasattr(slot_start, 'tzinfo') and slot_start.tzinfo is not None:
+                slot_start = slot_start.astimezone(timezone.utc).replace(tzinfo=None)
+            if hasattr(slot_end, 'tzinfo') and slot_end.tzinfo is not None:
+                slot_end = slot_end.astimezone(timezone.utc).replace(tzinfo=None)
             new_meeting = MeetingSchedule(
                 room_id=room_pk,
                 title=vote_title,
-                scheduled_at=slot_start if not hasattr(slot_start, 'tzinfo') or slot_start.tzinfo is None else slot_start.replace(tzinfo=None),
-                end_at=slot_end if not hasattr(slot_end, 'tzinfo') or slot_end.tzinfo is None else slot_end.replace(tzinfo=None),
+                scheduled_at=slot_start,
+                end_at=slot_end,
                 vote_options=[
                     {"slot_id": s.get("slot_id"), "label": s.get("label"), "start_at": s.get("start_at"), "end_at": s.get("end_at")}
                     for s in vote_slots

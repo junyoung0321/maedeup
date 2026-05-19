@@ -78,6 +78,10 @@ _FEATURES_PATH = os.path.join(
     os.path.dirname(__file__),
     "..", "output", "features", "place_features.csv",
 )
+_KAKAO_MAP_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "..", "output", "kakao_map.csv",
+)
 
 
 @lru_cache(maxsize=1)
@@ -88,6 +92,20 @@ def _load_model():
         model = pickle.load(f)
     logger.info(f"LGBMRanker 로드: {path}")
     return model
+
+
+@lru_cache(maxsize=1)
+def _load_kakao_bridge() -> dict[str, str]:
+    """kakao_map.csv → {kakao_place_id: naver_place_id} 역방향 인덱스."""
+    path = os.path.normpath(_KAKAO_MAP_PATH)
+    if not os.path.exists(path):
+        logger.warning("kakao_map.csv 없음 — 브릿지 비활성화")
+        return {}
+    df = pd.read_csv(path, dtype={"naver_place_id": str, "kakao_place_id": str})
+    df = df.dropna(subset=["kakao_place_id"])
+    bridge = dict(zip(df["kakao_place_id"], df["naver_place_id"]))
+    logger.info(f"Kakao bridge 로드: {len(bridge):,}개 매핑")
+    return bridge
 
 
 @lru_cache(maxsize=1)
@@ -133,10 +151,15 @@ def build_features(candidates: list[dict], scenario: dict) -> pd.DataFrame:
     Returns:
         FEATURE_COLS 순서의 DataFrame (len == len(candidates))
     """
+    bridge = _load_kakao_bridge()
     rows = []
     for cand in candidates:
-        # 고정 feature 조회 (mood_group/vibe/budget은 compute_scenario_features 내부용)
+        # naver_place_id 확정: 직접 제공 → kakao_place_id 브릿지 순으로 조회
         naver_id = str(cand.get("naver_place_id", "")) or None
+        if not naver_id:
+            kakao_id = str(cand.get("kakao_place_id", "")) or None
+            if kakao_id:
+                naver_id = bridge.get(kakao_id)
         fixed_feat = _get_fixed_features(naver_id)
 
         # compute_scenario_features는 lat/lng + category_depth1/price_level/mood flags 필요
@@ -160,11 +183,14 @@ def rank(
     scenario: dict,
     top_k: int = 5,
 ) -> list[dict]:
-    """후보 장소를 LGBMRanker로 스코어링해 상위 top_k개 반환.
+    """후보 장소를 LGBMRanker + Two-Tower 하이브리드로 스코어링해 상위 top_k개 반환.
+
+    브릿지 매핑된 장소: LGBMRanker 0.8 + Two-Tower 0.2
+    미매핑 장소:        LGBMRanker 0.3 + Two-Tower 0.7
 
     Args:
-        candidates: 후보 장소 리스트 (place_name, lat, lng 등 포함)
-        scenario: 시나리오 dict (purpose_cat, budget, moods, time_slot, participants, center_lat/lng)
+        candidates: 후보 장소 리스트 (place_name, lat, lng, kakao_place_id 등 포함)
+        scenario: 시나리오 dict
         top_k: 반환할 장소 수
 
     Returns:
@@ -177,21 +203,49 @@ def rank(
     model = _load_model()
     feat_df = build_features(candidates, scenario)
 
-    # LGBMRanker.predict → 각 후보의 relevance 예측값 (연속값, 높을수록 좋음)
-    scores = model.predict(feat_df)
+    # LGBMRanker.predict → relevance 예측값
+    lgbm_raw = model.predict(feat_df)
+    s_min, s_max = lgbm_raw.min(), lgbm_raw.max()
+    lgbm_norm = (lgbm_raw - s_min) / (s_max - s_min) if s_max > s_min else np.full(len(lgbm_raw), 0.5)
 
-    # 점수 정규화 (0~1 범위, 외부 노출 편의)
-    s_min, s_max = scores.min(), scores.max()
-    if s_max > s_min:
-        norm_scores = (scores - s_min) / (s_max - s_min)
-    else:
-        norm_scores = np.ones(len(scores)) * 0.5
+    # 브릿지 매핑 여부 판별
+    bridge = _load_kakao_bridge()
+    is_mapped = np.zeros(len(candidates), dtype=bool)
+    for i, cand in enumerate(candidates):
+        naver_id = str(cand.get("naver_place_id", "")) or None
+        if naver_id:
+            is_mapped[i] = True
+        else:
+            kakao_id = str(cand.get("kakao_place_id", "")) or None
+            if kakao_id and kakao_id in bridge:
+                is_mapped[i] = True
+
+    # Two-Tower 스코어 (로드 실패 시 0.5 폴백)
+    tt_scores = np.full(len(candidates), 0.5)
+    try:
+        from serving.two_tower import score_places as tt_score_places
+        raw_tt = np.array(tt_score_places(scenario, candidates))
+        tt_min, tt_max = raw_tt.min(), raw_tt.max()
+        tt_scores = (raw_tt - tt_min) / (tt_max - tt_min) if tt_max > tt_min else np.full(len(raw_tt), 0.5)
+    except Exception as e:
+        logger.warning(f"Two-Tower 비활성화: {e}")
+
+    # 하이브리드 최종 점수
+    lgbm_w = np.where(is_mapped, 0.8, 0.3)
+    tt_w = 1.0 - lgbm_w
+    final_scores = lgbm_w * lgbm_norm + tt_w * tt_scores
 
     # 정렬 및 top_k 선택
-    order = np.argsort(-scores)  # 내림차순
+    order = np.argsort(-final_scores)
     results = []
     for rank_idx, cand_idx in enumerate(order[:top_k], start=1):
-        result = {**candidates[cand_idx], "score": round(float(norm_scores[cand_idx]), 4), "rank": rank_idx, "ml_ranked": True}
+        result = {
+            **candidates[cand_idx],
+            "score": round(float(final_scores[cand_idx]), 4),
+            "rank": rank_idx,
+            "ml_ranked": True,
+            "bridge_mapped": bool(is_mapped[cand_idx]),
+        }
         results.append(result)
 
     return results

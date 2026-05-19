@@ -68,6 +68,7 @@ def _api_call(url: str, params: dict) -> tuple[list[dict], dict]:
 def _parse_doc(doc: dict) -> dict:
     code = doc.get("category_group_code", "")
     cat_name = doc.get("category_name", "")
+    address = doc.get("road_address_name") or doc.get("address_name", "")
     return {
         "kakao_place_id": doc.get("id", ""),
         "place_name": doc.get("place_name", ""),
@@ -75,6 +76,7 @@ def _parse_doc(doc: dict) -> dict:
         "lng": float(doc.get("x", 0)),
         "category_name": cat_name,
         "category_depth1": _extract_depth1(code, cat_name),
+        "address": address,
     }
 
 

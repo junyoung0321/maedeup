@@ -39,10 +39,12 @@ def haversine_m(lat1, lng1, lat2, lng2) -> float:
     return R * 2 * math.asin(math.sqrt(a))
 
 
-def name_match(our_name: str, kakao_name: str) -> bool:
+def name_match(our_name, kakao_name) -> bool:
+    if not isinstance(our_name, str) or not isinstance(kakao_name, str):
+        return False
     a = our_name.strip().lower().replace(" ", "")
     b = kakao_name.strip().lower().replace(" ", "")
-    return a == b or a in b or b in a
+    return bool(a) and (a == b or a in b or b in a)
 
 
 def kakao_search(query: str, lat: float, lng: float, radius: int, size: int = 5) -> list[dict]:
@@ -57,8 +59,11 @@ def kakao_search(query: str, lat: float, lng: float, radius: int, size: int = 5)
         return []
 
 
-def find_kakao_id(place_name: str, address: str, lat: float, lng: float) -> dict:
+def find_kakao_id(place_name, address: str, lat: float, lng: float) -> dict:
     """1차(address+name) → 2차(name only) 순서로 매핑 시도."""
+    _null = {"kakao_place_id": None, "kakao_name": None, "distance_m": None, "confidence": None}
+    if not isinstance(place_name, str) or not place_name.strip():
+        return _null
 
     # ── 1차: place_name + address, 100m ──────────────────────
     docs = kakao_search(f"{place_name} {address}", lat, lng, radius=200)

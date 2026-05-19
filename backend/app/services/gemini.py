@@ -1,10 +1,13 @@
 import asyncio
+import logging
 from typing import Any
 
 import google.generativeai as genai
 from google.api_core.exceptions import GoogleAPICallError, ResourceExhausted
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 # 결정성 강화 (2026-05-16): temperature=0.0 단독으론 Gemini 2.5 Flash가 stochastic.
@@ -29,9 +32,9 @@ async def call_gemini(
       override 원하면 generation_config 인자로 전달 (예: narrator 다양성 필요 시).
     quick_classify는 자체 1.5s wait_for 사용 — 호환.
     """
-    if not settings.GEMINI_API_KEY.strip():
+    if not settings.effective_gemini_api_key:
         return ""
-    genai.configure(api_key=settings.GEMINI_API_KEY)
+    genai.configure(api_key=settings.effective_gemini_api_key)
     cfg = generation_config if generation_config is not None else _DEFAULT_GENERATION_CONFIG
     model = genai.GenerativeModel(
         "gemini-2.5-flash",
@@ -48,10 +51,20 @@ async def call_gemini(
             timeout=timeout,
         )
     except asyncio.TimeoutError:
+        logger.warning("gemini_call_failed type=TimeoutError timeout=%.1fs", timeout)
         return ""
-    except (ResourceExhausted, GoogleAPICallError):
+    except ResourceExhausted as e:
+        retry_after = getattr(e, "retry_after", None)
+        logger.warning(
+            "gemini_call_failed type=ResourceExhausted retry_after=%s model=gemini-2.5-flash",
+            retry_after,
+        )
         return ""
-    except Exception:
+    except GoogleAPICallError as e:
+        logger.warning("gemini_call_failed type=%s msg=%s", type(e).__name__, str(e)[:200])
+        return ""
+    except Exception as e:
+        logger.warning("gemini_call_failed type=%s msg=%s", type(e).__name__, str(e)[:200])
         return ""
 
     if response is None:

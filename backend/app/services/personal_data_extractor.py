@@ -302,8 +302,8 @@ async def _gemini_extract(
     db: AsyncSession,
 ) -> dict[int, dict[str, CategoryExtraction]]:
     """실 Gemini 호출. JSON-only 응답 강제."""
-    if not settings.GEMINI_API_KEY.strip():
-        raise RuntimeError("GEMINI_API_KEY is empty — cannot do real extraction")
+    if not settings.effective_gemini_api_key:
+        raise RuntimeError("GEMINI_API_KEY (or PAID_GEMINI_API_KEY) is empty — cannot do real extraction")
     if not transcript:
         return {mid: {} for mid in member_ids}
 
@@ -335,7 +335,7 @@ async def _gemini_extract(
         transcript_text=transcript_text,
     )
 
-    genai.configure(api_key=settings.GEMINI_API_KEY)
+    genai.configure(api_key=settings.effective_gemini_api_key)
     model = genai.GenerativeModel(
         "gemini-2.5-flash",
         generation_config={

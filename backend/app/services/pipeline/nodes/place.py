@@ -144,7 +144,12 @@ async def _run_place_self_correction(
     for corrected_place in corrected_places:
         place_id = str(corrected_place.get("place_id", ""))
         base_place = original_by_id.get(place_id, {})
-        merged_places.append({**base_place, **corrected_place})
+        merged = {**base_place, **corrected_place}
+        # Fix #2: corrected_place에 x/y가 없으면 base 값 복원 (place_id mismatch 시 base_place={} → 증발 방지)
+        for coord_key in ("x", "y"):
+            if not merged.get(coord_key) and base_place.get(coord_key):
+                merged[coord_key] = base_place[coord_key]
+        merged_places.append(merged)
     return merged_places
 
 
@@ -163,18 +168,23 @@ async def place_recommendation(state: GraphState) -> GraphState:
                     state,
                     f"{state.get('meeting_type') or '모임'} 장소 추천",
                 )
+            # Fix #1: confirmed_place path — x/y를 place_coord에서 보존
+            _place_coord = state.get("place_coord") or {}
+            _confirmed_item: dict[str, Any] = {
+                "name": state.get("confirmed_place"),
+                "score": 1.0,
+                "is_confirmed": True,
+            }
+            if _place_coord.get("x"):
+                _confirmed_item["x"] = _place_coord["x"]
+            if _place_coord.get("y"):
+                _confirmed_item["y"] = _place_coord["y"]
             state["place_recommendation_payload"] = {
                 "type": "place_recommendation",
                 "room_id": state["room_id"],
                 "meeting_id": meeting_id,
                 "place_hint": state.get("place_hint"),
-                "recommendations": [
-                    {
-                        "name": state.get("confirmed_place"),
-                        "score": 1.0,
-                        "is_confirmed": True,
-                    }
-                ],
+                "recommendations": [_confirmed_item],
             }
             state["status"] = "place_recommended"
             logger.info("[TIMING] place_recommendation (confirmed): %.2fs", time.monotonic() - _t0)

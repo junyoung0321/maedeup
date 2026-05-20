@@ -27,8 +27,11 @@ def _format_slot_label(start_at: datetime, unavailable_names: list[str]) -> str:
         day_tag = " 주말"
     suffix = " (전원 가능)"
     if unavailable_names:
-        absent_users = ", ".join(f"@{name}" for name in unavailable_names)
-        suffix = f" (N-1명 가능, {absent_users} 불참)"
+        if len(unavailable_names) == 1:
+            suffix = f" ({unavailable_names[0]}님 빼고 가능)"
+        else:
+            names_str = ", ".join(f"{n}님" for n in unavailable_names)
+            suffix = f" ({len(unavailable_names)}명 빠짐: {names_str})"
     return f"{start_at.month}월 {start_at.day}일 ({weekday}){day_tag} {ampm} {hour}:{start_at.minute:02d}{suffix}"
 
 

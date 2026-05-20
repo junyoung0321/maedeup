@@ -192,7 +192,9 @@ async def _get_room_member_food_preferences(state: GraphState) -> list[str]:
         if disliked_foods:
             return disliked_foods
 
-    # 2. fallback: User 프로필의 food_preferences
+    # 2. fallback: User 프로필의 food_restrictions (식이 제한 — 비선호와 시맨틱 일치)
+    #    Fix (2026-05-20): 이전 코드는 food_preferences(선호)를 disliked_foods에 append →
+    #      "한식 선호"가 "한식 제거"로 동작하던 모순 수정.
     member_result = await db.execute(select(RoomMember).where(RoomMember.room_id == room_pk))
     members = member_result.scalars().all()
     user_ids = [member.user_id for member in members]
@@ -203,7 +205,7 @@ async def _get_room_member_food_preferences(state: GraphState) -> list[str]:
     users = user_result.scalars().all()
 
     for user in users:
-        for item in user.food_preferences or []:
+        for item in user.food_restrictions or []:
             normalized = str(item).strip()
             if normalized and normalized not in seen:
                 seen.add(normalized)

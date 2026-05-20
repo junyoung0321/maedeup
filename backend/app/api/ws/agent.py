@@ -235,12 +235,14 @@ async def _sync_chat_rejected_to_unavailability(
 
     try:
         async with AsyncSessionLocal() as db:
+            # is_guest 필터 제거 (2026-05-20): room_id 스코프 안에서만 매칭되므로
+            # 게스트 unavailability도 안전하게 동기화 가능. 시연/실사용 모두에서
+            # 게스트 멤버 거부 날짜가 캘린더에 반영되도록 함.
             stmt = (
                 select(User.id, User.name)
                 .join(RoomMember, RoomMember.user_id == User.id)
                 .where(RoomMember.room_id == room_pk)
                 .where(User.name.in_(names))
-                .where(User.is_guest.is_(False))
             )
             rows = (await db.execute(stmt)).all()
     except Exception:

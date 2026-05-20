@@ -48,6 +48,10 @@ interface TimeBarSelectorProps {
   preferredTimeRange?: { start: number; end: number } | null;
   // Option C: 호스트 in-card 확정 콜백 — schedule_consensus_ready 도달 후 호스트만 호출.
   onHostFinalize?: (snapshotHash: string) => Promise<void>;
+  // ACT3 timing fix: InfoPane에서 "이 시간으로 확정" 클릭 여부 전달.
+  // isConfirming은 async 완료 전 마이크로태스크 1틱만 true → 사용자에게 안 보임.
+  // hostFinalizeClicked는 두 옵션 카드가 unmount될 때까지 유지 → 버튼 비활성화 시각 보장.
+  hostFinalizeClicked?: boolean;
 }
 
 function slotToTime(slotIndex: number): string {
@@ -94,7 +98,7 @@ function isBusyAtSlot(
   return false;
 }
 
-export default function TimeBarSelector({ date, roomId, onConfirm, onBack, preferredTimeRange, onHostFinalize }: TimeBarSelectorProps) {
+export default function TimeBarSelector({ date, roomId, onConfirm, onBack, preferredTimeRange, onHostFinalize, hostFinalizeClicked }: TimeBarSelectorProps) {
   const [memberData, setMemberData] = useState<Record<string, MemberBusyPeriod[]> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -724,17 +728,17 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
                 setIsConfirming(false);
               }
             }}
-            disabled={isConfirming}
+            disabled={isConfirming || !!hostFinalizeClicked}
             style={{
               width: "100%",
               padding: "11px 14px", borderRadius: 10, border: "none",
-              background: isConfirming ? "#cbd5e1" : "#4f46e5",
+              background: isConfirming || hostFinalizeClicked ? "#cbd5e1" : "#4f46e5",
               color: "#fff", fontSize: 14, fontWeight: 700,
-              cursor: isConfirming ? "not-allowed" : "pointer",
+              cursor: isConfirming || hostFinalizeClicked ? "not-allowed" : "pointer",
               fontFamily: "Pretendard Variable, Pretendard, sans-serif",
             }}
           >
-            {isConfirming ? "확정 중..." : "이 시간으로 확정"}
+            {isConfirming || hostFinalizeClicked ? "확정 중..." : "이 시간으로 확정"}
           </button>
         </div>
       )}

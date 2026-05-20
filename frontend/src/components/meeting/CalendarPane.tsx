@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Ban, ChevronLeft, ChevronRight } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useMeetingOptional } from "@/contexts/MeetingContext";
@@ -100,6 +100,9 @@ export default function CalendarPane() {
   const [month, setMonth] = useState(initialView.month);
   const [clickedDay, setClickedDay] = useState<number | null>(initialView.clickedDay);
   const [blockMode, setBlockMode] = useState(false);
+  // vote_card 첫 도착 시 자동 jump를 1회만 허용하기 위한 guard.
+  // 동일 meetingId에 대해 이미 jump했으면 useEffect re-run이 와도 다시 강제 이동하지 않음.
+  const jumpedForMeetingIdRef = useRef<number | null>(null);
 
   // 월/클릭 날짜 변경 시 localStorage에 저장 (본인만 쓰는 UI 선호).
   useEffect(() => {
@@ -116,16 +119,23 @@ export default function CalendarPane() {
 
   // 서버 스냅샷으로 복구된 내 date_selection이 오면 그 날짜가 현재 월과 맞으면 clickedDay로.
   // 단, localStorage에 이미 clickedDay가 저장돼 있었다면 localStorage 우선.
+  // voteAwaitingTimeMeetingId 첫 도착 시 jump는 1회만 허용 (jumpedForMeetingIdRef guard).
+  // 사용자가 goPrev/goNext로 다른 월을 탐색해도 jump 재실행 안 함.
   useEffect(() => {
     if (!myDateSelection) return;
     if (clickedDay !== null && !voteAwaitingTimeMeetingId) return; // 사용자가 이미 골라둔 게 있으면 덮어쓰지 않음
     const [py, pm, pd] = myDateSelection.split("-").map(Number);
     if (voteAwaitingTimeMeetingId) {
+      // 동일 meetingId에 대해 이미 jump했으면 재실행 차단 (사용자 월 탐색 의도 보존).
+      if (jumpedForMeetingIdRef.current === voteAwaitingTimeMeetingId) return;
+      jumpedForMeetingIdRef.current = voteAwaitingTimeMeetingId;
       setYear(py);
       setMonth(pm);
       setClickedDay(pd);
       return;
     }
+    // voteAwaitingTimeMeetingId가 null로 reset되면 ref도 초기화.
+    jumpedForMeetingIdRef.current = null;
     if (py === year && pm === month) {
       setClickedDay(pd);
     }

@@ -363,6 +363,7 @@ export default function InfoPane() {
                     onHostFinalize={async (_snapshotHash) => {
                       setHostFinalizeClicked(true);
                     }}
+                    hostFinalizeClicked={hostFinalizeClicked}
                   />
                 </div>
               )}

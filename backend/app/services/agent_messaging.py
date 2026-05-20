@@ -78,14 +78,15 @@ async def emit_agent_message(
 def format_korean_meeting_time(dt: datetime) -> str:
     """datetime을 '5월 8일 (금) 오후 6:00' 형식으로 KST 기준 포맷.
 
-    DB 컨벤션 (CLAUDE.md): naive datetime은 UTC. 따라서 naive 입력은 UTC로 간주하고
-    KST로 변환 후 포맷. tz-aware 입력은 .astimezone(KST)로 일관 처리.
-    Fix (2026-05-18 hotfix): 이전 구현은 "naive=KST 가정"으로 DB UTC를 그대로 포맷해서
-    AI 확정 메시지가 "오전 10:00"으로 표시되던 버그.
+    DB 실측: meeting_schedules.scheduled_at은 KST naive로 저장됨
+    (CLAUDE.md 컨벤션과 달리 실제 코드가 KST 그대로 insert).
+    따라서 naive 입력은 KST로 간주해 변환 없이 그대로 포맷.
+    tz-aware 입력만 .astimezone(KST)로 변환.
+    Fix (2026-05-20): 이전 "naive=UTC 가정" → +9 변환 → "오후 6시" → "오전 3시" 버그 수정.
     %-m / %#m 플랫폼 의존성 없이 직접 조립.
     """
     if dt.tzinfo is None:
-        dt_kst = dt.replace(tzinfo=timezone.utc).astimezone(_KST)
+        dt_kst = dt  # DB는 KST naive — 변환 없이 그대로 사용
     else:
         dt_kst = dt.astimezone(_KST)
     weekday = _WEEKDAY_KO[dt_kst.weekday()]

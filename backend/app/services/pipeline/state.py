@@ -60,6 +60,9 @@ class GraphState(TypedDict, total=False):
     # 해결점 N: 모든 후보 날짜가 거부되어 다음 주로 확장됐는지 표시.
     # _slot_filling_stalemate가 이 플래그 보고 alternative vote 카드 발행.
     expanded_to_next_week: bool
+    # validation → function_calling redirect용 임시 flag.
+    # supervisor_validation이 set → function_calling이 date_hint +7일 shift 후 즉시 pop.
+    needs_next_week_expansion: bool
     # 방의 소셜(전체 공개) 채팅 최근 N개 + 그 이전 대화 요약.
     # entity_extraction / general_response 가 AI 패널 컨텍스트에 덧붙여 사용.
     social_recent: list[str]

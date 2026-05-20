@@ -73,6 +73,26 @@ async def function_calling(state: GraphState) -> GraphState:
             return state
         state["blocker_notification_payload"] = None
 
+        # next-week expansion redirect: supervisor_validation이 needs_expansion 분기로 보낸 경우.
+        # date_hint를 +7일 shift해서 다음 주 GCal 슬롯을 재탐색.
+        # needs_next_week_expansion flag는 여기서 즉시 소거 — 무한 루프 방지.
+        if state.pop("needs_next_week_expansion", None):
+            old_hint = state.get("date_hint")
+            if isinstance(old_hint, str) and re.match(r"\d{4}-\d{2}-\d{2}", old_hint):
+                shifted = (datetime.fromisoformat(old_hint).replace(tzinfo=timezone.utc) + timedelta(days=7)).strftime("%Y-%m-%d")
+            else:
+                # date_hint 없는 경우: 내일 기준 +7일 (다음 주 시작점)
+                shifted = (datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=8)).strftime("%Y-%m-%d")
+            state["date_hint"] = shifted
+            # date_hints도 갱신 (multi-date 경로 방지 — 단일 date_hint로 진행)
+            state["date_hints"] = [shifted]
+            logger.info(
+                "[NEXT_WEEK_EXPANSION] date_hint shifted %s → %s (room=%s)",
+                old_hint,
+                shifted,
+                state.get("room_id"),
+            )
+
         # entity_extraction이 "다시 추천해줘" 같은 재시도 지시어에서 "다시"를
         # place_hint로 잘못 뽑는 경우 있음 — 카카오맵 검색이 무의미해지니 스킵.
         _NOISE_PLACE_HINTS = {

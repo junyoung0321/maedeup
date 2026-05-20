@@ -110,7 +110,7 @@ def _route_after_slot_filling(state: GraphState) -> Literal["slot_filling", "fun
 
 def _route_after_validation(
     state: GraphState,
-) -> Literal["vote_card_creation", "place_recommendation", "maedeup_card_creation", "__end__"]:
+) -> Literal["vote_card_creation", "place_recommendation", "maedeup_card_creation", "function_calling", "__end__"]:
     if _has_node_error(state):
         return END
     status = state.get("status")
@@ -119,6 +119,9 @@ def _route_after_validation(
     if status == "time_only_ready":
         state["partial_mode"] = "time_only"
         return "maedeup_card_creation"
+    if status == "needs_expansion":
+        # 호스트 GCal full-block → date_hint +7일 shift 후 function_calling 재실행
+        return "function_calling"
     if not state.get("validation_passed"):
         return END
 
@@ -229,6 +232,7 @@ def _build_graph() -> Any:
             "vote_card_creation": "vote_card_creation",
             "place_recommendation": "place_recommendation",
             "maedeup_card_creation": "maedeup_card_creation",  # 해결점 C: conclusion 직행
+            "function_calling": "function_calling",             # next-week expansion redirect
             END: END,
         },
     )

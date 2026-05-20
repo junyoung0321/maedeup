@@ -821,10 +821,14 @@ export function useSocialWebSocket(roomId: string, sender: string) {
   );
 
   const sendTimeSelection = useCallback(
-    (date: string | null, start: number | null, end: number | null) => {
+    (date: string | null, start: number | null, end: number | null, confirmed = true) => {
       const ws = wsRef.current;
       if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "time_selection", date, start, end, sender }));
+        // Fix (2026-05-20): confirmed=false → 슬롯 클릭만 한 preview 상태. 다른 멤버에게
+        // 실시간 표시만 broadcast하고 backend availability에는 record 안 함. 사용자가
+        // 명시적으로 "확정" 버튼 클릭 시에만 confirmed=true로 보내 vote 카운팅 들어감.
+        // 누락 시 default true (backward compat — 데모 스크립트 등 기존 caller 영향 없음).
+        ws.send(JSON.stringify({ type: "time_selection", date, start, end, sender, confirmed }));
       }
     },
     [sender],

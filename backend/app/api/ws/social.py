@@ -403,7 +403,13 @@ async def social_ws(
                 # room has reached a majority on any time range. If so, try to
                 # emit (or reuse) a FinalizationProposal. Failures here are
                 # never fatal to the peer_time_selection broadcast above.
-                if r is not None and authed_user_id is not None:
+                #
+                # Fix (2026-05-20): confirmed=False → 슬롯 hover/preview 상태.
+                # peer 표시만 하고 availability record/consensus 체크는 스킵.
+                # confirmed=True (default, backward compat) → 사용자가 명시적으로
+                # "확정" 버튼 클릭한 시점 → vote commit으로 카운팅.
+                is_confirmed = bool(payload.get("confirmed", True))
+                if is_confirmed and r is not None and authed_user_id is not None:
                     try:
                         await _maybe_emit_proposal(
                             r, room_pk=int(room_id),

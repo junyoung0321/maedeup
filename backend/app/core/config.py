@@ -16,6 +16,8 @@ class Settings(BaseSettings):
 
     GEMINI_API_KEY: str = ""
     PAID_GEMINI_API_KEY: str = ""
+    # true면 PAID_GEMINI_API_KEY 우선 사용. false(기본)면 free tier GEMINI_API_KEY만 사용.
+    USE_PAID_GEMINI: bool = False
     KAKAO_API_KEY: str = ""
     KAKAO_REST_API_KEY: str = ""
 
@@ -26,8 +28,10 @@ class Settings(BaseSettings):
 
     @property
     def effective_gemini_api_key(self) -> str:
-        """PAID 키가 있으면 우선 사용 (free tier quota 우회)."""
-        return (self.PAID_GEMINI_API_KEY or self.GEMINI_API_KEY).strip()
+        """USE_PAID_GEMINI=true면 PAID 우선, 아니면 free tier GEMINI_API_KEY 사용."""
+        if self.USE_PAID_GEMINI and self.PAID_GEMINI_API_KEY:
+            return self.PAID_GEMINI_API_KEY.strip()
+        return self.GEMINI_API_KEY.strip()
 
     # 모임 confirm 시 구성원 Google Calendar 자동 등록 여부.
     # 기본 True (운영 환경 안전). 시연 중 반복 confirm으로 캘린더 오염 방지 시 false 설정.

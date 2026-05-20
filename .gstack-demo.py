@@ -833,6 +833,19 @@ async def run_demo(flags: DemoFlags) -> None:
                             log("step 4 — 호스트 TimeBar 내부 '이 시간으로 확정' 클릭")
                             await click_button_by_text(page, "이 시간으로 확정", contains=True)
                             await asyncio.sleep(pace["act_3_after_confirm_click"])
+
+                            # step 5 — 두 옵션 카드 노출 대기 (호스트 결정)
+                            # "이 시간으로 확정" 클릭 → hostFinalizeClicked=true → 두 옵션 카드 렌더
+                            # 실제 /schedule-confirm POST는 "✅ AI 추천 시간 그대로 확정" 버튼 클릭 시 발생
+                            log("step 5 — 두 옵션 카드 노출 대기 (호스트 결정)")
+                            appeared = await wait_for_button(page, "추천 시간 그대로 확정", timeout_s=15.0)
+                            if not appeared:
+                                log("⚠️  두 옵션 카드 미발견 — 시연 흐름 확인 필요")
+                            else:
+                                log("step 5 — '추천 시간 그대로 확정' 버튼 클릭")
+                                await click_button_by_text(page, "추천 시간 그대로 확정", contains=True)
+                                await asyncio.sleep(2.0)  # POST 완료 + phase 전환 대기
+
                             act3_completed = True
                             log("ACT 3 완료 — TimeBar 합의 + 호스트 확정 → maedeup_card (partial) 자동 발행 예정")
                         else:

@@ -8,9 +8,9 @@ from app.core.config import settings
 
 async def call_gemini(content: str) -> str:
     """Gemini API를 호출하고 응답 텍스트를 반환합니다."""
-    if not settings.GEMINI_API_KEY.strip():
+    if not settings.effective_gemini_api_key:
         return ""
-    genai.configure(api_key=settings.GEMINI_API_KEY)
+    genai.configure(api_key=settings.effective_gemini_api_key)
     model = genai.GenerativeModel(
         "gemini-2.5-flash",
         system_instruction=(

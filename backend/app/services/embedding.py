@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 
 async def get_embedding(text: str) -> list[float]:
     """텍스트를 768차원 벡터로 변환합니다 (embedding-001)."""
-    if not settings.GEMINI_API_KEY.strip():
+    if not settings.effective_gemini_api_key:
         logger.warning("GEMINI_API_KEY not set, returning zero embedding")
         return [0.0] * _EMBEDDING_DIM
 
-    genai.configure(api_key=settings.GEMINI_API_KEY)
+    genai.configure(api_key=settings.effective_gemini_api_key)
     try:
         result = await asyncio.to_thread(
             genai.embed_content,

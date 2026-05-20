@@ -539,7 +539,7 @@ async def social_ws(
             await _publish_social_message(r, channel, out)
 
             # ── 의도 감지 (백그라운드로 실행해 응답 지연 최소화) ──────────
-            if settings.GEMINI_API_KEY and r is not None and role == "user" and content.strip():
+            if settings.effective_gemini_api_key and r is not None and role == "user" and content.strip():
                 asyncio.create_task(
                     _detect_and_notify_intent(r, channel, content, msg.id)
                 )

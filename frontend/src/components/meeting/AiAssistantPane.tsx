@@ -176,6 +176,23 @@ export default function AiAssistantPane() {
     setVoteCardCtx?.(activeVoteCard);
   }, [activeVoteCard, setVoteCardCtx]);
 
+  // Fix (2026-05-20): 캘린더 "이 날짜로 확정" / TimeBar 시간 확정 등 호스트가
+  // 명시적으로 확정 액션을 취하면 AI 패널의 시간 추천 vote_card도 dismiss.
+  // 이전엔 AI 패널 vote_card가 자체 cardsByMeetingId state에서 prop으로 렌더되어
+  // context.voteCard=null만으로 안 사라졌음. infoPanePhase가 dateConfirmed/
+  // timeConfirmed로 전환되면 카드 자체를 removeCardByMeetingId로 정리.
+  const infoPanePhaseCtx = meetingContext?.infoPanePhase;
+  useEffect(() => {
+    if (infoPanePhaseCtx !== "dateConfirmed" && infoPanePhaseCtx !== "timeConfirmed") {
+      return;
+    }
+    for (const card of activeCards) {
+      if (card.type === "vote_card") {
+        removeCardByMeetingId(card.meeting_id);
+      }
+    }
+  }, [infoPanePhaseCtx, activeCards, removeCardByMeetingId]);
+
   useEffect(() => {
     setVoteUpdateCtx?.(voteUpdate ?? null);
   }, [voteUpdate, setVoteUpdateCtx]);

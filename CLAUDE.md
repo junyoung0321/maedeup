@@ -62,7 +62,7 @@ frontend/
 
 ## Never
 - API 키/시크릿 전체 출력 금지 (앞 4~5자만 마스킹)
-- 승인 없이 커밋/푸시 금지
+- 승인 없이 **푸시** 금지 (커밋은 PM 자율 — 2026-05-20 룰 변경)
 - 외부 패키지 임의 추가 금지
 - DB create_all 사용 금지
 
@@ -114,7 +114,7 @@ Use /browse from gstack for all web browsing. Never use mcp__claude-in-chrome__*
 - Google OAuth 테스트 사용자 등록 필요
 - 카카오 OPEN_MAP_AND_LOCAL 서비스 활성화 필요
 - Gemini rate limit 시 패턴 fallback으로 기본 동작 보장
-- 커밋/푸시는 유저 확인 후에만
+- 푸시는 유저 확인 후에만 (커밋은 PM 자율 — 2026-05-20 룰 변경)
 
 Key routing rules:
 - Product ideas, "is this worth building", brainstorming → invoke office-hours

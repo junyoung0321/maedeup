@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:3000"
 
     GEMINI_API_KEY: str = ""
+    PAID_GEMINI_API_KEY: str = ""
     KAKAO_API_KEY: str = ""
     KAKAO_REST_API_KEY: str = ""
 
@@ -22,6 +23,14 @@ class Settings(BaseSettings):
     # backend/data/demo_extraction_canned.json을 사용. 졸업 시연 단일 최대 실패점인
     # 라이브 Gemini 호출에 대한 안전망.
     DEMO_FALLBACK_ENABLED: bool = False
+
+    # 시연 안정성: true면 Google Calendar 자동 INSERT 차단 (반복 시연 시 캘린더 누적 방지).
+    DISABLE_CALENDAR_SYNC: bool = False
+
+    @property
+    def effective_gemini_api_key(self) -> str:
+        """PAID 키가 있으면 우선 사용 (free tier quota 우회). 둘 다 비면 빈 문자열."""
+        return (self.PAID_GEMINI_API_KEY or self.GEMINI_API_KEY).strip()
 
     def required_env_fields(self) -> list[str]:
         required = [
@@ -38,8 +47,8 @@ class Settings(BaseSettings):
     def validate_startup_settings(self) -> None:
         missing: list[str] = []
 
-        if not self.GEMINI_API_KEY.strip():
-            missing.append("GEMINI_API_KEY")
+        if not self.effective_gemini_api_key:
+            missing.append("GEMINI_API_KEY (or PAID_GEMINI_API_KEY)")
         if not self.GOOGLE_CLIENT_ID.strip():
             missing.append("GOOGLE_CLIENT_ID")
         if not self.GOOGLE_CLIENT_SECRET.strip():

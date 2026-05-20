@@ -10,6 +10,16 @@ from app.db.session import get_session
 router = APIRouter()
 
 
+@router.get("/api/v1/health/gemini")
+async def gemini_health() -> dict:
+    """시연 헬스체크: Gemini 키 유효성 + quota 살아있는지 확인."""
+    from app.services.gemini import call_gemini
+
+    response = await call_gemini("ping")
+    ok = bool(response and response.strip())
+    return {"ok": ok, "len": len(response or "")}
+
+
 @router.get("/health")
 async def health_check(session: AsyncSession = Depends(get_session)):
     db_status = "ok"

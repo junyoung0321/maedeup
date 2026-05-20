@@ -140,6 +140,8 @@ async def create_calendar_event(
 
 
 def _user_can_receive_calendar_event(user: User) -> bool:
+    if settings.DISABLE_CALENDAR_SYNC:
+        return False  # 시연 모드: 캘린더 자동 등록 차단 (반복 시연 시 일정 누적 방지)
     if user.is_guest:
         return False
     if not user.calendar_consent:

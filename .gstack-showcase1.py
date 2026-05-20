@@ -185,6 +185,16 @@ async def run_showcase() -> None:
             print("\n[ERROR] localStorage에 auth_token 없음.", file=sys.stderr)
             return
 
+        # Gemini 헬스체크 — quota/키 이상 시 즉시 abort
+        try:
+            with urllib.request.urlopen(f"{API}/api/v1/health/gemini", timeout=8) as r:
+                h = json.loads(r.read())
+            if not h.get("ok"):
+                raise RuntimeError(f"Gemini 헬스체크 실패: {h}. quota/키 확인 필요.")
+            log(f"Gemini 헬스체크 OK (응답 len={h.get('len')})")
+        except Exception as e:
+            raise RuntimeError(f"Gemini unavailable: {e}") from e
+
         await page.goto("http://localhost:3000/", wait_until="networkidle", timeout=15000)
         await asyncio.sleep(pace["between_steps"])
 

@@ -84,80 +84,84 @@ async def _load_social_context(
         total = 0
 
     if total >= _SOCIAL_SUMMARY_THRESHOLD and recent_rows:
-        # Redis 캐시: last_id 기준으로 10개 이상 밀렸을 때만 재생성
+        # Redis 캐시: last_id 기준으로 10개 이상 밀렸을 때만 재생성.
+        # P0 fix (2026-05-16 review): try/finally로 감싸서 connection leak 차단.
+        #   이전엔 call_gemini(중간 라인)에서 예외 던지면 r.aclose() 호출 안 됨 → pool 고갈.
+        r = None
         try:
-            r = aioredis.from_url(
-                settings.REDIS_URL, decode_responses=True,
-                socket_connect_timeout=1, socket_timeout=1,
-            )
-        except Exception:
-            r = None
-
-        cache_key = f"social_summary:{room_pk}"
-        oldest_recent_id = recent_rows[0].id or 0
-        cached = None
-        if r is not None:
             try:
-                raw = await r.get(cache_key)
-                if raw:
-                    cached = json.loads(raw)
-            except Exception:
-                cached = None
-
-        if (
-            cached
-            and isinstance(cached, dict)
-            and cached.get("summary")
-            and int(cached.get("boundary_id") or 0) >= oldest_recent_id
-        ):
-            summary = str(cached["summary"]).strip()
-        else:
-            # 최근 N개보다 오래된 메시지를 모아 요약.
-            try:
-                older_res = await db.execute(
-                    select(ChatMessage)
-                    .where(
-                        ChatMessage.room_id == room_pk,
-                        ChatMessage.pane_type == PaneType.social,
-                        ChatMessage.id < oldest_recent_id,
-                    )
-                    .order_by(ChatMessage.created_at)
+                r = aioredis.from_url(
+                    settings.REDIS_URL, decode_responses=True,
+                    socket_connect_timeout=1, socket_timeout=1,
                 )
-                older = older_res.scalars().all()
             except Exception:
-                older = []
+                r = None
 
-            joined = "\n".join(
-                f"{m.sender or '익명'}: {m.content}"
-                for m in older
-                if m.content and m.content.strip()
-            )
-            if joined.strip():
-                prompt = (
-                    "다음은 모임 채팅방의 과거 대화입니다. 합의/진행 중인 결정/"
-                    "멤버 선호·불만을 3줄 이내로 간결히 요약하세요. 가십 제외.\n\n"
-                    f"{joined}"
-                )
+            cache_key = f"social_summary:{room_pk}"
+            oldest_recent_id = recent_rows[0].id or 0
+            cached = None
+            if r is not None:
                 try:
-                    summary = (await call_gemini(prompt) or "").strip()
+                    raw = await r.get(cache_key)
+                    if raw:
+                        cached = json.loads(raw)
                 except Exception:
-                    summary = ""
+                    cached = None
 
-            if r is not None and summary:
+            if (
+                cached
+                and isinstance(cached, dict)
+                and cached.get("summary")
+                and int(cached.get("boundary_id") or 0) >= oldest_recent_id
+            ):
+                summary = str(cached["summary"]).strip()
+            else:
+                # 최근 N개보다 오래된 메시지를 모아 요약.
                 try:
-                    await r.setex(
-                        cache_key,
-                        6 * 3600,
-                        json.dumps({"summary": summary, "boundary_id": oldest_recent_id}),
+                    older_res = await db.execute(
+                        select(ChatMessage)
+                        .where(
+                            ChatMessage.room_id == room_pk,
+                            ChatMessage.pane_type == PaneType.social,
+                            ChatMessage.id < oldest_recent_id,
+                        )
+                        .order_by(ChatMessage.created_at)
                     )
+                    older = older_res.scalars().all()
+                except Exception:
+                    older = []
+
+                joined = "\n".join(
+                    f"{m.sender or '익명'}: {m.content}"
+                    for m in older
+                    if m.content and m.content.strip()
+                )
+                if joined.strip():
+                    prompt = (
+                        "다음은 모임 채팅방의 과거 대화입니다. 합의/진행 중인 결정/"
+                        "멤버 선호·불만을 3줄 이내로 간결히 요약하세요. 가십 제외.\n\n"
+                        f"{joined}"
+                    )
+                    try:
+                        summary = (await call_gemini(prompt) or "").strip()
+                    except Exception:
+                        summary = ""
+
+                if r is not None and summary:
+                    try:
+                        await r.setex(
+                            cache_key,
+                            6 * 3600,
+                            json.dumps({"summary": summary, "boundary_id": oldest_recent_id}),
+                        )
+                    except Exception:
+                        pass
+        finally:
+            if r is not None:
+                try:
+                    await r.aclose()
                 except Exception:
                     pass
-
-        if r is not None:
-            try:
-                await r.aclose()
-            except Exception:
-                pass
 
     return recent_lines, summary
 

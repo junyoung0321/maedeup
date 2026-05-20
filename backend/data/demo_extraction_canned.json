@@ -1,55 +1,69 @@
 {
-  "scenario": "graduation_demo_v1",
-  "_comment": "졸업 시연용 canned extraction. user_email은 host(평소 로그인 계정)와 seed가 생성하는 demo 계정 모두 cover. ACT 6 클로징 멘트 '비린 거 별로 → ✨' 임팩트를 보장하려 host 계정의 food_restrictions 추출을 박아둠. DEMO_FALLBACK_ENABLED=true일 때만 사용.",
+  "scenario": "graduation_demo_v2_4person",
+  "_comment": "졸업 시연 통합 시나리오용 canned extraction. user_email은 seed_demo.py가 생성하는 demo 계정 + 호스트 본인 계정 모두 cover. ACT 6 학습 모먼트(host 메인 위젯 ✨)는 host의 food_restrictions로 노출. value/source_quote/confidence는 시연 chat transcript의 발화와 verbatim 매칭.",
   "extractions": [
     {
-      "user_email": "cyun0407@gmail.com",
+      "user_email": "dnfltkagudwp123@gmail.com",
       "category": "food_restrictions",
-      "value": ["회", "비린 음식"],
+      "value": ["비린 음식"],
       "confidence": 0.95,
       "source_quote": "나 비린 거 별로야. 회집은 빼자"
     },
     {
-      "user_email": "demo-a@maedeup.app",
+      "user_email": "jimin@maedeup.app",
       "category": "food_restrictions",
-      "value": ["갑각류 알레르기"],
-      "confidence": 1.0,
-      "source_quote": "나 갑각류 못 먹어"
+      "value": ["비린 음식"],
+      "confidence": 0.95,
+      "source_quote": "나 비린 거 별로야. 회집은 빼자"
     },
     {
-      "user_email": "demo-a@maedeup.app",
-      "category": "disliked_areas",
+      "user_email": "jimin@maedeup.app",
+      "category": "food_preferences",
+      "value": ["한식"],
+      "confidence": 0.9,
+      "source_quote": "한식 좋아해"
+    },
+    {
+      "user_email": "jimin@maedeup.app",
+      "category": "liked_areas",
       "value": ["강남"],
-      "confidence": 0.85,
-      "source_quote": "강남은 좀 멀어"
+      "confidence": 0.9,
+      "source_quote": "강남 자주 가"
     },
     {
-      "user_email": "demo-a@maedeup.app",
+      "user_email": "jimin@maedeup.app",
+      "category": "time_preference",
+      "value": "평일 저녁",
+      "confidence": 0.85,
+      "source_quote": "평일 저녁이 편해"
+    },
+    {
+      "user_email": "jimin@maedeup.app",
       "category": "transport_mode",
-      "value": "대중교통",
+      "value": "지하철",
       "confidence": 0.9,
       "source_quote": "지하철 타고 갈게"
     },
     {
-      "user_email": "demo-b@maedeup.app",
-      "category": "food_preferences",
-      "value": ["한식", "일식"],
-      "confidence": 0.9,
-      "source_quote": "나는 일식 좋아해"
+      "user_email": "suhyun@maedeup.app",
+      "category": "food_restrictions",
+      "value": ["채식"],
+      "confidence": 0.95,
+      "source_quote": "나 채식해"
     },
     {
-      "user_email": "demo-b@maedeup.app",
-      "category": "liked_areas",
+      "user_email": "suhyun@maedeup.app",
+      "category": "disliked_areas",
       "value": ["홍대"],
       "confidence": 0.85,
-      "source_quote": "홍대 자주 가"
+      "source_quote": "홍대는 사람 너무 많아서 별로"
     },
     {
-      "user_email": "demo-b@maedeup.app",
-      "category": "time_preference",
-      "value": "주말 오후",
-      "confidence": 0.8,
-      "source_quote": "주말 오후가 편해"
+      "user_email": "minsu@maedeup.app",
+      "category": "transport_mode",
+      "value": "지하철",
+      "confidence": 0.9,
+      "source_quote": "지하철 타고 갈게"
     }
   ]
 }

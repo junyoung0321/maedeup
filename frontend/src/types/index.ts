@@ -151,6 +151,9 @@ export interface NearbyPlace {
   url: string;
   x: string;
   y: string;
+  phone?: string | null;
+  rating?: number | null;
+  ai_reason?: string | null;
 }
 
 export interface NearbyPlacesResponse {

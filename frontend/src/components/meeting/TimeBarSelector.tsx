@@ -198,16 +198,18 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
     return { counts, totalPeers: relevant.length };
   }, [peerTimeSelections, date]);
 
-  // 내 선택 변경 시 브로드캐스트
+  // 내 선택 변경 시 브로드캐스트 — preview only (confirmed=false).
+  // 슬롯 클릭만으로는 vote 카운팅 들어가지 않음. 다른 멤버에게 "내가 이 슬롯 보고 있어"
+  // 실시간 표시만 함. 명시적 "확정" 버튼 클릭 시 (handleConfirm)에 confirmed=true로 commit.
   useEffect(() => {
     if (!sendTimeSelection) return;
     if (selectionStart === null) {
-      sendTimeSelection(date, null, null);
+      sendTimeSelection(date, null, null, false);
       return;
     }
     // 끝 선택 전 (단일 slot)도 실시간으로 보여줌
     const endVal = selectionEnd ?? selectionStart;
-    sendTimeSelection(date, selectionStart, endVal);
+    sendTimeSelection(date, selectionStart, endVal, false);
   }, [selectionStart, selectionEnd, date, sendTimeSelection]);
 
   // 날짜 바뀌면 현재 선택 리셋 (이전 날짜의 선택이 새 날짜에 이어지지 않게)
@@ -298,14 +300,21 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
     setIsConfirming(true);
     const startTime = slotToTime(selectionStart);
     const endTime = slotToTime(selectionEnd + 1); // +1 because end is inclusive
-    const startAt = `${date}T${startTime}:00`;
-    const endAt = `${date}T${endTime}:00`;
+    // KST(+09:00) 명시 — naive 보내면 백엔드가 UTC로 가정해서 +9h 이중변환.
+    const startAt = `${date}T${startTime}:00+09:00`;
+    const endAt = `${date}T${endTime}:00+09:00`;
+    // Fix (2026-05-20): "확정" 버튼 클릭 시점에 confirmed=true로 vote commit.
+    // 이전엔 useEffect의 슬롯 preview만으로도 backend availability에 record되어
+    // 사용자 의지 없이 consensus 카운팅에 들어가는 버그였음.
+    if (sendTimeSelection) {
+      sendTimeSelection(date, selectionStart, selectionEnd, true);
+    }
     try {
       await onConfirm(startAt, endAt);
     } finally {
       setIsConfirming(false);
     }
-  }, [selectionStart, selectionEnd, date, onConfirm]);
+  }, [selectionStart, selectionEnd, date, onConfirm, sendTimeSelection]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     const currentSlot = selectionEnd ?? selectionStart ?? 0;

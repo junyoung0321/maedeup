@@ -207,23 +207,25 @@ async def _sync_chat_rejected_to_unavailability(
     room_pk: int,
     signals: dict | None,
 ) -> None:
-    """해결점 P (임시 구현, B 옵션):
-    `_analyze_conversation`이 추출한 `rejected_dates`를 멤버별 unavailability로 동기화 →
-    캘린더 X/Y 카운트가 채팅 자연어 거부 발언을 반영하도록 함.
+    """채팅 대화에서 추출한 rejected_dates/accepted_dates를 멤버별 unavailability로 동기화.
 
-    안전한 부분만 — authed 멤버 + user 명시 + 이름 유일 매핑만. 게스트/null user/이름충돌은 skip.
-    번복 처리는 미구현 (시연 후 보완).
+    안전 조건: 비게스트 authed 멤버 + 이름 명시 + 이름 유일 매핑만. 이름 충돌 발생 시 해당 이름 skip.
     """
     if not isinstance(signals, dict):
         return
     rejected = signals.get("rejected_dates") or []
-    if not isinstance(rejected, list) or not rejected:
+    accepted = signals.get("accepted_dates") or []
+    if not isinstance(rejected, list):
+        rejected = []
+    if not isinstance(accepted, list):
+        accepted = []
+    if not rejected and not accepted:
         return
     if redis_client is None:
         return
 
     names: set[str] = set()
-    for entry in rejected:
+    for entry in rejected + accepted:
         if isinstance(entry, dict) and isinstance(entry.get("user"), str):
             name = entry["user"].strip()
             if name:
@@ -233,7 +235,9 @@ async def _sync_chat_rejected_to_unavailability(
 
     try:
         async with AsyncSessionLocal() as db:
-            # 게스트도 포함 — 시뮬/시연 멤버 다양성 대응 (임시).
+            # is_guest 필터 제거 (2026-05-20): room_id 스코프 안에서만 매칭되므로
+            # 게스트 unavailability도 안전하게 동기화 가능. 시연/실사용 모두에서
+            # 게스트 멤버 거부 날짜가 캘린더에 반영되도록 함.
             stmt = (
                 select(User.id, User.name)
                 .join(RoomMember, RoomMember.user_id == User.id)
@@ -260,30 +264,32 @@ async def _sync_chat_rejected_to_unavailability(
 
     social_channel = f"social:{room_pk}"
     applied_count = 0
-    for entry in rejected:
+
+    async def _toggle_and_publish(entry: dict, unavailable: bool) -> None:
+        nonlocal applied_count
         if not isinstance(entry, dict):
-            continue
+            return
         user_name = entry.get("user")
         date = entry.get("date")
         if not isinstance(user_name, str) or not isinstance(date, str):
-            continue
+            return
         uid = name_to_id.get(user_name.strip())
         if uid is None:
-            continue
+            return
         try:
             dates_after = await sr.record_unavailable_toggle(
                 redis_client,
                 room_id=room_pk,
                 user_id=uid,
                 date=date,
-                unavailable=True,
+                unavailable=unavailable,
             )
         except Exception:
             logger.warning(
                 "record_unavailable_toggle failed room=%s uid=%s date=%s",
                 room_pk, uid, date, exc_info=True,
             )
-            continue
+            return
         applied_count += 1
         out = json.dumps(
             {
@@ -299,9 +305,14 @@ async def _sync_chat_rejected_to_unavailability(
         except Exception:
             logger.warning("Publish peer_unavailable_update failed room=%s", room_pk, exc_info=True)
 
+    for entry in rejected:
+        await _toggle_and_publish(entry, unavailable=True)
+    for entry in accepted:
+        await _toggle_and_publish(entry, unavailable=False)
+
     if applied_count:
         logger.info(
-            "[CHAT_UNAVAIL_SYNC] Applied %d rejected_dates to unavailability (room=%s)",
+            "[CHAT_UNAVAIL_SYNC] Applied %d unavailability toggles (room=%s)",
             applied_count, room_pk,
         )
 
@@ -599,6 +610,11 @@ async def agent_ws(
 ) -> None:
     await websocket.accept()
 
+    # /review fix (2026-05-18): fire-and-forget background tasks 강한 참조 유지용.
+    #   asyncio.create_task 반환값을 set에 add하지 않으면 GC가 mid-execution에 task를
+    #   회수해 summary 빌드가 무성하게 끊길 수 있음. add_done_callback(discard)로 정리.
+    _background_tasks: set[asyncio.Task] = set()
+
     # 토큰 검증
     if not token:
         await websocket.close(code=1008, reason="Missing token")
@@ -854,7 +870,8 @@ async def agent_ws(
                 continue
 
             role = payload.get("role", "user")
-            content = payload.get("content", "")
+            # P0 fix: content가 None인 잘못된 클라이언트 페이로드 방어 (모바일 push 등).
+            content = payload.get("content", "") or ""
             sender = payload.get("sender")
 
             # 메시지 길이 제한 (2000자)
@@ -913,18 +930,34 @@ async def agent_ws(
                     int(slot_context.get("total_message_count") or 0) > 10
                     and int(slot_context.get("total_message_count") or 0) % 10 == 0
                 ):
-                    async with AsyncSessionLocal() as session:
-                        summary_context = await MessageReader.load_agent_context(
-                            session=session,
-                            room_id=room_pk,
-                            viewer_user_id=user_id_check,
-                            limit=10,
-                        )
-                    summary = await _build_conversation_summary(
-                        summary_context.messages
-                    )
-                    if summary:
-                        slot_context["conversation_summary"] = summary
+                    # P0 fix (2026-05-16, 실사용자 관점 review): conversation_summary 빌드를
+                    #   receive loop 안에서 직렬 await로 호출하면 Gemini ~15s 동안 다음 메시지/
+                    #   slot_select 처리 불가 → 사용자가 "프로그램 멈췄나?" 인식.
+                    #   fire-and-forget으로 background 실행. 완료 시 slot_context에 갱신
+                    #   (race는 다음 트리거 시점까지 무해 — summary는 hint 용도).
+                    # /review fix (2026-05-18): asyncio.create_task가 반환한 Task에 강한 참조를
+                    #   유지하지 않으면 GC가 회수해 mid-execution에서 사라질 수 있음
+                    #   (Python docs 경고). connection-scope set에 보관하고 완료 시 discard.
+                    async def _spawn_summary() -> None:
+                        try:
+                            async with AsyncSessionLocal() as session:
+                                ctx = await MessageReader.load_agent_context(
+                                    session=session,
+                                    room_id=room_pk,
+                                    viewer_user_id=user_id_check,
+                                    limit=10,
+                                )
+                            s = await _build_conversation_summary(ctx.messages)
+                            if s:
+                                slot_context["conversation_summary"] = s
+                        except Exception as exc:
+                            logger.warning(
+                                "background conversation_summary failed: %s", exc, exc_info=True,
+                            )
+
+                    _summary_task = asyncio.create_task(_spawn_summary())
+                    _background_tasks.add(_summary_task)
+                    _summary_task.add_done_callback(_background_tasks.discard)
 
                 # AI 패널에서 직접 보낸 메시지는 항상 파이프라인 실행
                 # (사용자가 명시적으로 AI에게 말한 것이므로 debounce 없음)
@@ -968,6 +1001,9 @@ async def agent_ws(
 
                 slot_context["trigger_reason"] = "direct_request"
                 slot_context["direct_request_kind"] = qc["kind"]
+                # P0 fix: trigger_message_text 박아서 intent.py fast-path가 latest_user_message
+                #   대신 현재 입력을 우선 사용. 채팅 잔존 메시지로 오분류 차단.
+                slot_context["trigger_message_text"] = content
 
                 async with AsyncSessionLocal() as session:
                     context = await MessageReader.load_agent_context(
@@ -983,6 +1019,7 @@ async def agent_ws(
                     finally:
                         slot_context.pop("trigger_reason", None)
                         slot_context.pop("direct_request_kind", None)
+                        slot_context.pop("trigger_message_text", None)
 
                 # 슬롯 컨텍스트 업데이트 (다음 메시지에서 이어받기)
                 for key in (

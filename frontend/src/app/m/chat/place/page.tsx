@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -58,7 +58,7 @@ function PlaceChatPageContent() {
   return (
     <div
       className="relative mx-auto flex flex-col bg-white"
-      style={{ width: 390, height: 844, overflow: "clip" }}
+      style={{ width: "100%", height: "844px" }}
     >
       {/* 1. Header */}
       <div
@@ -176,41 +176,6 @@ function PlaceChatPageContent() {
             </div>
           );
         })}
-
-        {/* AI place recommendation card */}
-        <div
-          style={{
-            borderRadius: 16,
-            background: "linear-gradient(-225deg, #4f46e5 0%, #7c3aed 50%, #a855f7 100%)",
-            padding: "16px 18px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 10,
-            boxShadow: "0 4px 14px #4f46e520",
-          }}
-        >
-          <div className="flex items-center" style={{ gap: 6 }}>
-            <Sparkles size={16} color="#ffffff" />
-            <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 11, fontWeight: 600, color: "#ffffff" }}>AI 어시스턴트</span>
-          </div>
-          <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 16, fontWeight: 700, color: "#ffffff" }}>
-            장소 추천을 시작하겠습니다
-          </span>
-          <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 12, fontWeight: 400, color: "#ffffffcc", lineHeight: 1.5 }}>
-            채팅 내용을 분석하여 모임원들의 선호 지역과 카테고리를 파악하고 있어요.
-          </span>
-          <div style={{ height: 1, background: "#ffffff30" }} />
-          <div
-            className="flex items-center justify-center cursor-pointer"
-            style={{ gap: 6, padding: "8px 0", borderRadius: 8, background: "rgba(255,255,255,0.15)" }}
-            onClick={() => router.push(`/m/place?roomId=${roomId}`)}
-          >
-            <MapPin size={12} color="#ffffff" />
-            <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 11, fontWeight: 600, color: "#ffffff" }}>
-              장소 선택 탭에서 추천 장소 보기 →
-            </span>
-          </div>
-        </div>
 
         <div ref={bottomRef} />
       </div>

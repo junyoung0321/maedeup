@@ -34,7 +34,12 @@ function colorForUserId(id: number): string {
 }
 
 function formatMeetingDate(iso: string): string {
-  const date = new Date(iso);
+  // Fix (2026-05-18 hotfix): 백엔드는 naive UTC를 'Z' 없이 ISO로 직렬화 →
+  //   new Date("2026-05-25T10:00:00")는 브라우저 local time으로 해석돼 KST 가정.
+  //   결과: UTC 10:00가 "오전 10:00"으로 표시 (실제 KST 19:00 = "오후 7:00").
+  //   timezone 마커가 없으면 'Z'(UTC) 명시해 강제로 UTC로 파싱.
+  const hasTz = /[+-]\d{2}:?\d{2}$|Z$/.test(iso);
+  const date = new Date(hasTz ? iso : iso + "Z");
   const y = date.getFullYear();
   const m = date.getMonth() + 1;
   const d = date.getDate();

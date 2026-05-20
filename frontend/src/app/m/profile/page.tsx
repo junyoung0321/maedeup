@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -73,9 +73,8 @@ export default function ProfilePage() {
     return (
       <div
         style={{
-          width: 390,
-          height: 844,
-          overflow: "hidden",
+          width: "100%",
+          height: "844px",
           display: "flex",
           flexDirection: "column",
           background: "#ffffff",
@@ -96,9 +95,8 @@ export default function ProfilePage() {
   return (
     <div
       style={{
-        width: 390,
-        height: 844,
-        overflow: "hidden",
+        width: "100%",
+        height: "844px",
         display: "flex",
         flexDirection: "column",
         background: "#ffffff",

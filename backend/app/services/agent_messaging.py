@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import redis.asyncio as aioredis
@@ -18,6 +18,7 @@ from app.models.chat import ChatMessage, PaneType, Visibility
 logger = logging.getLogger(__name__)
 
 _WEEKDAY_KO = ["월", "화", "수", "목", "금", "토", "일"]
+_KST = timezone(timedelta(hours=9))
 
 
 async def emit_agent_message(
@@ -75,17 +76,25 @@ async def emit_agent_message(
 
 
 def format_korean_meeting_time(dt: datetime) -> str:
-    """datetime을 '5월 8일 (금) 오후 6:00' 형식으로 포맷.
+    """datetime을 '5월 8일 (금) 오후 6:00' 형식으로 KST 기준 포맷.
 
-    naive datetime KST 가정 (백엔드 컨벤션). %-m / %#m 플랫폼 의존성 없이 직접 조립.
+    DB 컨벤션 (CLAUDE.md): naive datetime은 UTC. 따라서 naive 입력은 UTC로 간주하고
+    KST로 변환 후 포맷. tz-aware 입력은 .astimezone(KST)로 일관 처리.
+    Fix (2026-05-18 hotfix): 이전 구현은 "naive=KST 가정"으로 DB UTC를 그대로 포맷해서
+    AI 확정 메시지가 "오전 10:00"으로 표시되던 버그.
+    %-m / %#m 플랫폼 의존성 없이 직접 조립.
     """
-    weekday = _WEEKDAY_KO[dt.weekday()]
-    hour = dt.hour
-    minute = dt.minute
+    if dt.tzinfo is None:
+        dt_kst = dt.replace(tzinfo=timezone.utc).astimezone(_KST)
+    else:
+        dt_kst = dt.astimezone(_KST)
+    weekday = _WEEKDAY_KO[dt_kst.weekday()]
+    hour = dt_kst.hour
+    minute = dt_kst.minute
     am_pm = "오전" if hour < 12 else "오후"
     hour12 = hour % 12 or 12
     if minute == 0:
         time_part = f"{am_pm} {hour12}:00"
     else:
         time_part = f"{am_pm} {hour12}:{minute:02d}"
-    return f"{dt.month}월 {dt.day}일 ({weekday}) {time_part}"
+    return f"{dt_kst.month}월 {dt_kst.day}일 ({weekday}) {time_part}"

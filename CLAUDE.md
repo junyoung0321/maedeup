@@ -2,14 +2,35 @@
 
 ## 진행 중인 작업
 세션 시작 시 `docs/handoff/` 폴더의 가장 최근 문서를 먼저 확인하세요.
-**현재 task**: 시연 직전 — 해결점 A~P 적용 완료, 풀 시나리오 자동화 검증 통과.
-시연 자동화: `python .gstack-browser-launch.py` (터미널 1) + `python .gstack-demo.py` (터미널 2). 사전에 `.gstack-demo-token` 파일에 JWT 저장.
-시연 후 보완 항목:
-1. 해결점 P 정교화 (번복 처리, 게스트 정책)
-2. 해결점 O (정규식 단축 사각지대)
-3. ACT 4 confirm 후속 메시지 / ACT 5 quick_classify 보강
+**현재 task**: 시연 직전 (D-4, 2026-05-16) — 해결점 A~P + Fix 1~14 + demo-stab 백포팅 + call_gemini 결정성 강화 완료. 실측 검증 통과.
+
+### 실측 latency (2026-05-16, 3회 평균)
+- ACT 2 (자동 개입, stalemate): **8s** (분산 ±1s)
+- ACT 5 (장소 추천, direct_request): **3.41s** (분산 ±0.05s) — 5s 목표 달성 ✅
+- 결정성: tool 시퀀스 100% 동일 (top_p=0.1, top_k=1 효과)
+- 회귀: 0건
+
+### 시연 자동화 (순서 엄수)
+**사전 절차 (시연 시작 전 1회):**
+1. `.env`에 `DEMO_FALLBACK_ENABLED=true` 설정 (없으면 personal_data_extractor canned fallback 비활성 → ACT 6 학습 안 됨)
+2. `docker exec maedeup-api python -m scripts.seed_demo` — 시연 멤버(지민·수현·민수) DB 시드 + personal data 사전 학습
+3. `curl -X POST http://localhost:8000/api/v1/intents/seed` — RAG intent 예시 55개 시드. **누락 시 모든 채팅이 intent=general 분류 → NOTIFIABLE 카운터 0 → 트리거 게이트 영원히 미발화 → ACT 2 추천 카드 안 뜸.** 검증: `docker exec maedeup-postgres psql -U maedeup -d maedeup -c "SELECT intent, COUNT(*) FROM intent_examples GROUP BY intent;"` → 3 row(general 10 / meeting_schedule 15 / place_suggestion 30).
+4. JWT 발급: `docker exec maedeup-api python -c "from app.core.security import issue_jwt; print(issue_jwt(user_id=1, email='dnfltkagudwp123@gmail.com', name='정준영', picture=None, calendar_consent=True))"` → `.gstack-demo-token`에 저장
+
+**실행:**
+- 터미널 1: `python .gstack-browser-launch.py`
+- 터미널 2: `python .gstack-demo.py` (`--fast` 옵션 가능)
+
+**ACT 6 학습 모먼트 검증:** `docker logs maedeup-api | Select-String "users affected"` — `0 users affected` 보이면 seed_demo 실행 필요. 1+ 보이면 정상.
+
+### 시연 후 보완 항목 (D+ 작업)
+1. 해결점 P 정교화 (번복 처리, 게스트 정책) — 시연 시나리오에 등장 안 함, 우선순위 낮음
+2. 해결점 O (정규식 단축 사각지대) — ✅ 2026-05-16 완료 (`_REJECT_SIGNAL_PATTERN` 보강)
+3. ACT 4 confirm 후속 메시지 — 자동화 검증 통과, manual 발견 시 진행
+4. ACT 5 quick_classify 보강 — ✅ 2026-05-16 완료 (한식집/술집/회식/모임/약속 키워드 + 어때/골라 동사)
+
 참고:
-- `docs/handoff/2026-05-06-demo-loop-progress.md` (최신 — 시연 검증 + 자동화 + 보완 항목)
+- `docs/handoff/2026-05-06-demo-loop-progress.md`
 - `docs/handoff/demo-scenario.md` (시연 시나리오 SoT)
 - `docs/handoff/audit-findings.md` (해결점 A~P)
 - `docs/handoff/diagrams/`
@@ -41,7 +62,7 @@ frontend/
 
 ## Never
 - API 키/시크릿 전체 출력 금지 (앞 4~5자만 마스킹)
-- 승인 없이 커밋/푸시 금지
+- 승인 없이 **푸시** 금지 (커밋은 PM 자율 — 2026-05-20 룰 변경)
 - 외부 패키지 임의 추가 금지
 - DB create_all 사용 금지
 
@@ -93,7 +114,7 @@ Use /browse from gstack for all web browsing. Never use mcp__claude-in-chrome__*
 - Google OAuth 테스트 사용자 등록 필요
 - 카카오 OPEN_MAP_AND_LOCAL 서비스 활성화 필요
 - Gemini rate limit 시 패턴 fallback으로 기본 동작 보장
-- 커밋/푸시는 유저 확인 후에만
+- 푸시는 유저 확인 후에만 (커밋은 PM 자율 — 2026-05-20 룰 변경)
 
 Key routing rules:
 - Product ideas, "is this worth building", brainstorming → invoke office-hours

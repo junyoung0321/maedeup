@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -84,9 +84,8 @@ function NotificationsPageContent() {
   return (
     <div
       style={{
-        width: 390,
-        height: 844,
-        overflow: "clip",
+        width: "100%",
+        height: "844px",
         background: "#ffffff",
         display: "flex",
         flexDirection: "column",

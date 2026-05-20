@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -38,14 +38,34 @@ function PlaceRecommendPageContent() {
     apiFetch<Room>(`/api/v1/rooms/${roomId}`)
       .then(setRoom)
       .catch(() => null);
-    apiFetch<NearbyPlacesResponse>("/api/v1/recommendations/nearby-places?category=카페&limit=5")
-      .then(setPlacesData)
-      .catch(() => null)
-      .finally(() => setLoading(false));
+    const run = async () => {
+      let district = "";
+      try {
+        const raw = sessionStorage.getItem("locationWizard");
+        if (raw) {
+          const parsed = JSON.parse(raw) as Record<string, string>;
+          district = parsed.district ?? "";
+        }
+      } catch {}
+      if (district) {
+        await apiFetch("/api/v1/users/me/preferences", {
+          method: "PATCH",
+          body: JSON.stringify({ home_base: district }),
+        }).catch(() => null);
+      }
+      const data = await apiFetch<NearbyPlacesResponse>(
+        "/api/v1/recommendations/nearby-places?category=카페&limit=5"
+      ).catch(() => null);
+      setPlacesData(data);
+    };
+    run().finally(() => setLoading(false));
   }, [authLoading, user, roomId]);
 
   function handlePlaceClick(place: NearbyPlace) {
-    sessionStorage.setItem("selectedPlace", JSON.stringify(place));
+    const placeWithReason: NearbyPlace = placesData?.reason
+      ? { ...place, ai_reason: placesData.reason }
+      : place;
+    sessionStorage.setItem("selectedPlace", JSON.stringify(placeWithReason));
     router.push(`/m/place/detail?roomId=${roomId}`);
   }
 
@@ -55,7 +75,7 @@ function PlaceRecommendPageContent() {
   return (
     <div
       className="relative mx-auto flex flex-col bg-white"
-      style={{ width: 390, height: 844, overflow: "clip" }}
+      style={{ width: "100%", height: "844px" }}
     >
       {/* 1. Header */}
       <div

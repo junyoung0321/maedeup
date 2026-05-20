@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -57,8 +57,8 @@ function ScheduleChatPageContent() {
 
   return (
     <div
-      className="relative mx-auto flex flex-col bg-white overflow-hidden"
-      style={{ width: 390, height: 844 }}
+      className="relative flex flex-col bg-white overflow-hidden"
+      style={{ width: "100%", height: "844px" }}
     >
       {/* 1. Header */}
       <div

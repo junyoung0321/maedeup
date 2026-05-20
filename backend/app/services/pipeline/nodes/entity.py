@@ -248,6 +248,18 @@ async def entity_extraction(state: GraphState) -> GraphState:
                             if iso not in seen_iso:
                                 seen_iso.add(iso)
                                 expanded_date_hints.append(iso)
+            # Fix#2 (2026-05-20): 과거 날짜 사전 컷 — validation 단계에서 past 필터로
+            # valid_remaining이 깎이기 전에 제거해 "no valid free time slots available" 방지.
+            today_kst = datetime.now(KST).date()
+            before_filter_count = len(expanded_date_hints)
+            expanded_date_hints = [d for d in expanded_date_hints if d >= today_kst.isoformat()]
+            dropped_count = before_filter_count - len(expanded_date_hints)
+            if dropped_count:
+                logger.info(
+                    "[OPT] _expand_date_hint dropped %d past dates (today=%s)",
+                    dropped_count, today_kst.isoformat(),
+                )
+
             if expanded_date_hints:
                 logger.info("[DATE_HINTS] Expanded: %s -> %s", raw_date_hints, expanded_date_hints)
 
@@ -492,6 +504,16 @@ async def entity_extraction(state: GraphState) -> GraphState:
             resolved_hints = list(
                 await asyncio.gather(*[_resolve_one(h) for h in raw_date_hints])
             )
+            # Fix#2 (2026-05-20): past 날짜 사전 필터 (Gemini 경로)
+            _today_kst = datetime.now(KST).date()
+            _before = len(resolved_hints)
+            resolved_hints = [d for d in resolved_hints if d >= _today_kst.isoformat()]
+            _dropped = _before - len(resolved_hints)
+            if _dropped:
+                logger.info(
+                    "[OPT] _expand_date_hint dropped %d past dates (today=%s)",
+                    _dropped, _today_kst.isoformat(),
+                )
             extracted["date_hints"] = resolved_hints
             # Set date_hint to first resolved date for compatibility
             if resolved_hints:

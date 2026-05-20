@@ -1,6 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   trailingSlash: true,
+  images: {
+    remotePatterns: [
+      { protocol: "https", hostname: "*.daumcdn.net" },
+      { protocol: "https", hostname: "dapi.kakao.com" },
+    ],
+  },
   async headers() {
     // 카카오맵 SDK 스크립트 도메인 허용: dapi.kakao.com, *.daumcdn.net
     return [

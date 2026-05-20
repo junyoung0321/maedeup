@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -54,9 +54,8 @@ export default function FriendsPage() {
   return (
     <div
       style={{
-        width: 390,
-        height: 844,
-        overflow: "hidden",
+        width: "100%",
+        height: "844px",
         display: "flex",
         flexDirection: "column",
         background: "#ffffffff",
@@ -110,7 +109,7 @@ export default function FriendsPage() {
           display: "flex",
           flexDirection: "column",
           gap: 16,
-          overflow: "hidden",
+          overflowY: "auto",
         }}
       >
         {/* Title row */}

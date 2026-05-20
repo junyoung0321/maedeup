@@ -110,8 +110,8 @@ interface MeetingContextValue extends MeetingState {
   setSendDateSelection: (fn: ((date: string | null) => void) | null) => void;
   // 시간 선택 공유 bridge: ChatPane WS와 TimeBarSelector를 연결
   setPeerTimeSelections: (selections: Record<string, PeerTimeSelection>) => void;
-  sendTimeSelection: ((date: string | null, start: number | null, end: number | null) => void) | null;
-  setSendTimeSelection: (fn: ((date: string | null, start: number | null, end: number | null) => void) | null) => void;
+  sendTimeSelection: ((date: string | null, start: number | null, end: number | null, confirmed?: boolean) => void) | null;
+  setSendTimeSelection: (fn: ((date: string | null, start: number | null, end: number | null, confirmed?: boolean) => void) | null) => void;
   // 불가능 날짜 공유 bridge: ChatPane WS ↔ CalendarPane
   setUnavailabilityByUser: (by: Record<number, string[]>) => void;
   sendUnavailableToggle: ((date: string, unavailable: boolean) => void) | null;

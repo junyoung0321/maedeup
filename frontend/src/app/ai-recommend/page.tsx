@@ -1,9 +1,20 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { Sparkles, RefreshCw, Star, ChevronRight, Minus, Plus, X, MapPin, Zap, Heart } from "lucide-react";
+import { Sparkles, RefreshCw, Minus, Plus, X, MapPin, Zap, Heart, Search, UserPlus, UsersRound } from "lucide-react";
 import Header from "@/components/layout/Header";
+import { apiFetch } from "@/lib/api";
+
+interface PlaceResult {
+  id: string;
+  name: string;
+  address: string;
+  phone: string;
+  url: string;
+  x: string;
+  y: string;
+  category: string;
+}
 
 const MOODS = ["모던", "아늑함", "트렌디", "야외활동", "조용함", "자연"];
 const DURATIONS = ["1~3시간", "3시간", "3~5시간", "5시간 이상"];
@@ -47,45 +58,8 @@ const REGIONS: Record<string, Record<string, string[]>> = {
   },
 };
 
-const MOCK_PLACES = [
-  {
-    id: 1,
-    name: "포레스트 카페 수원",
-    category: "카페",
-    mood: "아늑함",
-    rating: 4.8,
-    reviews: 312,
-    distance: "도보 5분",
-    desc: "자연 속 힐링 공간, 프라이빗 룸 보유",
-    image: "https://picsum.photos/seed/place1/200/120",
-  },
-  {
-    id: 2,
-    name: "루프탑 가든 레스토랑",
-    category: "레스토랑",
-    mood: "트렌디",
-    rating: 4.6,
-    reviews: 187,
-    distance: "차량 10분",
-    desc: "야경이 아름다운 루프탑 공간",
-    image: "https://picsum.photos/seed/place2/200/120",
-  },
-  {
-    id: 3,
-    name: "모던 갤러리 스페이스",
-    category: "복합문화공간",
-    mood: "모던",
-    rating: 4.7,
-    reviews: 98,
-    distance: "도보 12분",
-    desc: "감각적인 인테리어, 소규모 모임 최적",
-    image: "https://picsum.photos/seed/place3/200/120",
-  },
-];
 
 export default function AiRecommendPage() {
-  const router = useRouter();
-
   // Form state
   const [date, setDate] = useState("2026년 6월 10일(수) 오후 7시");
   const [members, setMembers] = useState(4);
@@ -93,10 +67,14 @@ export default function AiRecommendPage() {
   const [selectedMoods, setSelectedMoods] = useState<string[]>(["아늑함"]);
   const [description, setDescription] = useState("");
   const [selectedDurations, setSelectedDurations] = useState<string[]>(["1~3시간"]);
+  const [friendInput, setFriendInput] = useState("");
+  const [friendChips, setFriendChips] = useState<string[]>([]);
 
   // Results state
+  const [places, setPlaces] = useState<PlaceResult[]>([]);
   const [hasResults, setHasResults] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Region modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -111,9 +89,26 @@ export default function AiRecommendPage() {
   const toggleDuration = (d: string) =>
     setSelectedDurations((prev) => prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]);
 
-  const handleRecommend = () => {
+  const handleRecommend = async () => {
+    const district = region.split(" > ").pop() ?? region;
+    const query = [district, ...selectedMoods, description.trim().slice(0, 40)]
+      .filter(Boolean)
+      .join(" ");
+
     setIsLoading(true);
-    setTimeout(() => { setIsLoading(false); setHasResults(true); }, 1800);
+    setError(null);
+    try {
+      const results = await apiFetch<PlaceResult[]>("/api/v1/places/search", {
+        method: "POST",
+        body: JSON.stringify({ query }),
+      });
+      setPlaces(results);
+      setHasResults(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "추천을 불러올 수 없어요");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleRegionConfirm = () => {
@@ -171,6 +166,46 @@ export default function AiRecommendPage() {
                 <Plus size={14} />
               </button>
             </div>
+          </div>
+
+          {/* 참여 친구 */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+              <UsersRound size={13} className="text-primary-600" />
+              참여 친구
+              <span className="font-normal normal-case text-gray-400 ml-1">{friendChips.length}명 추가됨</span>
+            </label>
+            <div className="flex items-center gap-2 border border-gray-200 rounded-lg px-3 py-2 bg-gray-50">
+              <Search size={14} className="text-gray-400 shrink-0" />
+              <input
+                value={friendInput}
+                onChange={(e) => setFriendInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && friendInput.trim()) {
+                    setFriendChips((prev) => [...prev, friendInput.trim()]);
+                    setFriendInput("");
+                  }
+                }}
+                placeholder="이름 입력 후 Enter..."
+                className="flex-1 bg-transparent text-sm text-gray-800 outline-none"
+              />
+              <UserPlus size={16} className="text-primary-600 shrink-0" />
+            </div>
+            {friendChips.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {friendChips.map((name, idx) => (
+                  <span
+                    key={idx}
+                    className="flex items-center gap-1.5 bg-gray-100 border border-gray-200 rounded-full px-3 py-1 text-xs font-semibold text-gray-700"
+                  >
+                    {name}
+                    <button onClick={() => setFriendChips((prev) => prev.filter((_, i) => i !== idx))}>
+                      <X size={12} className="text-gray-400 hover:text-gray-600" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* 장소 선택 */}
@@ -301,49 +336,47 @@ export default function AiRecommendPage() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 gap-4">
-                {MOCK_PLACES.map((place, idx) => (
-                  <div
-                    key={place.id}
-                    onClick={() => router.push(`/place/${place.id}`)}
-                    className="flex gap-4 border border-gray-200 rounded-xl p-4 hover:border-primary-300 hover:shadow-sm cursor-pointer transition-all"
-                  >
-                    {/* Rank badge */}
-                    <div className="relative shrink-0">
-                      <img
-                        src={place.image}
-                        alt={place.name}
-                        className="w-[160px] h-[100px] rounded-lg object-cover"
-                      />
-                      <span className="absolute top-2 left-2 bg-primary-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-                        #{idx + 1}
-                      </span>
-                    </div>
+              {error ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3">
+                  <p className="text-sm font-semibold text-red-500">{error}</p>
+                  <p className="text-xs text-gray-400">조건을 바꿔 다시 시도해보세요</p>
+                </div>
+              ) : places.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3">
+                  <p className="text-sm font-semibold text-gray-600">검색 결과가 없어요</p>
+                  <p className="text-xs text-gray-400">지역이나 무드 조건을 바꿔 다시 시도해보세요</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4">
+                  {places.map((place, idx) => {
+                    const categoryShort = place.category.split(">").pop()?.trim() ?? place.category;
+                    return (
+                      <div
+                        key={place.id}
+                        className="flex gap-4 border border-gray-200 rounded-xl p-4 hover:border-primary-300 hover:shadow-sm transition-all"
+                      >
+                        {/* Rank badge */}
+                        <div className="w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center shrink-0 self-center">
+                          <span className="text-sm font-bold text-primary-600">#{idx + 1}</span>
+                        </div>
 
-                    <div className="flex flex-col gap-1.5 flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-medium text-primary-600 bg-primary-50 px-2 py-0.5 rounded-full">
-                          {place.category}
-                        </span>
-                        <span className="text-xs font-medium text-gray-600 bg-gray-100 px-2 py-0.5 rounded-full">
-                          {place.mood}
-                        </span>
-                        <span className="text-xs text-gray-400 ml-auto">{place.distance}</span>
+                        <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-medium text-primary-600 bg-primary-50 px-2 py-0.5 rounded-full">
+                              {categoryShort}
+                            </span>
+                          </div>
+                          <span className="text-base font-bold text-gray-900 truncate">{place.name}</span>
+                          <span className="text-sm text-gray-500 truncate">{place.address || "주소 정보 없음"}</span>
+                          {place.phone && (
+                            <span className="text-xs text-gray-400">{place.phone}</span>
+                          )}
+                        </div>
                       </div>
-
-                      <span className="text-base font-bold text-gray-900">{place.name}</span>
-                      <span className="text-sm text-gray-500">{place.desc}</span>
-
-                      <div className="flex items-center gap-1 mt-auto">
-                        <Star size={12} className="text-yellow-400 fill-yellow-400" />
-                        <span className="text-sm font-semibold text-gray-800">{place.rating}</span>
-                        <span className="text-xs text-gray-400">({place.reviews}개 리뷰)</span>
-                        <ChevronRight size={14} className="text-gray-400 ml-auto" />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </>
           )}
         </div>

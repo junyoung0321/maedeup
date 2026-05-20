@@ -176,6 +176,23 @@ export default function AiAssistantPane() {
     setVoteCardCtx?.(activeVoteCard);
   }, [activeVoteCard, setVoteCardCtx]);
 
+  // Fix (2026-05-20): 캘린더 "이 날짜로 확정" / TimeBar 시간 확정 등 호스트가
+  // 명시적으로 확정 액션을 취하면 AI 패널의 시간 추천 vote_card도 dismiss.
+  // 이전엔 AI 패널 vote_card가 자체 cardsByMeetingId state에서 prop으로 렌더되어
+  // context.voteCard=null만으로 안 사라졌음. infoPanePhase가 dateConfirmed/
+  // timeConfirmed로 전환되면 카드 자체를 removeCardByMeetingId로 정리.
+  const infoPanePhaseCtx = meetingContext?.infoPanePhase;
+  useEffect(() => {
+    if (infoPanePhaseCtx !== "dateConfirmed" && infoPanePhaseCtx !== "timeConfirmed") {
+      return;
+    }
+    for (const card of activeCards) {
+      if (card.type === "vote_card") {
+        removeCardByMeetingId(card.meeting_id);
+      }
+    }
+  }, [infoPanePhaseCtx, activeCards, removeCardByMeetingId]);
+
   useEffect(() => {
     setVoteUpdateCtx?.(voteUpdate ?? null);
   }, [voteUpdate, setVoteUpdateCtx]);
@@ -200,14 +217,26 @@ export default function AiAssistantPane() {
     }
   }, [aiTriggerIntent, setAiTriggerIntent]);
 
-  // 소셜 채팅에서 AI 자동 트리거가 감지되면 배너 표시
+  // 소셜 채팅에서 AI 자동 트리거가 감지되면 배너 표시 (demo-stab FE-2 백포팅 2026-05-16)
+  // ACT 2 자동 개입 시각화: "AI가 정리해볼게요" 배너로 ~10s 대기 시간 자연스럽게 채움
   useEffect(() => {
     if (!autoTrigger) {
       return;
     }
-    // 자동 트리거는 배너 없이 조용히 처리 (AI가 필요할 때만 응답)
+    const content =
+      typeof autoTrigger === "object" && autoTrigger && "content" in autoTrigger
+        ? (autoTrigger as { content?: string }).content
+        : null;
+    setAutoTriggerBanner(content || "대화가 길어지네요, AI가 정리해볼게요 🗓️");
     dismissAutoTrigger();
   }, [autoTrigger, dismissAutoTrigger]);
+
+  // 추천 카드 / 분석중 메시지 도착 시 배너 자동 해제 (FE-2)
+  useEffect(() => {
+    if (activeCards.length > 0 || isAiLoading) {
+      setAutoTriggerBanner(null);
+    }
+  }, [activeCards.length, isAiLoading]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });

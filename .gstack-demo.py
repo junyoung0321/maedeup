@@ -866,9 +866,15 @@ async def run_demo(flags: DemoFlags) -> None:
         # ─────────────────────────────────────────────────
 
         if act3_completed:
-            # ACT 3에서 이미 확정 → maedeup_card (partial) WebSocket 수신 대기만
-            log(f"Partial 카드 발행 대기 ({pace['view_pause']}s)")
-            await asyncio.sleep(pace["view_pause"])
+            # ACT 3에서 이미 확정 → maedeup_card (partial) DOM 등장 폴링 (최대 35s)
+            # "최종 확정" 텍스트는 AiAssistantPane.tsx:606 maedeup_card 헤더에 항상 고정 렌더링
+            log("Partial 카드 등장 폴링 (최대 35s)...")
+            appeared = await wait_for_text(page, "최종 확정", timeout_s=35.0)
+            if appeared:
+                log("Partial 카드 등장 확인 — 시청자 인지용 대기")
+                await asyncio.sleep(pace["view_pause"])
+            else:
+                log("⚠️  Partial 카드 미등장 (35s) — ACT 5 진입 (degraded)")
         else:
             log("⚠️  vote_card 미발견 — ACT 4 스킵")
 

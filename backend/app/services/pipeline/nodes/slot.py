@@ -340,6 +340,18 @@ def _slot_filling_default_multi_date(state: GraphState) -> GraphState:
 
 
 async def _slot_filling_default_confirmed(state: GraphState) -> GraphState:
+    # stalemate 자동 개입 경로에서는 vote_card가 곧 등장하므로
+    # 확정 톤 confirm 멘트는 시청자에게 혼란. skip.
+    if state.get("trigger_reason") == "stalemate_judged":
+        logger.info("[SLOT] confirm 멘트 skip — stalemate 경로 (room=%s)", state.get("room_id"))
+        state["all_slots_filled"] = True
+        state["missing_slots"] = []
+        state["awaiting_user_reply"] = False
+        state["wait_timed_out"] = False
+        state["message_count_since_last_trigger"] = 0
+        state["status"] = "slots_filled"
+        return state
+
     if not state.get("meeting_type"):
         state["meeting_type"] = "모임"
     date_display = state.get("date_hint", "")

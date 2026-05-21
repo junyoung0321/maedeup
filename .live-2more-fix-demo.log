@@ -1,0 +1,4 @@
+[15:13:06] [NOTE] DEMO_TARGET_DATE(2026-05-18) ≠ 오늘(2026-05-20) — 발화는 5/18 기준 자연 표현이지만 backend는 오늘 기준 처리. 영상 촬영 후 dry-run은 OK
+[15:13:06] [FLAGS] fast=False v2_mode=False skip_0.5=False skip_3=False skip_5.5=False
+[15:13:07] CDP 9222 연결...
+[15:13:07] 기존 페이지: http://localhost:3000/meeting/177/

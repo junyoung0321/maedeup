@@ -1,0 +1,22 @@
+URL: http://localhost:3000/
+✨ 버튼 개수: 3
+  [0] {'label': 'AI가 학습한 항목 — 클릭 시 출처', 'text': '', 'visible': True}
+  [1] {'label': 'AI가 학습한 항목 — 클릭 시 출처', 'text': '', 'visible': True}
+  [2] {'label': 'AI가 학습한 항목 — 클릭 시 출처', 'text': '', 'visible': True}
+스크린샷: .diag-act6-after-click.png
+
+=== DOM 진단 ===
+{
+  "hasLearningSourceHeader": [
+    {
+      "tag": "SPAN",
+      "cls": "jsx-cce995e9facf5d3e text-[15px] font-bold text-[#1e293b]",
+      "role": "",
+      "ownText": "AI 학습 출처"
+    }
+  ],
+  "hasQuoteIntro": [],
+  "hasToast": [],
+  "dialogs": [],
+  "modalishElements": []
+}

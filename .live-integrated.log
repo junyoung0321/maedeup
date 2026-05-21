@@ -1,0 +1,92 @@
+[14:11:44] CDP 9222 연결...
+[14:11:44] 기존 페이지: http://localhost:3000/meeting/171/
+[14:11:44] 호스트: 김창윤 (id=1)
+[14:11:44] ⚠️  호스트 name이 '지민'이 아님 ('김창윤'). 시드가 호스트에 매칭 안 됨.
+[14:11:44]     수현/민수 시드는 게스트 join 시 정상 매칭됨.
+
+================================================================
+  ACT 0 — 메인화면 투어 (PersonalData ✨)
+================================================================
+[14:11:45] 홈 도착. PersonalData / MeetingList / MiniCalendar 노출
+
+================================================================
+  ACT 1 — 모임 생성 + 게스트 3명 + PersonalData 시드
+================================================================
+[14:11:52] '모임 생성' 버튼 클릭
+[14:11:57] 모임명 입력: 동아리 종강 회식
+[14:11:58] 카테고리 '식사' 선택
+[14:11:59] '모임 생성' 제출
+[14:12:03] 방 ID = 172
+[14:12:03] 선호도 팝업: '평일 저녁' 클릭
+[14:12:04] 선호 장소: (비워둠) — ACT 4 Partial 카드 트리거
+[14:12:05] 선호도 '제출하기'
+[14:12:08] 게스트 '수현' 가입
+[14:12:08]   → user_id=466
+[14:12:08] 게스트 '민수' 가입
+[14:12:08]   → user_id=467
+[14:12:08] 게스트 '예린' 가입 (게스트 역할)
+[14:12:08]   → user_id=468
+[14:12:10] PersonalData 시드 실행 (지민·수현·민수)
+[14:12:11]   seed | 2026-05-20 05:12:11,684 INFO sqlalchemy.engine.Engine select pg_catalog.version()
+[14:12:11]   seed | 2026-05-20 05:12:11,685 INFO sqlalchemy.engine.Engine [raw sql] ()
+[14:12:11]   seed | 2026-05-20 05:12:11,687 INFO sqlalchemy.engine.Engine select current_schema()
+[14:12:11]   seed | 2026-05-20 05:12:11,687 INFO sqlalchemy.engine.Engine [raw sql] ()
+[14:12:11]   seed | 2026-05-20 05:12:11,688 INFO sqlalchemy.engine.Engine show standard_conforming_strings
+[14:12:11]   seed | 2026-05-20 05:12:11,688 INFO sqlalchemy.engine.Engine [raw sql] ()
+[14:12:11]   seed | 2026-05-20 05:12:11,690 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+[14:12:11]   seed | 2026-05-20 05:12:11,700 INFO sqlalchemy.engine.Engine SELECT rooms.id, rooms.name, rooms.description, rooms.category, rooms.created_by, rooms.status, rooms.created_at, rooms.updated_at 
+[14:12:11]   seed | FROM rooms 
+[14:12:11]   seed | WHERE rooms.id = $1::INTEGER
+[14:12:11]   seed | 2026-05-20 05:12:11,701 INFO sqlalchemy.engine.Engine [generated in 0.00021s] (172,)
+[14:12:11]   seed | 2026-05-20 05:12:11,707 INFO sqlalchemy.engine.Engine SELECT users.id, users.email, users.name, users.picture, users.home_base, users.food_preferences, users.food_preference_note, users.food_restrictions, users.liked_areas, users.disliked_areas, users.time_preference, users.transport_mode, users.is_ai_filled, users.google_access_token, users.google_refresh_token, users.calendar_consent, users.share_food_data, users.share_location_data, users.share_schedule_data, users.is_guest, users.created_at 
+[14:12:11]   seed | FROM users JOIN room_members ON room_members.user_id = users.id 
+[14:12:11]   seed | WHERE room_members.room_id = $1::INTEGER
+[14:12:11]   seed | 2026-05-20 05:12:11,707 INFO sqlalchemy.engine.Engine [generated in 0.00020s] (172,)
+[14:12:11]   seed | 2026-05-20 05:12:11,717 INFO sqlalchemy.engine.Engine UPDATE users SET home_base=$1::VARCHAR, food_preferences=$2::JSON, liked_areas=$3::JSON WHERE users.id = $4::INTEGER
+[14:12:11]   seed | 2026-05-20 05:12:11,717 INFO sqlalchemy.engine.Engine [generated in 0.00022s] ('신촌', '["\\uc77c\\uc2dd", "\\uc591\\uc2dd", "\\ub514\\uc800\\ud2b8"]', '["\\uc2e0\\ucd0c", "\\ud64d\\ub300"]', 1)
+[14:12:11]   seed | 2026-05-20 05:12:11,721 INFO sqlalchemy.engine.Engine UPDATE users SET home_base=$1::VARCHAR, food_preferences=$2::JSON, food_restrictions=$3::JSON, liked_areas=$4::JSON, disliked_areas=$5::JSON, is_ai_filled=$6::JSON WHERE users.id = $7::INTEGER
+[14:12:11]   seed | 2026-05-20 05:12:11,721 INFO sqlalchemy.engine.Engine [generated in 0.00025s] ('강남', '["\\ud55c\\uc2dd"]', '["\\ucc44\\uc2dd"]', '["\\uac15\\ub0a8"]', '["\\ud64d\\ub300"]', '{"food_preferences": true, "food_restrictions": true, "liked_areas": true, "disliked_areas": true, "home_base": true, "share_food_data": true, "share_location_data": true, "share_schedule_data": true}', 466)
+[14:12:11]   seed | 2026-05-20 05:12:11,723 INFO sqlalchemy.engine.Engine UPDATE users SET home_base=$1::VARCHAR, food_preferences=$2::JSON, transport_mode=$3::VARCHAR, is_ai_filled=$4::JSON WHERE users.id = $5::INTEGER
+[14:12:11]   seed | 2026-05-20 05:12:11,723 INFO sqlalchemy.engine.Engine [generated in 0.00020s] ('강남', '["\\uc911\\uc2dd"]', '지하철', '{"food_preferences": true, "transport_mode": true, "home_base": true, "share_food_data": true, "share_location_data": true, "share_schedule_data": true}', 467)
+[14:12:11]   seed | 2026-05-20 05:12:11,724 INFO sqlalchemy.engine.Engine UPDATE users SET home_base=$1::VARCHAR, food_preferences=$2::JSON, is_ai_filled=$3::JSON WHERE users.id = $4::INTEGER
+[14:12:11]   seed | 2026-05-20 05:12:11,724 INFO sqlalchemy.engine.Engine [generated in 0.00014s] ('강남역', '["\\ud55c\\uc2dd"]', '{"food_preferences": true, "home_base": true, "share_food_data": true, "share_location_data": true, "share_schedule_data": true}', 468)
+[14:12:11]   seed | 2026-05-20 05:12:11,726 INFO sqlalchemy.engine.Engine COMMIT
+[14:12:11]   seed | [sqlalchemy.engine.Engine] select pg_catalog.version()
+[14:12:11]   seed | [sqlalchemy.engine.Engine] [raw sql] ()
+[14:12:11]   seed | [sqlalchemy.engine.Engine] select current_schema()
+[14:12:11]   seed | [sqlalchemy.engine.Engine] [raw sql] ()
+[14:12:11]   seed | [sqlalchemy.engine.Engine] show standard_conforming_strings
+[14:12:11]   seed | [sqlalchemy.engine.Engine] [raw sql] ()
+[14:12:11]   seed | [sqlalchemy.engine.Engine] BEGIN (implicit)
+[14:12:11]   seed | [sqlalchemy.engine.Engine] SELECT rooms.id, rooms.name, rooms.description, rooms.category, rooms.created_by, rooms.status, rooms.created_at, rooms.updated_at 
+[14:12:11]   seed | FROM rooms 
+[14:12:11]   seed | WHERE rooms.id = $1::INTEGER
+[14:12:11]   seed | [sqlalchemy.engine.Engine] [generated in 0.00021s] (172,)
+[14:12:11]   seed | [sqlalchemy.engine.Engine] SELECT users.id, users.email, users.name, users.picture, users.home_base, users.food_preferences, users.food_preference_note, users.food_restrictions, users.liked_areas, users.disliked_areas, users.time_preference, users.transport_mode, users.is_ai_filled, users.google_access_token, users.google_refresh_token, users.calendar_consent, users.share_food_data, users.share_location_data, users.share_schedule_data, users.is_guest, users.created_at 
+[14:12:11]   seed | FROM users JOIN room_members ON room_members.user_id = users.id 
+[14:12:11]   seed | WHERE room_members.room_id = $1::INTEGER
+[14:12:11]   seed | [sqlalchemy.engine.Engine] [generated in 0.00020s] (172,)
+[14:12:11]   seed | [seed_demo_personal_data] Room 172 '동아리 종강 회식' — 4 members. dry_run=False
+[14:12:11]   seed | [seed_demo_personal_data]   [OK] 김창윤 (id=1): {'food_preferences': {'from': ['한식'], 'to': ['일식', '양식', '디저트']}, 'liked_areas': {'from': ['강남'], 'to': ['신촌', '홍대']}, 'home_base': {'from': '강남', 'to': '신촌'}}
+[14:12:11]   seed | [seed_demo_personal_data]   [OK] 수현 (id=466): {'food_preferences': {'from': None, 'to': ['한식']}, 'food_restrictions': {'from': None, 'to': ['채식']}, 'liked_areas': {'from': None, 'to': ['강남']}, 'disliked_areas': {'from': None, 'to': ['홍대']}, 'home_base': {'from': None, 'to': '강남'}, 'share_food_data': {'from': True, 'to': True}, 'share_location_data': {'from': True, 'to': True}, 'share_schedule_data': {'from': True, 'to': True}}
+[14:12:11]   seed | [seed_demo_personal_data]   [OK] 민수 (id=467): {'food_preferences': {'from': None, 'to': ['중식']}, 'transport_mode': {'from': None, 'to': '지하철'}, 'home_base': {'from': None, 'to': '강남'}, 'share_food_data': {'from': True, 'to': True}, 'share_location_data': {'from': True, 'to': True}, 'share_schedule_data': {'from': True, 'to': True}}
+[14:12:11]   seed | [seed_demo_personal_data]   [OK] 예린 (id=468): {'food_preferences': {'from': None, 'to': ['한식']}, 'home_base': {'from': None, 'to': '강남역'}, 'share_food_data': {'from': True, 'to': True}, 'share_location_data': {'from': True, 'to': True}, 'share_schedule_data': {'from': True, 'to': True}}
+[14:12:11]   seed | [sqlalchemy.engine.Engine] UPDATE users SET home_base=$1::VARCHAR, food_preferences=$2::JSON, liked_areas=$3::JSON WHERE users.id = $4::INTEGER
+[14:12:11]   seed | [sqlalchemy.engine.Engine] [generated in 0.00022s] ('신촌', '["\\uc77c\\uc2dd", "\\uc591\\uc2dd", "\\ub514\\uc800\\ud2b8"]', '["\\uc2e0\\ucd0c", "\\ud64d\\ub300"]', 1)
+[14:12:11]   seed | [sqlalchemy.engine.Engine] UPDATE users SET home_base=$1::VARCHAR, food_preferences=$2::JSON, food_restrictions=$3::JSON, liked_areas=$4::JSON, disliked_areas=$5::JSON, is_ai_filled=$6::JSON WHERE users.id = $7::INTEGER
+[14:12:11]   seed | [sqlalchemy.engine.Engine] [generated in 0.00025s] ('강남', '["\\ud55c\\uc2dd"]', '["\\ucc44\\uc2dd"]', '["\\uac15\\ub0a8"]', '["\\ud64d\\ub300"]', '{"food_preferences": true, "food_restrictions": true, "liked_areas": true, "disliked_areas": true, "home_base": true, "share_food_data": true, "share_location_data": true, "share_schedule_data": true}', 466)
+[14:12:11]   seed | [sqlalchemy.engine.Engine] UPDATE users SET home_base=$1::VARCHAR, food_preferences=$2::JSON, transport_mode=$3::VARCHAR, is_ai_filled=$4::JSON WHERE users.id = $5::INTEGER
+[14:12:11]   seed | [sqlalchemy.engine.Engine] [generated in 0.00020s] ('강남', '["\\uc911\\uc2dd"]', '지하철', '{"food_preferences": true, "transport_mode": true, "home_base": true, "share_food_data": true, "share_location_data": true, "share_schedule_data": true}', 467)
+[14:12:11]   seed | [sqlalchemy.engine.Engine] UPDATE users SET home_base=$1::VARCHAR, food_preferences=$2::JSON, is_ai_filled=$3::JSON WHERE users.id = $4::INTEGER
+[14:12:11]   seed | [sqlalchemy.engine.Engine] [generated in 0.00014s] ('강남역', '["\\ud55c\\uc2dd"]', '{"food_preferences": true, "home_base": true, "share_food_data": true, "share_location_data": true, "share_schedule_data": true}', 468)
+[14:12:11]   seed | [sqlalchemy.engine.Engine] COMMIT
+[14:12:11]   seed | [seed_demo_personal_data] Committed 4 user updates.
+
+================================================================
+  ACT 2 — 채팅 교착 → 자연어 거부 → 다음주 자동확장
+================================================================
+[14:12:14] [지민] '다들 시험 끝나고 한번 보자!'
+[14:12:16] [수현] '5월 13일 수요일은 동아리 MT라 안 돼'
+[14:12:19] [민수] '14일은 본가 내려가야 해서 패스'
+[14:12:22] [예린] '15일 금요일은 시험 보강 잡혀서 안 될 것 같아… 다음주 어때?'
+[14:12:22] trigger + LLM — 추천 카드 폴링 (최대 64s)...

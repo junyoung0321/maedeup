@@ -28,7 +28,7 @@ export default function ExplorePage() {
           <div className="w-full lg:flex-1">
             <AiRecommendCard />
           </div>
-          <div className="w-full lg:flex-1">
+          <div className="w-full lg:flex-1 flex">
             <UpcomingMeeting />
           </div>
         </div>

@@ -25,7 +25,9 @@ export default function CreateBasicInfo({
   return (
     <div
       style={{
-        width: 666,
+        flex: 1,
+        minWidth: 0,
+        maxWidth: 900,
         borderRadius: 20,
         border: "1px solid #e2e8f0",
         boxShadow: "0 4px 3.5px rgba(0,0,0,0.08)",
@@ -50,7 +52,7 @@ export default function CreateBasicInfo({
         <ClipboardList style={{ width: 20, height: 20, color: "#ffffff" }} />
         <span
           style={{
-            fontSize: 19,
+            fontSize: 29,
             fontWeight: 500,
             color: "#ffffff",
             letterSpacing: 0.5,
@@ -74,7 +76,7 @@ export default function CreateBasicInfo({
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <label
             style={{
-              fontSize: 14,
+              fontSize: 21,
               fontWeight: 600,
               color: "#111827",
             }}
@@ -91,7 +93,7 @@ export default function CreateBasicInfo({
               borderRadius: 12,
               border: "1px solid #e2e8f0",
               outline: "none",
-              fontSize: 14,
+              fontSize: 21,
               fontWeight: 400,
               color: "#1e293b",
               fontFamily: "Pretendard Variable, Pretendard, sans-serif",
@@ -104,7 +106,7 @@ export default function CreateBasicInfo({
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <label
             style={{
-              fontSize: 14,
+              fontSize: 21,
               fontWeight: 600,
               color: "#111827",
             }}
@@ -121,7 +123,7 @@ export default function CreateBasicInfo({
               borderRadius: 12,
               border: "1px solid #e2e8f0",
               outline: "none",
-              fontSize: 14,
+              fontSize: 21,
               fontWeight: 400,
               color: "#1e293b",
               fontFamily: "Pretendard Variable, Pretendard, sans-serif",
@@ -135,7 +137,7 @@ export default function CreateBasicInfo({
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <label
             style={{
-              fontSize: 14,
+              fontSize: 21,
               fontWeight: 600,
               color: "#111827",
             }}
@@ -155,7 +157,7 @@ export default function CreateBasicInfo({
                     border: isSelected ? "none" : "1px solid #e2e8f0",
                     background: isSelected ? "#4f46e5" : "#ffffff",
                     color: isSelected ? "#ffffff" : "#64748b",
-                    fontSize: 13,
+                    fontSize: 20,
                     fontWeight: 500,
                     cursor: "pointer",
                     fontFamily: "Pretendard Variable, Pretendard, sans-serif",
@@ -172,7 +174,7 @@ export default function CreateBasicInfo({
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <label
             style={{
-              fontSize: 14,
+              fontSize: 21,
               fontWeight: 600,
               color: "#111827",
             }}
@@ -194,7 +196,7 @@ export default function CreateBasicInfo({
             }}
           >
             <Camera style={{ width: 28, height: 28, color: "#94a3b8" }} />
-            <span style={{ fontSize: 13, fontWeight: 400, color: "#94a3b8" }}>
+            <span style={{ fontSize: 20, fontWeight: 400, color: "#94a3b8" }}>
               이미지 추가
             </span>
           </div>

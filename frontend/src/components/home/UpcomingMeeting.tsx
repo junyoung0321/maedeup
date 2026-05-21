@@ -81,8 +81,8 @@ export default function UpcomingMeeting() {
 
   if (loading) {
     return (
-      <div className="relative w-full max-w-full">
-        <div className="border border-[#e5e7eb] rounded-[24px] p-6 flex items-center justify-center shadow-sm" style={{ height: 320, background: "#f9fafb" }}>
+      <div className="relative w-full max-w-full h-full">
+        <div className="border border-[#e5e7eb] rounded-[24px] p-6 flex items-center justify-center shadow-sm h-full" style={{ minHeight: 416, background: "#f9fafb" }}>
           <span className="text-[#94a3b8] text-sm">불러오는 중...</span>
         </div>
       </div>
@@ -91,8 +91,8 @@ export default function UpcomingMeeting() {
 
   if (!meeting) {
     return (
-      <div className="relative w-full max-w-full">
-        <div className="border border-[#e5e7eb] rounded-[24px] p-6 flex flex-col items-center justify-center gap-3" style={{ height: 320, background: "linear-gradient(to bottom, #ffffff, #f5f3ff)" }}>
+      <div className="relative w-full max-w-full h-full">
+        <div className="border border-[#e5e7eb] rounded-[24px] p-6 flex flex-col items-center justify-center gap-3 h-full" style={{ minHeight: 416, background: "linear-gradient(to bottom, #ffffff, #f5f3ff)" }}>
           <span className="text-[22px] font-semibold text-[#94a3b8]">예정된 모임이 없어요</span>
           <button
             onClick={() => router.push("/meeting/new")}
@@ -113,7 +113,7 @@ export default function UpcomingMeeting() {
     <div className="relative w-full max-w-full">
       {/* Pink callout bubble */}
       <div
-        className="absolute -top-12 left-6 px-5 py-2.5 rounded-[20px] text-white text-[20px] font-semibold whitespace-nowrap z-10 animate-float"
+        className="absolute -top-6 left-6 px-5 py-2.5 rounded-[20px] text-white text-[20px] font-semibold whitespace-nowrap z-10 animate-float"
         style={{ backgroundColor: "#fa35a4" }}
       >
         가장 먼저 다가오는 모임이에요!
@@ -129,8 +129,8 @@ export default function UpcomingMeeting() {
 
       {/* Card */}
       <div
-        className="border border-[#e5e7eb] rounded-[24px] p-6 flex overflow-hidden shadow-[0_4px_3px_rgba(79,70,229,0.25)]"
-        style={{ height: 320, background: "linear-gradient(to bottom, #ffffff, #f5f3ff)" }}
+        className="border border-[#e5e7eb] rounded-[24px] p-6 flex overflow-hidden shadow-[0_4px_3px_rgba(79,70,229,0.25)] h-full"
+        style={{ minHeight: 416, background: "linear-gradient(to bottom, #ffffff, #f5f3ff)" }}
       >
         {/* Left info */}
         <div className="flex-1 flex flex-col justify-center pr-4">

@@ -222,7 +222,7 @@ export default function PersonalData() {
   return (
     <>
       <div
-        className="bg-white rounded-[20px] p-4 sm:p-5 flex flex-col h-full border border-[#e2e8f0] shadow-[0_4px_10.5px_rgba(0,0,0,0.08)] relative w-full max-w-full lg:max-w-[414px]"
+        className="bg-white rounded-[20px] p-4 sm:p-5 flex flex-col h-full border border-[#e2e8f0] shadow-[0_4px_10.5px_rgba(0,0,0,0.08)] relative w-full"
         style={{ minHeight: 490 }}
       >
         {/* Header */}

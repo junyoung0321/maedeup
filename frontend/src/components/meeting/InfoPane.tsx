@@ -386,10 +386,10 @@ export default function InfoPane() {
                       flexDirection: "column",
                       gap: 10,
                     }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: "#1e1b4b" }}>
+                      <div style={{ fontSize: 21, fontWeight: 700, color: "#1e1b4b" }}>
                         ✅ 모두 시간대를 골랐어요
                       </div>
-                      <div style={{ fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
+                      <div style={{ fontSize: 20, color: "#475569", lineHeight: 1.5 }}>
                         {scheduleConsensus.member_count}명 전원 합의가 모였습니다. 일정을 확정하면 AI가 장소까지 정리해드릴게요.
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -420,7 +420,7 @@ export default function InfoPane() {
                             border: "none",
                             background: "#4f46e5",
                             color: "#fff",
-                            fontSize: 14,
+                            fontSize: 21,
                             fontWeight: 700,
                             cursor: "pointer",
                             fontFamily: "Pretendard Variable, Pretendard, sans-serif",
@@ -437,7 +437,7 @@ export default function InfoPane() {
                             border: "1px solid #cbd5e1",
                             background: "#ffffff",
                             color: "#475569",
-                            fontSize: 14,
+                            fontSize: 21,
                             fontWeight: 700,
                             cursor: "pointer",
                             fontFamily: "Pretendard Variable, Pretendard, sans-serif",
@@ -456,7 +456,7 @@ export default function InfoPane() {
                     borderRadius: 14,
                     background: "#f1f5f9",
                     color: "#64748b",
-                    fontSize: 13,
+                    fontSize: 20,
                     fontWeight: 500,
                     textAlign: "center",
                   }}>

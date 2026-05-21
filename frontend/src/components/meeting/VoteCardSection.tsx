@@ -321,8 +321,8 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
               <CalendarDays style={{ width: 20, height: 20, color: "#4f46e5" }} />
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: "#4f46e5" }}>투표 카드</span>
-              <span style={{ fontSize: 17, fontWeight: 700, color: "#1e293b" }}>{voteCard.title}</span>
+              <span style={{ fontSize: 18, fontWeight: 600, color: "#4f46e5" }}>투표 카드</span>
+              <span style={{ fontSize: 26, fontWeight: 700, color: "#1e293b" }}>{voteCard.title}</span>
             </div>
           </div>
 
@@ -338,7 +338,7 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
             }}
           >
             <Users style={{ width: 16, height: 16, color: "#4f46e5" }} />
-            <span style={{ fontSize: 13, fontWeight: 500, color: "#1e293b" }}>
+            <span style={{ fontSize: 20, fontWeight: 500, color: "#1e293b" }}>
               총 {voteCard.headcount ?? "-"}명 기준
             </span>
           </div>
@@ -371,23 +371,23 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
                       color: "#1e293b",
                       cursor: "pointer",
                       fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                      fontSize: 14,
+                      fontSize: 21,
                       fontWeight: isSelected ? 600 : 500,
                       padding: 0,
                     }}
                   >
                     <span>{option.label}</span>
                     {option.is_holiday && (
-                      <span style={{ marginLeft: 6, padding: "2px 6px", borderRadius: 6, background: "#fef2f2", color: "#dc2626", fontSize: 11, fontWeight: 600 }}>
+                      <span style={{ marginLeft: 6, padding: "2px 6px", borderRadius: 6, background: "#fef2f2", color: "#dc2626", fontSize: 17, fontWeight: 600 }}>
                         {option.holiday_name || "공휴일"}
                       </span>
                     )}
                     {option.is_weekend && !option.is_holiday && (
-                      <span style={{ marginLeft: 6, padding: "2px 6px", borderRadius: 6, background: "#eff6ff", color: "#2563eb", fontSize: 11, fontWeight: 600 }}>
+                      <span style={{ marginLeft: 6, padding: "2px 6px", borderRadius: 6, background: "#eff6ff", color: "#2563eb", fontSize: 17, fontWeight: 600 }}>
                         주말
                       </span>
                     )}
-                    <span style={{ marginLeft: 6, color: "#94a3b8", fontSize: 12 }}>
+                    <span style={{ marginLeft: 6, color: "#94a3b8", fontSize: 18 }}>
                       ({optionVotes}표 / {totalVoters > 0 ? `${totalVoters}명` : "투표 중"})
                     </span>
                   </button>
@@ -400,7 +400,7 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
                       border: "none",
                       background: isVoteDisabled ? "#cbd5e1" : "#4f46e5",
                       color: "#ffffff",
-                      fontSize: 13,
+                      fontSize: 20,
                       fontWeight: 600,
                       cursor: isVoteDisabled ? "not-allowed" : "pointer",
                       alignSelf: "flex-start",
@@ -417,7 +417,7 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
           {/* Confirm / status */}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {isScheduleConfirmed ? (
-              <div style={{ padding: "10px 14px", borderRadius: 14, background: "#ecfdf5", border: "1px solid #86efac", color: "#166534", fontSize: 14, fontWeight: 700 }}>
+              <div style={{ padding: "10px 14px", borderRadius: 14, background: "#ecfdf5", border: "1px solid #86efac", color: "#166534", fontSize: 21, fontWeight: 700 }}>
                 ✓ 일정이 확정되었습니다
               </div>
             ) : votedOptionIndex !== null ? (
@@ -434,7 +434,7 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
                     color: "#ffffff",
                     cursor: selectedSlotId === null || isConfirmingSchedule ? "not-allowed" : "pointer",
                     fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                    fontSize: 14,
+                    fontSize: 21,
                     fontWeight: 700,
                   }}
                 >
@@ -448,7 +448,7 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
                     background: "#eef2ff",
                     border: "1px solid #c7d2fe",
                     color: "#4338ca",
-                    fontSize: 13,
+                    fontSize: 20,
                     fontWeight: 600,
                     textAlign: "center",
                   }}
@@ -457,12 +457,12 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
                 </div>
               )
             ) : (
-              <div style={{ padding: "8px 14px", borderRadius: 14, background: "#f1f5f9", color: "#64748b", fontSize: 13, fontWeight: 500, textAlign: "center" }}>
+              <div style={{ padding: "8px 14px", borderRadius: 14, background: "#f1f5f9", color: "#64748b", fontSize: 20, fontWeight: 500, textAlign: "center" }}>
                 투표 후 일정을 확정할 수 있어요
               </div>
             )}
-            {scheduleConfirmError && <span style={{ fontSize: 13, fontWeight: 500, color: "#dc2626" }}>{scheduleConfirmError}</span>}
-            {voteError && <span style={{ fontSize: 13, fontWeight: 500, color: "#dc2626" }}>{voteError}</span>}
+            {scheduleConfirmError && <span style={{ fontSize: 20, fontWeight: 500, color: "#dc2626" }}>{scheduleConfirmError}</span>}
+            {voteError && <span style={{ fontSize: 20, fontWeight: 500, color: "#dc2626" }}>{voteError}</span>}
           </div>
 
           {/* Host 확정 팝업 */}
@@ -499,14 +499,14 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <CalendarDays size={20} style={{ color: "#4f46e5" }} />
-                    <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#1e1b4b" }}>
+                    <h3 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: "#1e1b4b" }}>
                       이 일정으로 확정할까요?
                     </h3>
                   </div>
-                  <div style={{ padding: "12px 14px", background: "#f8fafc", borderRadius: 10, fontSize: 14, color: "#334155", fontWeight: 600 }}>
+                  <div style={{ padding: "12px 14px", background: "#f8fafc", borderRadius: 10, fontSize: 21, color: "#334155", fontWeight: 600 }}>
                     {selectedSlot?.label ?? "선택된 시간"}
                   </div>
-                  <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
+                  <p style={{ margin: 0, fontSize: 18, color: "#64748b", lineHeight: 1.5 }}>
                     확정하면 다른 멤버에게도 알림이 가고, 되돌리려면 따로 작업이 필요해요.
                   </p>
                   <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
@@ -520,7 +520,7 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
                         border: "1px solid #e2e8f0",
                         background: "#ffffff",
                         color: "#475569",
-                        fontSize: 13,
+                        fontSize: 20,
                         fontWeight: 600,
                         cursor: isConfirmingSchedule ? "not-allowed" : "pointer",
                         fontFamily: "inherit",
@@ -541,7 +541,7 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
                         border: "none",
                         background: isConfirmingSchedule ? "#a5b4fc" : "#4f46e5",
                         color: "#ffffff",
-                        fontSize: 13,
+                        fontSize: 20,
                         fontWeight: 700,
                         cursor: isConfirmingSchedule ? "not-allowed" : "pointer",
                         fontFamily: "inherit",
@@ -588,8 +588,8 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
               <MapPin style={{ width: 20, height: 20, color: "#4f46e5" }} />
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: "#4f46e5" }}>장소 추천</span>
-              <span style={{ fontSize: 17, fontWeight: 700, color: "#1e293b" }}>{placeRecommendation.place_hint} 추천 장소</span>
+              <span style={{ fontSize: 18, fontWeight: 600, color: "#4f46e5" }}>장소 추천</span>
+              <span style={{ fontSize: 26, fontWeight: 700, color: "#1e293b" }}>{placeRecommendation.place_hint} 추천 장소</span>
             </div>
             {placeCollapsed
               ? <ChevronDown style={{ width: 20, height: 20, color: "#94a3b8", flexShrink: 0 }} />
@@ -614,24 +614,24 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                    <span onClick={() => handlePlaceClick(place)} style={{ fontSize: 16, fontWeight: 700, color: "#1e293b", cursor: "pointer" }}>
+                    <span onClick={() => handlePlaceClick(place)} style={{ fontSize: 24, fontWeight: 700, color: "#1e293b", cursor: "pointer" }}>
                       {place.name}
                     </span>
-                    <span style={{ padding: "4px 10px", borderRadius: 999, background: "#eef2ff", color: "#4f46e5", fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
+                    <span style={{ padding: "4px 10px", borderRadius: 999, background: "#eef2ff", color: "#4f46e5", fontSize: 20, fontWeight: 700, flexShrink: 0 }}>
                       {Math.round(place.score * 100)}%
                     </span>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 13, fontWeight: 500, color: "#475569" }}>{place.category}</span>
+                    <span style={{ fontSize: 20, fontWeight: 500, color: "#475569" }}>{place.category}</span>
                     {typeof distanceMeters === "number" && distanceMeters > 0 && (
-                      <span style={{ fontSize: 12, color: "#94a3b8", fontWeight: 500 }}>
+                      <span style={{ fontSize: 18, color: "#94a3b8", fontWeight: 500 }}>
                         {distanceMeters >= 1000 ? `${(distanceMeters / 1000).toFixed(1)}km` : `${distanceMeters}m`}
                       </span>
                     )}
                   </div>
-                  <span style={{ fontSize: 13, lineHeight: 1.5, color: "#1e293b" }}>{place.address}</span>
+                  <span style={{ fontSize: 20, lineHeight: 1.5, color: "#1e293b" }}>{place.address}</span>
                   {isPlaceConfirmed && isSelected ? (
-                    <div style={{ padding: "8px 12px", borderRadius: 10, background: "#ecfdf5", border: "1px solid #86efac", color: "#166534", fontSize: 13, fontWeight: 700 }}>
+                    <div style={{ padding: "8px 12px", borderRadius: 10, background: "#ecfdf5", border: "1px solid #86efac", color: "#166534", fontSize: 20, fontWeight: 700 }}>
                       ✓ 장소가 확정되었습니다
                     </div>
                   ) : !isPlaceConfirmed && confirmedMeetingId ? (
@@ -645,7 +645,7 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
                           border: "none",
                           background: isConfirmingPlace && isSelected ? "#cbd5e1" : "#4f46e5",
                           color: "#ffffff",
-                          fontSize: 13,
+                          fontSize: 20,
                           fontWeight: 600,
                           cursor: isConfirmingPlace ? "not-allowed" : "pointer",
                           alignSelf: "flex-start",
@@ -655,12 +655,12 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
                         {isConfirmingPlace && isSelected ? "확정 중..." : "이 장소로 확정"}
                       </button>
                     ) : (
-                      <span style={{ fontSize: 12, color: "#6366f1", fontWeight: 600, alignSelf: "flex-start" }}>
+                      <span style={{ fontSize: 18, color: "#6366f1", fontWeight: 600, alignSelf: "flex-start" }}>
                         ⏳ 방장이 확정하기를 기다리는 중이에요
                       </span>
                     )
                   ) : !isPlaceConfirmed && !confirmedMeetingId ? (
-                    <span style={{ fontSize: 12, color: "#94a3b8", fontStyle: "italic" }}>
+                    <span style={{ fontSize: 18, color: "#94a3b8", fontStyle: "italic" }}>
                       일정을 먼저 확정하면 장소를 선택할 수 있어요
                     </span>
                   ) : null}
@@ -668,7 +668,7 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
               );
             })}
           </div>
-          {placeConfirmError && <span style={{ fontSize: 13, fontWeight: 500, color: "#dc2626" }}>{placeConfirmError}</span>}
+          {placeConfirmError && <span style={{ fontSize: 20, fontWeight: 500, color: "#dc2626" }}>{placeConfirmError}</span>}
           </>)}
 
           {/* Host 장소 확정 팝업 */}
@@ -705,19 +705,19 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <MapPin size={20} style={{ color: "#4f46e5" }} />
-                    <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#1e1b4b" }}>
+                    <h3 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: "#1e1b4b" }}>
                       이 장소로 확정할까요?
                     </h3>
                   </div>
                   <div style={{ padding: "12px 14px", background: "#f8fafc", borderRadius: 10, display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span style={{ fontSize: 14, color: "#1e293b", fontWeight: 700 }}>
+                    <span style={{ fontSize: 21, color: "#1e293b", fontWeight: 700 }}>
                       {pendingPlace?.name ?? "선택된 장소"}
                     </span>
                     {pendingPlace?.address && (
-                      <span style={{ fontSize: 12, color: "#64748b" }}>{pendingPlace.address}</span>
+                      <span style={{ fontSize: 18, color: "#64748b" }}>{pendingPlace.address}</span>
                     )}
                   </div>
-                  <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
+                  <p style={{ margin: 0, fontSize: 18, color: "#64748b", lineHeight: 1.5 }}>
                     확정하면 다른 멤버에게도 알림이 가고, 되돌리려면 따로 작업이 필요해요.
                   </p>
                   <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
@@ -731,7 +731,7 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
                         border: "1px solid #e2e8f0",
                         background: "#ffffff",
                         color: "#475569",
-                        fontSize: 13,
+                        fontSize: 20,
                         fontWeight: 600,
                         cursor: isConfirmingPlace ? "not-allowed" : "pointer",
                         fontFamily: "inherit",
@@ -754,7 +754,7 @@ export default function VoteCardSection({ mode = "all" }: VoteCardSectionProps) 
                         border: "none",
                         background: isConfirmingPlace ? "#a5b4fc" : "#4f46e5",
                         color: "#ffffff",
-                        fontSize: 13,
+                        fontSize: 20,
                         fontWeight: 700,
                         cursor: isConfirmingPlace ? "not-allowed" : "pointer",
                         fontFamily: "inherit",

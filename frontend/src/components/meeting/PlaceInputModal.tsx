@@ -99,10 +99,10 @@ export default function PlaceInputModal({
             <MapPin size={20} color="#4f46e5" />
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
-            <span id="place-input-title" style={{ fontSize: 17, fontWeight: 800, color: "#1e293b" }}>
+            <span id="place-input-title" style={{ fontSize: 26, fontWeight: 800, color: "#1e293b" }}>
               장소 입력
             </span>
-            <span style={{ fontSize: 13, fontWeight: 500, color: "#64748b" }}>
+            <span style={{ fontSize: 20, fontWeight: 500, color: "#64748b" }}>
               확정된 모임 카드에 표시할 장소를 적어주세요.
             </span>
           </div>
@@ -154,7 +154,7 @@ export default function PlaceInputModal({
             borderRadius: 12,
             border: `1.5px solid ${error ? "#fca5a5" : "#cbd5e1"}`,
             outline: "none",
-            fontSize: 15,
+            fontSize: 23,
             fontWeight: 500,
             color: "#1e293b",
             background: "#ffffff",
@@ -163,7 +163,7 @@ export default function PlaceInputModal({
         />
 
         {error && (
-          <span style={{ minHeight: 18, fontSize: 13, fontWeight: 600, color: "#dc2626" }}>
+          <span style={{ minHeight: 18, fontSize: 20, fontWeight: 600, color: "#dc2626" }}>
             {error}
           </span>
         )}
@@ -180,7 +180,7 @@ export default function PlaceInputModal({
               border: "1px solid #cbd5e1",
               background: "#ffffff",
               color: "#475569",
-              fontSize: 14,
+              fontSize: 21,
               fontWeight: 700,
               cursor: isSubmitting ? "not-allowed" : "pointer",
             }}
@@ -198,7 +198,7 @@ export default function PlaceInputModal({
               border: "none",
               background: isSubmitting ? "#cbd5e1" : "#4f46e5",
               color: "#ffffff",
-              fontSize: 14,
+              fontSize: 21,
               fontWeight: 800,
               cursor: isSubmitting ? "not-allowed" : "pointer",
               transform: "translateZ(0)",

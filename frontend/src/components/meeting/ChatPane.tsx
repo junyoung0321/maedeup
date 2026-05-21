@@ -251,7 +251,7 @@ export default function ChatPane() {
                     alignItems: "center",
                     justifyContent: "center",
                     color: "#fff",
-                    fontSize: 12,
+                    fontSize: 18,
                     fontWeight: 300,
                     flexShrink: 0,
                   }}

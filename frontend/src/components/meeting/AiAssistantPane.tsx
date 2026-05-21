@@ -360,7 +360,7 @@ export default function AiAssistantPane() {
             padding: "8px 16px",
             background: status === "connecting" ? "#fef3c7" : "#fee2e2",
             color: status === "connecting" ? "#92400e" : "#991b1b",
-            fontSize: 13,
+            fontSize: 20,
             fontWeight: 500,
           }}
         >
@@ -386,7 +386,7 @@ export default function AiAssistantPane() {
             padding: "8px 16px",
             background: "linear-gradient(135deg, #4f46e5, #0891b2)",
             color: "#fff",
-            fontSize: 13,
+            fontSize: 20,
             fontWeight: 500,
             animation: "fadeIn 0.3s ease-in",
           }}
@@ -401,7 +401,7 @@ export default function AiAssistantPane() {
               color: "#fff",
               cursor: "pointer",
               padding: 0,
-              fontSize: 14,
+              fontSize: 21,
               lineHeight: 1,
             }}
           >
@@ -627,7 +627,7 @@ export default function AiAssistantPane() {
                     참석 인원 {maedeupCard.headcount ?? "-"}명
                   </span>
                   {timeLabel && (
-                    <span style={{ fontSize: 15, lineHeight: 1.5 }}>
+                    <span style={{ fontSize: 23, lineHeight: 1.5 }}>
                       시간 {timeLabel}
                     </span>
                   )}
@@ -722,7 +722,7 @@ export default function AiAssistantPane() {
                     alignItems: "center",
                     justifyContent: "center",
                     color: "#fff",
-                    fontSize: 12,
+                    fontSize: 18,
                     fontWeight: 300,
                     flexShrink: 0,
                   }}
@@ -873,7 +873,7 @@ export default function AiAssistantPane() {
               padding: "8px 14px",
               background: "#fef3c7",
               borderRadius: 12,
-              fontSize: 13,
+              fontSize: 20,
               color: "#92400e",
               fontWeight: 500,
             }}
@@ -901,7 +901,7 @@ export default function AiAssistantPane() {
                 alignItems: "center",
                 justifyContent: "center",
                 color: "#fff",
-                fontSize: 12,
+                fontSize: 18,
                 fontWeight: 300,
                 flexShrink: 0,
               }}
@@ -960,7 +960,7 @@ export default function AiAssistantPane() {
               />
             </div>
             {aiTimeoutMessage && (
-              <span style={{ fontSize: 12, color: "#92400e", marginLeft: 40 }}>
+              <span style={{ fontSize: 18, color: "#92400e", marginLeft: 40 }}>
                 {aiTimeoutMessage}
               </span>
             )}

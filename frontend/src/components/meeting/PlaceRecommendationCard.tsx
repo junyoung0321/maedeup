@@ -195,8 +195,8 @@ export default function PlaceRecommendationCard({
           <MapPin style={{ width: 20, height: 20, color: "#4f46e5" }} />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: "#4f46e5" }}>장소 추천</span>
-          <span style={{ fontSize: 17, fontWeight: 700, color: "#1e293b" }}>{placeRecommendation.place_hint} 추천 장소</span>
+          <span style={{ fontSize: 18, fontWeight: 600, color: "#4f46e5" }}>장소 추천</span>
+          <span style={{ fontSize: 26, fontWeight: 700, color: "#1e293b" }}>{placeRecommendation.place_hint} 추천 장소</span>
         </div>
       </div>
 
@@ -225,7 +225,7 @@ export default function PlaceRecommendationCard({
                     padding: "5px 12px", borderRadius: 8, border: "none",
                     background: active ? "#4f46e5" : "transparent",
                     color: active ? "#ffffff" : "#4338ca",
-                    fontSize: 12, fontWeight: 600,
+                    fontSize: 18, fontWeight: 600,
                     cursor: active || isRefreshingPreference ? "default" : "pointer",
                     opacity: isRefreshingPreference && !active ? 0.5 : 1,
                     fontFamily: "Pretendard Variable, Pretendard, sans-serif",
@@ -237,13 +237,13 @@ export default function PlaceRecommendationCard({
               );
             })}
             {isRefreshingPreference && (
-              <span style={{ fontSize: 11, color: "#4338ca", marginLeft: 4 }}>
+              <span style={{ fontSize: 17, color: "#4338ca", marginLeft: 4 }}>
                 갱신 중...
               </span>
             )}
           </div>
           {preferenceRefreshError && (
-            <span style={{ fontSize: 12, color: "#dc2626", fontWeight: 500 }}>
+            <span style={{ fontSize: 18, color: "#dc2626", fontWeight: 500 }}>
               {preferenceRefreshError}
             </span>
           )}
@@ -258,7 +258,7 @@ export default function PlaceRecommendationCard({
           borderRadius: 12,
           background: "#eef2ff",
           border: "1px solid #c7d2fe",
-          fontSize: 13,
+          fontSize: 20,
           fontWeight: 500,
           lineHeight: 1.5,
           color: "#4338ca",
@@ -284,24 +284,24 @@ export default function PlaceRecommendationCard({
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                <span onClick={() => handlePlaceClick(place)} style={{ fontSize: 16, fontWeight: 700, color: "#1e293b", cursor: "pointer" }}>
+                <span onClick={() => handlePlaceClick(place)} style={{ fontSize: 24, fontWeight: 700, color: "#1e293b", cursor: "pointer" }}>
                   {place.name}
                 </span>
-                <span style={{ padding: "4px 10px", borderRadius: 999, background: "#eef2ff", color: "#4f46e5", fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
+                <span style={{ padding: "4px 10px", borderRadius: 999, background: "#eef2ff", color: "#4f46e5", fontSize: 20, fontWeight: 700, flexShrink: 0 }}>
                   {Math.round(place.score * 100)}%
                 </span>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 500, color: "#475569" }}>{place.category}</span>
+                <span style={{ fontSize: 20, fontWeight: 500, color: "#475569" }}>{place.category}</span>
                 {typeof distanceMeters === "number" && distanceMeters > 0 && (
-                  <span style={{ fontSize: 12, color: "#94a3b8", fontWeight: 500 }}>
+                  <span style={{ fontSize: 18, color: "#94a3b8", fontWeight: 500 }}>
                     {distanceMeters >= 1000 ? `${(distanceMeters / 1000).toFixed(1)}km` : `${distanceMeters}m`}
                   </span>
                 )}
               </div>
-              <span style={{ fontSize: 13, lineHeight: 1.5, color: "#1e293b" }}>{place.address}</span>
+              <span style={{ fontSize: 20, lineHeight: 1.5, color: "#1e293b" }}>{place.address}</span>
               {isPlaceConfirmed && isSelected ? (
-                <div style={{ padding: "8px 12px", borderRadius: 10, background: "#ecfdf5", border: "1px solid #86efac", color: "#166534", fontSize: 13, fontWeight: 700 }}>
+                <div style={{ padding: "8px 12px", borderRadius: 10, background: "#ecfdf5", border: "1px solid #86efac", color: "#166534", fontSize: 20, fontWeight: 700 }}>
                   ✓ 장소가 확정되었습니다
                 </div>
               ) : meetingId ? (
@@ -314,7 +314,7 @@ export default function PlaceRecommendationCard({
                     border: "none",
                     background: isConfirmingPlace && isSelected ? "#cbd5e1" : "#4f46e5",
                     color: "#ffffff",
-                    fontSize: 13,
+                    fontSize: 20,
                     fontWeight: 600,
                     cursor: isConfirmingPlace ? "not-allowed" : "pointer",
                     alignSelf: "flex-start",
@@ -324,7 +324,7 @@ export default function PlaceRecommendationCard({
                   {isConfirmingPlace && isSelected ? "확정 중..." : "이 장소로 확정"}
                 </button>
               ) : (
-                <span style={{ fontSize: 12, color: "#94a3b8", fontStyle: "italic" }}>
+                <span style={{ fontSize: 18, color: "#94a3b8", fontStyle: "italic" }}>
                   일정을 먼저 확정하면 장소를 선택할 수 있어요
                 </span>
               )}
@@ -332,7 +332,7 @@ export default function PlaceRecommendationCard({
           );
         })}
       </div>
-      {placeConfirmError && <span style={{ fontSize: 13, fontWeight: 500, color: "#dc2626" }}>{placeConfirmError}</span>}
+      {placeConfirmError && <span style={{ fontSize: 20, fontWeight: 500, color: "#dc2626" }}>{placeConfirmError}</span>}
     </div>
   );
 }

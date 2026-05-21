@@ -397,10 +397,10 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
         textAlign: "center",
         fontFamily: "Pretendard Variable, Pretendard, sans-serif",
       }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: "#4f46e5", marginBottom: 8 }}>
+        <div style={{ fontSize: 21, fontWeight: 600, color: "#4f46e5", marginBottom: 8 }}>
           가용성 조회 중...
         </div>
-        <div style={{ fontSize: 13, color: "#64748b" }}>
+        <div style={{ fontSize: 20, color: "#64748b" }}>
           멤버 일정을 확인하고 있어요
         </div>
       </div>
@@ -416,10 +416,10 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
         border: "1px solid #fecaca",
         fontFamily: "Pretendard Variable, Pretendard, sans-serif",
       }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: "#dc2626", marginBottom: 4 }}>
+        <div style={{ fontSize: 21, fontWeight: 600, color: "#dc2626", marginBottom: 4 }}>
           가용성 조회 실패
         </div>
-        <div style={{ fontSize: 13, color: "#7f1d1d" }}>{error}</div>
+        <div style={{ fontSize: 20, color: "#7f1d1d" }}>{error}</div>
       </div>
     );
   }
@@ -451,8 +451,8 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
           <Clock style={{ width: 18, height: 18, color: "#4f46e5" }} />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: "#4f46e5" }}>시간 선택</span>
-          <span style={{ fontSize: 15, fontWeight: 700, color: "#1e293b" }}>{dateLabel}</span>
+          <span style={{ fontSize: 18, fontWeight: 600, color: "#4f46e5" }}>시간 선택</span>
+          <span style={{ fontSize: 23, fontWeight: 700, color: "#1e293b" }}>{dateLabel}</span>
         </div>
       </div>
 
@@ -473,7 +473,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
                 key={i}
                 style={{
                   width: CELL_WIDTH * 2,
-                  fontSize: 10,
+                  fontSize: 15,
                   fontWeight: 500,
                   color: "#94a3b8",
                   textAlign: "left",
@@ -491,7 +491,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
               role="rowheader"
               style={{
                 width: NAME_WIDTH,
-                fontSize: 11,
+                fontSize: 17,
                 fontWeight: 600,
                 color: "#4f46e5",
                 overflow: "hidden",
@@ -548,7 +548,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
               role="rowheader"
               style={{
                 width: NAME_WIDTH,
-                fontSize: 11,
+                fontSize: 17,
                 fontWeight: 500,
                 color: "#0369a1",
                 flexShrink: 0,
@@ -594,7 +594,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
               role="rowheader"
               style={{
                 width: NAME_WIDTH,
-                fontSize: 11,
+                fontSize: 17,
                 fontWeight: 700,
                 color: "#1e293b",
                 flexShrink: 0,
@@ -650,7 +650,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
       </div>
 
       {/* Legend */}
-      <div style={{ display: "flex", gap: 10, fontSize: 11, color: "#64748b", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 10, fontSize: 17, color: "#64748b", flexWrap: "wrap" }}>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ width: 12, height: 12, borderRadius: 3, background: COLOR_MY_PICK, display: "inline-block" }} /> 내 선택
         </span>
@@ -677,7 +677,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
           borderRadius: 10,
           background: "#eff6ff",
           border: "1px solid #bfdbfe",
-          fontSize: 13,
+          fontSize: 20,
           fontWeight: 500,
           color: "#1d4ed8",
         }}>
@@ -692,7 +692,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
           borderRadius: 10,
           background: "#eef2ff",
           border: "1px solid #c7d2fe",
-          fontSize: 13,
+          fontSize: 20,
           fontWeight: 600,
           color: "#4f46e5",
         }}>
@@ -702,7 +702,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
 
       {/* Help text */}
       {selectionStart === null && (
-        <div style={{ fontSize: 12, color: "#94a3b8", textAlign: "center" }}>
+        <div style={{ fontSize: 18, color: "#94a3b8", textAlign: "center" }}>
           시작 시간을 클릭한 후 끝 시간을 클릭하세요
         </div>
       )}
@@ -713,7 +713,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
           <div style={{
             padding: "10px 12px", borderRadius: 10,
             background: "#eef2ff", border: "1px solid #c7d2fe",
-            fontSize: 13, fontWeight: 600, color: "#4338ca",
+            fontSize: 20, fontWeight: 600, color: "#4338ca",
             fontFamily: "Pretendard Variable, Pretendard, sans-serif",
           }}>
             ✅ 모두 시간대를 골랐어요 — 위 그래프 확인 후 확정해주세요
@@ -733,7 +733,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
               width: "100%",
               padding: "11px 14px", borderRadius: 10, border: "none",
               background: isConfirming || hostFinalizeClicked ? "#cbd5e1" : "#4f46e5",
-              color: "#fff", fontSize: 14, fontWeight: 700,
+              color: "#fff", fontSize: 21, fontWeight: 700,
               cursor: isConfirming || hostFinalizeClicked ? "not-allowed" : "pointer",
               fontFamily: "Pretendard Variable, Pretendard, sans-serif",
             }}
@@ -748,7 +748,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
         <div style={{
           padding: "10px 12px", borderRadius: 10,
           background: "#f1f5f9", color: "#64748b",
-          fontSize: 13, fontWeight: 500, textAlign: "center", marginTop: 8,
+          fontSize: 20, fontWeight: 500, textAlign: "center", marginTop: 8,
           fontFamily: "Pretendard Variable, Pretendard, sans-serif",
         }}>
           ⏳ 방장 확정 대기 중 — 시간은 자유롭게 변경 가능합니다
@@ -766,7 +766,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
             background: "#ecfdf5",
             border: "1px solid #86efac",
             color: "#166534",
-            fontSize: 13,
+            fontSize: 20,
             fontWeight: 700,
             textAlign: "center",
             fontFamily: "Pretendard Variable, Pretendard, sans-serif",
@@ -786,7 +786,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
               color: "#ffffff",
               cursor: selectionStart === null || selectionEnd === null || isConfirming ? "not-allowed" : "pointer",
               fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-              fontSize: 14,
+              fontSize: 21,
               fontWeight: 700,
             }}
           >

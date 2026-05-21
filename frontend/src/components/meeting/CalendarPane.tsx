@@ -511,7 +511,7 @@ export default function CalendarPane() {
                     {peersForDay.length > 3 && (
                       <span
                         style={{
-                          fontSize: 8,
+                          fontSize: 12,
                           color: "#64748b",
                           lineHeight: 1,
                         }}
@@ -558,7 +558,7 @@ export default function CalendarPane() {
               gap: 4,
             }}
           >
-            <span style={{ fontSize: 11, fontWeight: 700, color: "#854d0e" }}>
+            <span style={{ fontSize: 17, fontWeight: 700, color: "#854d0e" }}>
               다른 참여자 선택
             </span>
             {Object.entries(peerDateSelections)
@@ -578,7 +578,7 @@ export default function CalendarPane() {
                         flexShrink: 0,
                       }}
                     />
-                    <span style={{ fontSize: 12, color: "#475569" }}>
+                    <span style={{ fontSize: 18, color: "#475569" }}>
                       {s.name}님이 {Number(pm)}월 {Number(pd)}일 선택 중
                     </span>
                   </div>
@@ -600,7 +600,7 @@ export default function CalendarPane() {
           >
             <span
               style={{
-                fontSize: 12,
+                fontSize: 18,
                 fontWeight: 600,
                 color: "#1e293b",
                 display: "block",
@@ -612,32 +612,32 @@ export default function CalendarPane() {
             </span>
             {(availabilityData[clickedDay]?.available ?? []).length > 0 && (
               <div style={{ display: "flex", gap: 4, marginBottom: 3, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 11, color: "#94a3b8" }}>✅</span>
-                <span style={{ fontSize: 11, color: "#16a34a", fontFamily: "Inter, sans-serif" }}>
+                <span style={{ fontSize: 17, color: "#94a3b8" }}>✅</span>
+                <span style={{ fontSize: 17, color: "#16a34a", fontFamily: "Inter, sans-serif" }}>
                   {availabilityData[clickedDay]!.available!.join(", ")}
                 </span>
               </div>
             )}
             {(availabilityData[clickedDay]?.busy ?? []).length > 0 && (
               <div style={{ display: "flex", gap: 4, marginBottom: 3, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 11, color: "#94a3b8" }}>❌</span>
-                <span style={{ fontSize: 11, color: "#ef4444", fontFamily: "Inter, sans-serif" }}>
+                <span style={{ fontSize: 17, color: "#94a3b8" }}>❌</span>
+                <span style={{ fontSize: 17, color: "#ef4444", fontFamily: "Inter, sans-serif" }}>
                   {availabilityData[clickedDay]!.busy!.join(", ")}
                 </span>
               </div>
             )}
             {(availabilityData[clickedDay]?.unconnected ?? []).length > 0 && (
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 11, color: "#94a3b8" }}>🔗</span>
-                <span style={{ fontSize: 11, color: "#94a3b8", fontFamily: "Inter, sans-serif" }}>
+                <span style={{ fontSize: 17, color: "#94a3b8" }}>🔗</span>
+                <span style={{ fontSize: 17, color: "#94a3b8", fontFamily: "Inter, sans-serif" }}>
                   {availabilityData[clickedDay]!.unconnected!.join(", ")}
                 </span>
               </div>
             )}
             {(availabilityData[clickedDay]?.blocked ?? []).length > 0 && (
               <div style={{ display: "flex", gap: 4, marginTop: 3, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 11, color: "#ef4444" }}>🚫</span>
-                <span style={{ fontSize: 11, color: "#ef4444", fontFamily: "Inter, sans-serif" }}>
+                <span style={{ fontSize: 17, color: "#ef4444" }}>🚫</span>
+                <span style={{ fontSize: 17, color: "#ef4444", fontFamily: "Inter, sans-serif" }}>
                   {availabilityData[clickedDay]!.blocked!.join(", ")} 불가능 표시
                 </span>
               </div>
@@ -645,13 +645,13 @@ export default function CalendarPane() {
             {(availabilityData[clickedDay]?.available ?? []).length === 0 &&
               (availabilityData[clickedDay]?.busy ?? []).length === 0 &&
               (availabilityData[clickedDay]?.unconnected ?? []).length === 0 && (
-              <span style={{ fontSize: 11, color: "#94a3b8", fontFamily: "Inter, sans-serif" }}>
+              <span style={{ fontSize: 17, color: "#94a3b8", fontFamily: "Inter, sans-serif" }}>
                 멤버 정보 없음
               </span>
             )}
             {/* 가용 인원 요약 */}
             {availabilityData[clickedDay] && (
-              <div style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: "#475569" }}>
+              <div style={{ marginTop: 6, fontSize: 18, fontWeight: 600, color: "#475569" }}>
                 가능 인원: {availabilityData[clickedDay]!.available?.length ?? 0}/{availabilityData[clickedDay]!.total ?? 0}명
               </div>
             )}
@@ -671,7 +671,7 @@ export default function CalendarPane() {
                       borderRadius: 6,
                       background: "#dbeafe",
                       color: "#1d4ed8",
-                      fontSize: 11,
+                      fontSize: 17,
                       fontWeight: 600,
                       marginTop: 6,
                     }}>
@@ -688,7 +688,7 @@ export default function CalendarPane() {
                         background: "#fef2f2",
                         border: "1px solid #fecaca",
                         color: "#991b1b",
-                        fontSize: 11,
+                        fontSize: 17,
                         fontWeight: 500,
                       }}
                     >
@@ -705,7 +705,7 @@ export default function CalendarPane() {
                         background: "#fff7ed",
                         border: "1px solid #fed7aa",
                         color: "#9a3412",
-                        fontSize: 11,
+                        fontSize: 17,
                         fontWeight: 500,
                       }}
                     >
@@ -753,7 +753,7 @@ export default function CalendarPane() {
                     color: "#ffffff",
                     cursor: "pointer",
                     fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                    fontSize: 13,
+                    fontSize: 20,
                     fontWeight: 700,
                   }}
                 >
@@ -773,7 +773,7 @@ export default function CalendarPane() {
               alignItems: "center",
               justifyContent: "center",
               color: "#94a3b8",
-              fontSize: 13,
+              fontSize: 20,
             }}
           >
             불러오는 중...
@@ -787,7 +787,7 @@ export default function CalendarPane() {
               alignItems: "center",
               justifyContent: "center",
               color: "#94a3b8",
-              fontSize: 13,
+              fontSize: 20,
             }}
           >
             캘린더 연동 멤버가 없어요. 날짜를 선택해서 일정을 잡아보세요.

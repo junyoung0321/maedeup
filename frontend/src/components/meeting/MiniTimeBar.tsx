@@ -102,7 +102,7 @@ export default function MiniTimeBar({ date, roomId, aiSlots }: Props) {
 
   if (loading) {
     return (
-      <div style={{ marginTop: 8, fontSize: 11, color: "#94a3b8", textAlign: "center" }}>
+      <div style={{ marginTop: 8, fontSize: 17, color: "#94a3b8", textAlign: "center" }}>
         시간대 조회 중...
       </div>
     );
@@ -136,7 +136,7 @@ export default function MiniTimeBar({ date, roomId, aiSlots }: Props) {
         {Array.from({ length: BAR_END - BAR_START }, (_, i) => (
           <div key={i} style={{
             width: `${100 / (BAR_END - BAR_START)}%`,
-            fontSize: 8,
+            fontSize: 12,
             color: "#94a3b8",
             textAlign: "left",
             fontFamily: "Inter, sans-serif",
@@ -175,7 +175,7 @@ export default function MiniTimeBar({ date, roomId, aiSlots }: Props) {
         })}
       </div>
       {/* Legend */}
-      <div style={{ display: "flex", gap: 8, marginTop: 4, fontSize: 9, color: "#64748b" }}>
+      <div style={{ display: "flex", gap: 8, marginTop: 4, fontSize: 14, color: "#64748b" }}>
         <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
           <span style={{ width: 8, height: 8, borderRadius: 2, background: "#22c55e", display: "inline-block" }} /> 전원
         </span>
@@ -195,7 +195,7 @@ export default function MiniTimeBar({ date, roomId, aiSlots }: Props) {
         )}
       </div>
       {/* Summary — F-7: TimeBarSelector aiRecommendedTimeRange 우선, 없으면 자체 계산 fallback */}
-      <div style={{ marginTop: 3, fontSize: 11, color: "#475569" }}>
+      <div style={{ marginTop: 3, fontSize: 17, color: "#475569" }}>
         {aiRecommendedRange && aiRecommendedRange.date === date ? (
           <span>
             AI 추천: <span style={{ fontWeight: 600, color: "#166534" }}>

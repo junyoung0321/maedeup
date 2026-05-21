@@ -41,7 +41,7 @@ async def main() -> None:
                 "--no-first-run",
                 "--no-default-browser-check",
             ],
-            viewport={"width": 1440, "height": 900},
+            no_viewport=True,
         )
         page = browser.pages[0] if browser.pages else await browser.new_page()
 

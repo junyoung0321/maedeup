@@ -25,6 +25,12 @@ import time
 from datetime import datetime, timedelta
 from typing import Any
 
+# Fix 14 (2026-05-14): 사람 명사 패턴 — headcount 최소 2명 추정용.
+_PEOPLE_NOUN_RE = re.compile(
+    r"친구들|친구|사람들|사람|멤버|동료|동기|선배|후배|"
+    r"우리|저희|모두|다같이|같이|함께|일행"
+)
+
 from app.observability.snapshot import dump
 from app.services import scheduling_round as sr
 from app.services.pipeline.constants import KST

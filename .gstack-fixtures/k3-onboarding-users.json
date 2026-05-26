@@ -1,0 +1,65 @@
+[
+  {
+    "id": "k3-onb-001",
+    "name": "테스트유저1",
+    "email": "test-onb-001@maedeup.local",
+    "scenario": "guest-join → 채팅 1건",
+    "_note": "email 필드는 기록용. 실제 Google OAuth 시뮬 불가 — guest-join 신규 참여자 흐름으로 대체.",
+    "actions": [
+      {"type": "guest_join", "room_id_target": "host_room_1"},
+      {"type": "first_chat", "content": "안녕하세요 모임 좋아요"}
+    ],
+    "expected": {"blocks_count": 0}
+  },
+  {
+    "id": "k3-onb-002",
+    "name": "테스트유저2",
+    "email": "test-onb-002@maedeup.local",
+    "scenario": "guest-join → busy_period 표현 → 트리거 확인",
+    "_note": "email 필드는 기록용. 실제 Google OAuth 시뮬 불가 — guest-join 신규 참여자 흐름으로 대체.",
+    "actions": [
+      {"type": "guest_join", "room_id_target": "host_room_2"},
+      {"type": "first_chat", "content": "저는 다음주 화요일이 안 돼요"},
+      {"type": "wait_trigger", "timeout_s": 5}
+    ],
+    "expected": {"blocks_count": 0, "trigger_observed": true}
+  },
+  {
+    "id": "k3-onb-003",
+    "name": "테스트유저3",
+    "email": "test-onb-003@maedeup.local",
+    "scenario": "잘못된 room_id 로 guest-join 시도 (404 처리 확인)",
+    "_note": "email 필드는 기록용. invalid_room_id placeholder → runner 가 999999 으로 치환.",
+    "actions": [
+      {"type": "guest_join", "room_id_target": "invalid_room_id", "expected_status": 404}
+    ],
+    "expected": {"blocks_count": 0, "graceful_error": true}
+  },
+  {
+    "id": "k3-onb-004",
+    "name": "테스트유저4",
+    "email": "test-onb-004@maedeup.local",
+    "scenario": "guest-join → 동시 다중 채팅 3건 → 트리거 확인",
+    "_note": "email 필드는 기록용. 실제 Google OAuth 시뮬 불가 — guest-join 신규 참여자 흐름으로 대체.",
+    "actions": [
+      {"type": "guest_join", "room_id_target": "host_room_3"},
+      {"type": "first_chat", "content": "음 그날 좀 그래요"},
+      {"type": "first_chat", "content": "저는 수요일이 좋아요"},
+      {"type": "first_chat", "content": "다른 날은 어떠세요"},
+      {"type": "wait_trigger", "timeout_s": 5}
+    ],
+    "expected": {"blocks_count": 0, "trigger_observed": true}
+  },
+  {
+    "id": "k3-onb-005",
+    "name": "테스트유저5",
+    "email": "test-onb-005@maedeup.local",
+    "scenario": "guest-join → 즉시 leave (가입 → 이탈 흐름)",
+    "_note": "email 필드는 기록용. leave_room = DELETE /api/v1/rooms/{room_id}/leave 시도. 404/405 시 graceful.",
+    "actions": [
+      {"type": "guest_join", "room_id_target": "host_room_4"},
+      {"type": "leave_room"}
+    ],
+    "expected": {"blocks_count": 0}
+  }
+]

@@ -80,6 +80,32 @@ _check_demo_date()
 import websockets
 from playwright.async_api import Page, async_playwright
 
+# ─── K1 timing wrapper (Phase 1, spec 2026-05-27) ───────────────────────────
+_k1_marks: dict[str, float] = {}
+_k1_durations: list[tuple[str, float]] = []  # [(act_label, sec), ...]
+
+def _k1_mark(label: str) -> None:
+    """ACT 시작/종료 marker. label 형식: 'ACT2.start', 'ACT2.first_card'."""
+    _k1_marks[label] = time.monotonic()
+
+def _k1_record(act: str, start_label: str, end_label: str) -> None:
+    """start~end 사이 duration 기록 + stdout 출력."""
+    if start_label in _k1_marks and end_label in _k1_marks:
+        dur = _k1_marks[end_label] - _k1_marks[start_label]
+        _k1_durations.append((act, dur))
+        _ts = time.strftime("%H:%M:%S")
+        print(f"[{_ts}] [K1.1] {act}: {dur:.2f}s", flush=True)
+
+def _k1_summary() -> None:
+    """시연 종료 시 분포 summary 출력."""
+    if not _k1_durations:
+        return
+    print("\n[K1.SUMMARY] === 측정 결과 ===", flush=True)
+    for act, dur in _k1_durations:
+        print(f"  {act}: {dur:.2f}s", flush=True)
+    print("[K1.SUMMARY] === end ===\n", flush=True)
+# ─────────────────────────────────────────────────────────────────────────────
+
 API = "http://localhost:8000"
 WS = "ws://localhost:8000"
 CDP = "http://localhost:9222"
@@ -674,6 +700,7 @@ async def run_demo(flags: DemoFlags) -> None:
         hr("ACT 2 — 채팅 교착 → 강한 자연어 거부 → 다음주 확장")
         # ─────────────────────────────────────────────────
 
+        _k1_mark("ACT2.start")  # K1.1 측정 시작: 트리거 발화 직전
         log("[지민] '다들 시험 끝나고 한번 보자!'")
         await fill_input(page, "메세지", "다들 시험 끝나고 한번 보자!")
         await asyncio.sleep(0.4)
@@ -708,6 +735,8 @@ async def run_demo(flags: DemoFlags) -> None:
             log("⚠️  vote_card 60s 이내 미발견 — ACT 3/4 스킵")
             confirm_btn = []
         else:
+            _k1_mark("ACT2.first_card")  # K1.1 측정 종료: vote_card 발현 확인 직후
+            _k1_record("ACT2.trigger→card", "ACT2.start", "ACT2.first_card")
             log("vote_card 발현 확인 (AI 일정 추천 헤더 노출)")
             # 슬롯 클릭: ScheduleRecommendationCard selectedSlotId 세팅 (시연 UI용).
             log("vote_card 슬롯 사전 클릭 (ScheduleRecommendationCard selectedSlotId 세팅)")
@@ -895,6 +924,7 @@ async def run_demo(flags: DemoFlags) -> None:
         # ─────────────────────────────────────────────────
 
         # D-1 #5: 짧은 입력으로 변경 — direct_request 트리거 단축 경로
+        _k1_mark("ACT5.start")  # K1.3 측정 시작: direct_request 발화 직전
         log("AI 패널에 '강남 한식 추천해줘' 입력 (v3: 짧은 발화)")
         await fill_input(page, "AI에게", "강남 한식 추천해줘")
         await asyncio.sleep(0.4)
@@ -905,6 +935,8 @@ async def run_demo(flags: DemoFlags) -> None:
         if not place_appeared:
             log("⚠️  장소 카드 미발견 (60s)")
         else:
+            _k1_mark("ACT5.first_card")  # K1.3 측정 종료: place_recommendation 카드 발현 직후
+            _k1_record("ACT5.trigger→card", "ACT5.start", "ACT5.first_card")
             log(f"carousel 확인 시간 ({pace['view_pause']}s) — 토글 진입 전 시연자 narration")
             await asyncio.sleep(pace["view_pause"])
 
@@ -1075,6 +1107,8 @@ def main() -> None:
     except Exception as e:
         print(f"\n[ERROR] {type(e).__name__}: {e}", file=sys.stderr)
         sys.exit(1)
+    finally:
+        _k1_summary()
 
 
 if __name__ == "__main__":

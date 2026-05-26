@@ -2,7 +2,7 @@
 
 ## 진행 중인 작업
 세션 시작 시 `docs/handoff/` 폴더의 가장 최근 문서를 먼저 확인하세요.
-**현재 task**: spec v1.0 + Option C (TimeBar in-card 호스트 확정) + CalendarPane 빨간 배지 제거 + ACT 2 자연 표현 + 시나리오 정합성 7건 fix + 시연 D-6 (2026-05-22 금 점심) 준비 완료 (HEAD `4a98d2f`). **다음**: 시연 영상 5/18 (월) 촬영 + v2 spec 본문 작성.
+**현재 task**: silent-fail audit P0 4건 가시화 (`f717b06`) + bug-26-g/f NameError 회귀 fix (`8ceffdb`) + 2nd 시연 GREEN (room=224, narrator 3개 시각 100% 일관) — origin/main push 완료 (HEAD `8ceffdb`, 2026-05-27, 전시 D-8). **다음**: P1-2 TZ root cause fix (code-analyst 분석 중) → silent-fail P1 A/B/C 트랙 → v2 spec 본문 + 시연 영상 촬영 (날짜 TBD).
 시연 자동화 (WSL venv v2, 2026-05-15):
 - 터미널 1: `~/.venv-maedeup-demo/bin/python3 .gstack-browser-launch.py`
 - 터미널 2: `~/.venv-maedeup-demo/bin/python3 .gstack-demo.py` (또는 `--fast`)
@@ -17,7 +17,9 @@
 6. 코덱스 P1 backlog (Option C 라운드 1~9 완료 후 추가 필요 검토, TODOS.md §10) — vote_update 좁히기·VoteCardSection 회귀 테스트·timeConfirmed mount·seed 주석·refresh state 통일
 7. 장소 추천 vote 시스템 검토 (v2 spec PR-v2.1 후보)
 참고:
-- `docs/handoff/2026-05-16-option-c-natural.md` (오늘 진행 기록 — Option C 라운드 1~9 + 자연 표현 + 시나리오 정합성, 2026-05-16)
+- `docs/handoff/2026-05-27-silent-fail-and-bug-26-g.md` (오늘 진행 — silent-fail audit + bug-26-g/f fix + 시연 GREEN, 2026-05-27)
+- `docs/handoff/2026-05-26-main-reconciliation-result.md` (main 정리 결과, 2026-05-26)
+- `docs/handoff/2026-05-16-option-c-natural.md` (Option C 라운드 1~9 + 자연 표현 + 시나리오 정합성, 2026-05-16)
 - `docs/handoff/2026-05-15-round4-green.md` (자동 루프 5라운드 + GREEN 도달, 2026-05-15)
 - `docs/handoff/2026-05-14-spec-progress.md` (v20 — spec v1.0 + PR-V1.5 + QA v2 + v3 자동화 + Option C 통합 보고)
 - `docs/handoff/2026-05-14-spec-v2-plan.md` (v2 spec 38 항목 계획서)

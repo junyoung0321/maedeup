@@ -33,6 +33,7 @@ import redis.asyncio as aioredis
 
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
+from app.observability.snapshot import dump
 from app.services.gemini import call_gemini
 from app.services.pipeline.helpers.json_extract import _extract_json_array
 from app.services.pipeline.helpers.messaging import (
@@ -155,6 +156,13 @@ async def _run_place_self_correction(
 
 async def place_recommendation(state: GraphState) -> GraphState:
     _t0 = time.monotonic()
+    dump("node_in", state.get("run_id"), {
+        "node": "place_recommendation",
+        "status": state.get("status"),
+        "trigger_reason": state.get("trigger_reason"),
+        "has_card": bool(state.get("maedeup_card_payload") or state.get("vote_card_payload")),
+        "message_count": len(state.get("message_records", [])),
+    })
     try:
         if _has_node_error(state):
             return state
@@ -497,6 +505,12 @@ async def place_recommendation(state: GraphState) -> GraphState:
             logger.debug("place_recommendation narrator emit failed", exc_info=True)
 
         logger.info("[TIMING] place_recommendation: %.2fs", time.monotonic() - _t0)
+        dump("node_out", state.get("run_id"), {
+            "node": "place_recommendation",
+            "status_after": state.get("status"),
+            "card_type": (state.get("place_recommendation_payload") or {}).get("type"),
+            "slot_count": len(state.get("place_search_results", [])),
+        })
         return state
     except Exception as exc:
         return await _handle_node_exception("place_recommendation", state, exc)

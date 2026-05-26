@@ -20,6 +20,7 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 
+from app.observability.snapshot import dump
 from app.services.kakao_maps import KakaoApiError
 from app.services.pipeline.helpers.formatting import _room_id_as_int
 from app.services.pipeline.helpers.messaging import (
@@ -60,6 +61,13 @@ logger = logging.getLogger(__name__)
 
 async def function_calling(state: GraphState) -> GraphState:
     _t0 = time.monotonic()
+    dump("node_in", state.get("run_id"), {
+        "node": "function_calling",
+        "status": state.get("status"),
+        "trigger_reason": state.get("trigger_reason"),
+        "has_card": bool(state.get("maedeup_card_payload") or state.get("vote_card_payload")),
+        "message_count": len(state.get("message_records", [])),
+    })
     try:
         if _has_node_error(state):
             return state
@@ -270,6 +278,12 @@ async def function_calling(state: GraphState) -> GraphState:
         state["place_search_results"] = place_results
         state["status"] = "functions_called"
         logger.info("[TIMING] function_calling: %.2fs", time.monotonic() - _t0)
+        dump("node_out", state.get("run_id"), {
+            "node": "function_calling",
+            "status_after": state.get("status"),
+            "card_type": None,
+            "slot_count": len(state.get("calendar_free_slots", [])),
+        })
         return state
     except Exception as exc:
         return await _handle_node_exception("function_calling", state, exc)

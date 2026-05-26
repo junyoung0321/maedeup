@@ -7,6 +7,8 @@ import logging
 import time
 from typing import Any, Optional
 
+from app.observability.snapshot import dump
+
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy import func
@@ -37,6 +39,15 @@ async def _publish_agent_message(
     *,
     queue_key: str | None = None,
 ) -> None:
+    try:
+        parsed_msg = json.loads(message)
+    except (json.JSONDecodeError, TypeError):
+        parsed_msg = {}
+    dump("ws_broadcast", None, {
+        "type": parsed_msg.get("type"),
+        "room_id": channel,
+        "summary": {k: parsed_msg.get(k) for k in ("type", "status", "intent") if parsed_msg.get(k) is not None},
+    })
     try:
         if redis_client is not None:
             receivers = await redis_client.publish(channel, message)

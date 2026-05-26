@@ -26,6 +26,7 @@ from typing import Any
 from sqlmodel import select
 
 from app.db.session import AsyncSessionLocal
+from app.observability.snapshot import dump
 from app.models.meeting import MeetingSchedule
 from app.models.room import RoomMember
 from app.services.pipeline.helpers.dates import _parse_iso_datetime
@@ -178,6 +179,13 @@ async def _ensure_pending_meeting_id(state: GraphState, title: str) -> int:
 
 async def vote_card_creation(state: GraphState) -> GraphState:
     _t0 = time.monotonic()
+    dump("node_in", state.get("run_id"), {
+        "node": "vote_card_creation",
+        "status": state.get("status"),
+        "trigger_reason": state.get("trigger_reason"),
+        "has_card": bool(state.get("maedeup_card_payload") or state.get("vote_card_payload")),
+        "message_count": len(state.get("message_records", [])),
+    })
     try:
         if _has_node_error(state):
             return state
@@ -339,6 +347,12 @@ async def vote_card_creation(state: GraphState) -> GraphState:
             logger.debug("vote_card narrator emit failed", exc_info=True)
 
         logger.info("[TIMING] vote_card_creation: %.2fs", time.monotonic() - _t0)
+        dump("node_out", state.get("run_id"), {
+            "node": "vote_card_creation",
+            "status_after": state.get("status"),
+            "card_type": (state.get("vote_card_payload") or {}).get("type"),
+            "slot_count": len(state.get("calendar_free_slots", [])),
+        })
         return state
     except Exception as exc:
         return await _handle_node_exception("vote_card_creation", state, exc)

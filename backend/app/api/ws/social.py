@@ -5,6 +5,8 @@ import logging
 import re
 from typing import Optional
 
+from app.observability.snapshot import dump
+
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from sqlmodel import select
@@ -166,6 +168,15 @@ async def _publish_social_message(
     channel: str,
     message: str,
 ) -> None:
+    try:
+        parsed_msg = json.loads(message)
+    except (json.JSONDecodeError, TypeError):
+        parsed_msg = {}
+    dump("ws_broadcast", None, {
+        "type": parsed_msg.get("type"),
+        "room_id": channel,
+        "summary": {k: parsed_msg.get(k) for k in ("type", "intent", "room_id") if parsed_msg.get(k) is not None},
+    })
     try:
         if redis_client is not None:
             await redis_client.publish(channel, message)

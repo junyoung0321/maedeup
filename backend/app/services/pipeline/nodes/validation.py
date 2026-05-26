@@ -16,6 +16,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from app.observability.snapshot import dump
 from app.services.pipeline.helpers.dates import _parse_iso_datetime
 from app.services.pipeline.helpers.messaging import (
     _emit_assistant_message,
@@ -30,6 +31,13 @@ logger = logging.getLogger(__name__)
 
 async def supervisor_validation(state: GraphState) -> GraphState:
     _t0 = time.monotonic()
+    dump("node_in", state.get("run_id"), {
+        "node": "supervisor_validation",
+        "status": state.get("status"),
+        "trigger_reason": state.get("trigger_reason"),
+        "has_card": bool(state.get("maedeup_card_payload") or state.get("vote_card_payload")),
+        "message_count": len(state.get("message_records", [])),
+    })
     try:
         if _has_node_error(state):
             return state
@@ -130,6 +138,12 @@ async def supervisor_validation(state: GraphState) -> GraphState:
             )
 
         logger.info("[TIMING] supervisor_validation: %.2fs", time.monotonic() - _t0)
+        dump("node_out", state.get("run_id"), {
+            "node": "supervisor_validation",
+            "status_after": state.get("status"),
+            "card_type": None,
+            "slot_count": len(state.get("calendar_free_slots", [])),
+        })
         return state
     except Exception as exc:
         return await _handle_node_exception("supervisor_validation", state, exc)

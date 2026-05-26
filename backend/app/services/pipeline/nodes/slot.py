@@ -24,6 +24,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Any
 
+from app.observability.snapshot import dump
 from app.services import scheduling_round as sr
 from app.services.pipeline.constants import KST
 from app.services.pipeline.helpers.messaging import (
@@ -50,6 +51,13 @@ async def slot_filling(state: GraphState) -> GraphState:
     - 아무것도 없으면: 조용히 대기 (질문하지 않음)
     """
     _t0 = time.monotonic()
+    dump("node_in", state.get("run_id"), {
+        "node": "slot_filling",
+        "status": state.get("status"),
+        "trigger_reason": state.get("trigger_reason"),
+        "has_card": bool(state.get("maedeup_card_payload") or state.get("vote_card_payload")),
+        "message_count": len(state.get("message_records", [])),
+    })
     try:
         if _has_node_error(state):
             return state
@@ -60,12 +68,20 @@ async def slot_filling(state: GraphState) -> GraphState:
 
         trigger = state.get("trigger_reason")
         if trigger == "stalemate_judged":
-            return await _slot_filling_stalemate(state, pref_data)
-        if trigger == "conclusion_detected":
-            return await _slot_filling_conclusion(state, pref_data)
-        if trigger == "all_members_selected":
-            return await _slot_filling_all_members(state, pref_data)
-        return await _slot_filling_default(state, pref_data)
+            result = await _slot_filling_stalemate(state, pref_data)
+        elif trigger == "conclusion_detected":
+            result = await _slot_filling_conclusion(state, pref_data)
+        elif trigger == "all_members_selected":
+            result = await _slot_filling_all_members(state, pref_data)
+        else:
+            result = await _slot_filling_default(state, pref_data)
+        dump("node_out", result.get("run_id"), {
+            "node": "slot_filling",
+            "status_after": result.get("status"),
+            "card_type": None,
+            "slot_count": len(result.get("missing_slots", [])),
+        })
+        return result
     except Exception as exc:
         return await _handle_node_exception("slot_filling", state, exc)
 

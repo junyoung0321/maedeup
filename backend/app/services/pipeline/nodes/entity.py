@@ -27,6 +27,7 @@ import time
 from datetime import datetime
 from typing import Any
 
+from app.observability.snapshot import dump
 from app.services.gemini import call_gemini
 from app.services.pipeline.constants import KST
 from app.services.pipeline.helpers.dates import (
@@ -300,6 +301,13 @@ async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
 
 async def entity_extraction(state: GraphState) -> GraphState:
     _t0 = time.monotonic()
+    dump("node_in", state.get("run_id"), {
+        "node": "entity_extraction",
+        "status": state.get("status"),
+        "trigger_reason": state.get("trigger_reason"),
+        "has_card": bool(state.get("maedeup_card_payload") or state.get("vote_card_payload")),
+        "message_count": len(state.get("message_records", [])),
+    })
     try:
         if _has_node_error(state):
             return state
@@ -685,6 +693,12 @@ async def entity_extraction(state: GraphState) -> GraphState:
         )
         state["status"] = "entities_extracted"
         logger.info("[TIMING] entity_extraction: %.2fs", time.monotonic() - _t0)
+        dump("node_out", state.get("run_id"), {
+            "node": "entity_extraction",
+            "status_after": state.get("status"),
+            "card_type": None,
+            "slot_count": len(state.get("missing_slots", [])),
+        })
         return state
     except Exception as exc:
         return await _handle_node_exception("entity_extraction", state, exc)

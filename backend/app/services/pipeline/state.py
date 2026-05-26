@@ -34,6 +34,7 @@ class MessageRecord(TypedDict, total=False):
 
 
 class GraphState(TypedDict, total=False):
+    run_id: str  # P0 instrumentation: uuid4().hex[:8], 파이프라인 단위 추적 ID
     room_id: str
     db: AsyncSession
     message_records: list[MessageRecord]

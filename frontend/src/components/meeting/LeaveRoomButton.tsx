@@ -45,7 +45,7 @@ export default function LeaveRoomButton({ roomId }: { roomId: string }) {
           border: "1px solid rgba(255,255,255,0.3)",
           background: "rgba(255,255,255,0.15)",
           color: "#ffffff",
-          fontSize: 13,
+          fontSize: 20,
           fontWeight: 600,
           cursor: "pointer",
           fontFamily: "Pretendard, sans-serif",
@@ -81,10 +81,10 @@ export default function LeaveRoomButton({ roomId }: { roomId: string }) {
               boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
             }}
           >
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: "#0f172a", margin: 0, marginBottom: 12 }}>
+            <h3 style={{ fontSize: 27, fontWeight: 700, color: "#0f172a", margin: 0, marginBottom: 12 }}>
               모임 방을 나가시겠어요?
             </h3>
-            <ul style={{ margin: 0, padding: "0 0 0 18px", fontSize: 13, color: "#475569", lineHeight: 1.6 }}>
+            <ul style={{ margin: 0, padding: "0 0 0 18px", fontSize: 20, color: "#475569", lineHeight: 1.6 }}>
               <li>본인의 구글 캘린더에서 이 모임 일정이 제거됩니다.</li>
               <li>본인의 선호 정보 / 참여 기록이 삭제됩니다.</li>
               <li>
@@ -93,7 +93,7 @@ export default function LeaveRoomButton({ roomId }: { roomId: string }) {
             </ul>
 
             {error && (
-              <div style={{ marginTop: 12, fontSize: 12, color: "#ef4444" }}>{error}</div>
+              <div style={{ marginTop: 12, fontSize: 18, color: "#ef4444" }}>{error}</div>
             )}
 
             <div style={{ display: "flex", gap: 8, marginTop: 20, justifyContent: "flex-end" }}>
@@ -106,7 +106,7 @@ export default function LeaveRoomButton({ roomId }: { roomId: string }) {
                   border: "1px solid #cbd5e1",
                   background: "#ffffff",
                   color: "#475569",
-                  fontSize: 13,
+                  fontSize: 20,
                   fontWeight: 600,
                   cursor: submitting ? "not-allowed" : "pointer",
                   fontFamily: "Pretendard, sans-serif",
@@ -123,7 +123,7 @@ export default function LeaveRoomButton({ roomId }: { roomId: string }) {
                   border: "none",
                   background: "#ef4444",
                   color: "#ffffff",
-                  fontSize: 13,
+                  fontSize: 20,
                   fontWeight: 600,
                   cursor: submitting ? "not-allowed" : "pointer",
                   fontFamily: "Pretendard, sans-serif",

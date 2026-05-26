@@ -55,38 +55,36 @@ def upgrade() -> None:
             sa.Column("transport_mode", sa.String(length=32), nullable=True),
         )
     if "is_ai_filled" not in user_cols:
-        # Postgres JSON server_default은 sa.text("'{}'::json") 형태가 필요.
-        # 단순 문자열 "{}"는 silently broken.
+        # dialect-agnostic server_default: postgres·sqlite 양쪽에서 JSON 컬럼에 '{}' valid.
+        # postgres `::json` cast는 불필요, sqlite는 토큰 인식 못함.
         op.add_column(
             "users",
             sa.Column(
                 "is_ai_filled",
                 sa.JSON(),
                 nullable=False,
-                server_default=sa.text("'{}'::json"),
+                server_default=sa.text("'{}'"),
             ),
         )
 
     # ── ai_memories: source_message_id with ondelete=SET NULL ──
     mem_cols = {c["name"] for c in inspector.get_columns("ai_memories")}
     if "source_message_id" not in mem_cols:
-        op.add_column(
-            "ai_memories",
-            sa.Column("source_message_id", sa.Integer(), nullable=True),
-        )
-        op.create_foreign_key(
-            "fk_ai_memories_source_message_id_chat_messages",
-            "ai_memories",
-            "chat_messages",
-            ["source_message_id"],
-            ["id"],
-            ondelete="SET NULL",
-        )
-        op.create_index(
-            "ix_ai_memories_source_message_id",
-            "ai_memories",
-            ["source_message_id"],
-        )
+        with op.batch_alter_table("ai_memories") as batch_op:
+            batch_op.add_column(
+                sa.Column("source_message_id", sa.Integer(), nullable=True),
+            )
+            batch_op.create_foreign_key(
+                "fk_ai_memories_source_message_id_chat_messages",
+                "chat_messages",
+                ["source_message_id"],
+                ["id"],
+                ondelete="SET NULL",
+            )
+            batch_op.create_index(
+                "ix_ai_memories_source_message_id",
+                ["source_message_id"],
+            )
 
 
 def downgrade() -> None:
@@ -97,19 +95,16 @@ def downgrade() -> None:
     if "source_message_id" in mem_cols:
         # 인덱스/FK가 실제로 존재할 때만 drop (idempotent)
         existing_indexes = {idx["name"] for idx in inspector.get_indexes("ai_memories")}
-        if "ix_ai_memories_source_message_id" in existing_indexes:
-            op.drop_index(
-                "ix_ai_memories_source_message_id",
-                table_name="ai_memories",
-            )
         existing_fks = {fk["name"] for fk in inspector.get_foreign_keys("ai_memories")}
-        if "fk_ai_memories_source_message_id_chat_messages" in existing_fks:
-            op.drop_constraint(
-                "fk_ai_memories_source_message_id_chat_messages",
-                "ai_memories",
-                type_="foreignkey",
-            )
-        op.drop_column("ai_memories", "source_message_id")
+        with op.batch_alter_table("ai_memories") as batch_op:
+            if "ix_ai_memories_source_message_id" in existing_indexes:
+                batch_op.drop_index("ix_ai_memories_source_message_id")
+            if "fk_ai_memories_source_message_id_chat_messages" in existing_fks:
+                batch_op.drop_constraint(
+                    "fk_ai_memories_source_message_id_chat_messages",
+                    type_="foreignkey",
+                )
+            batch_op.drop_column("source_message_id")
 
     user_cols = {c["name"] for c in inspector.get_columns("users")}
     for col in (

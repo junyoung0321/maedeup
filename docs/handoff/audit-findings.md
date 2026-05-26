@@ -939,6 +939,35 @@
 
 ---
 
+### 해결점 N. 다음주 자동 확장 (이번주 0 슬롯 → window +7일)
+
+- **상태**: 🟢 적용 완료 (2026-05-06 시연 검증 통과)
+- **위치**:
+  - 플래그 정의: `backend/app/services/pipeline/state.py:59` (`expanded_to_next_week: bool`)
+  - 플래그 set: `backend/app/services/pipeline/nodes/entity.py:314`
+  - 플래그 소비: `backend/app/services/pipeline/nodes/slot.py:110, 145`
+- **시연 위치**: `docs/handoff/demo-scenario.md` ACT 2 후반 ("후보 소진 → 다음주 확장")
+- **증상 (수정 전)**:
+  - 이번주 free_slot 0개인데 fallback 분기가 없어 vote_card 빈 후보 발행 또는 supervisor 에러
+  - 사용자가 "다음주"를 명시적으로 발화해야만 다음주 슬롯 탐색 가능
+- **결정 수정안**:
+  1. entity_extraction에서 이번주 슬롯 0개 감지 시 `state["expanded_to_next_week"] = True`
+  2. slot_filling이 플래그 보면 `get_free_slots` window를 `+7일`로 확장 후 재탐색
+  3. 확장 후 narrator에 "이번주에는 다 같이 가능한 시간이 없어 다음주로 확장합니다" 안내
+  4. 다음 노드 진입 시 플래그 pop (재진입 시 중복 확장 방지)
+- **영향**:
+  - 정상 케이스: 영향 0 (이번주 슬롯 ≥1개면 발동 안 함)
+  - ACT 2 시연 흐름 완성 — 자연어 거부 누적 → 후보 소진 → 자동 다음주 전환 일관성 확보
+- **장점**: 사용자 명시 발화 없이 후보 소진 상황 자동 복구
+- **단점**: 의도치 않은 확장 가능 (사용자가 이번주 한정을 원하는 경우) — narrator로 안내하지만 명시적 거부 UI는 없음
+- **시급도**: 높 (시연 핵심 흐름)
+- **다이어그램**:
+  - `02-langgraph-flow.mmd` 노드3·4 분기 라벨에 `expanded_to_next_week` 표시 권장
+  - `00-overview.mmd` 시퀀스에 확장 점선 추가 가능 (선택)
+- **명명 기준**: `spec-time-coordination.md` §4.3 T2(탐색 정책) 항목과 1:1 매핑 (PR-V로 분할 — 구 `spec-time-and-place.md`)
+
+---
+
 ### 해결점 O. 정규식 단축 경로의 rejected_dates 누락 (확장)
 
 - **상태**: 🔴 확정 (코드 검증 완료, 2026-05-06 세션)

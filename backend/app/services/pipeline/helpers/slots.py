@@ -229,6 +229,82 @@ def _find_free_slots(
     return free_slots if free_slots else fallback_slots
 
 
+def _build_majority_fallback_slots(
+    busy_by_user: dict[str, list[dict[str, Any]]],
+    time_min: datetime,
+    time_max: datetime,
+    blocked_dates: Optional[set[str]] = None,
+    rejected_dates: Optional[list[dict[str, Any]]] = None,
+    preferred_times: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """F1 fallback (spec §4.4): 전원 가능 슬롯 0개일 때 '가능 멤버 수' 최댓값 top 3 반환.
+
+    - `_find_free_slots`를 `minimum_available=1`로 호출해 가능한 모든 슬롯 수집
+      (require_exact_absent_count=None으로 절대 인원 제약 해제).
+    - blocked_dates / rejected_dates는 호출부에서 한 번 더 거를 수도 있지만, 여기서
+      바로 거르면 정렬·top3 직전 일관된 후보 풀을 확보 가능.
+    - 정렬: (-available_count, start_at) — 가능 멤버 수 desc, 동률 시 시간 빠른 순.
+    - top 3 반환. busy_by_user 비어있으면 빈 리스트.
+    """
+    if not busy_by_user:
+        return []
+
+    # _find_free_slots는 최대 5개에서 끊기므로 호출을 그대로 쓰면 후보가 부족할 수 있다.
+    # F1은 "후보 풀에서 최댓값 top3"이므로 풀을 충분히 넓혀야 함 → 내부 루프를 모방한
+    # 자체 스캔으로 모든 슬롯을 수집.
+    total = len(busy_by_user)
+    candidates: list[dict[str, Any]] = []
+    current = time_min
+    slot_idx = 1
+
+    while current < time_max:
+        slot_end = current + timedelta(minutes=SLOT_MINUTES)
+        current_kst = current.astimezone(KST)
+        if WORK_HOUR_START <= current_kst.hour < WORK_HOUR_END:
+            unavailable_names = [
+                name
+                for name, periods in busy_by_user.items()
+                if any(bp["start"] < slot_end and bp["end"] > current for bp in periods)
+            ]
+            available_count = total - len(unavailable_names)
+            # F1은 "전원 불가" 슬롯은 의미 없으므로 최소 1명은 가능해야 함.
+            if available_count >= 1:
+                s = current.astimezone(KST)
+                holiday = _get_korean_holiday(s)
+                slot = {
+                    "slot_id": f"majority-slot-{slot_idx}",
+                    "start_at": current.isoformat(),
+                    "end_at": slot_end.isoformat(),
+                    "label": _format_slot_label(
+                        s,
+                        [_user_display_name(name) for name in unavailable_names],
+                    ),
+                    "available_count": available_count,
+                    "total_count": total,
+                    "has_conflict": bool(unavailable_names),
+                    "unavailable_users": [_user_display_name(name) for name in unavailable_names],
+                    "is_holiday": bool(holiday),
+                    "holiday_name": holiday,
+                    "is_weekend": _is_weekend(s),
+                }
+                candidates.append(slot)
+                slot_idx += 1
+        current = current + timedelta(minutes=SLOT_MINUTES)
+
+    # blocked / rejected 거르기 — 풀 정렬 전.
+    if blocked_dates:
+        candidates = _filter_out_blocked(candidates, blocked_dates)
+    if rejected_dates:
+        candidates = _filter_out_rejected(candidates, rejected_dates)
+
+    if not candidates:
+        return []
+
+    # 정렬: 가능 멤버 수 desc → 동률 시 시간 빠른 순.
+    candidates.sort(key=lambda s: (-int(s.get("available_count") or 0), str(s.get("start_at") or "")))
+    return candidates[:3]
+
+
 async def _load_blocked_dates(room_pk: Optional[int]) -> set[str]:
     """방의 '불가능 날짜' 집합을 Redis에서 조회. 한 명이라도 불가능이면 해당 날짜 제외.
     Redis 실패 시 빈 set 반환 (pipeline은 graceful degradation)."""

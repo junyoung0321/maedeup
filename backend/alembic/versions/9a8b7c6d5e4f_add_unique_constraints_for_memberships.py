@@ -32,11 +32,11 @@ def upgrade() -> None:
         return
     room_member_constraints = _unique_constraint_names("room_members")
     if "uq_room_members_room_id_user_id" not in room_member_constraints:
-        op.create_unique_constraint(
-            "uq_room_members_room_id_user_id",
-            "room_members",
-            ["room_id", "user_id"],
-        )
+        with op.batch_alter_table("room_members") as batch_op:
+            batch_op.create_unique_constraint(
+                "uq_room_members_room_id_user_id",
+                ["room_id", "user_id"],
+            )
     if inspector.has_table("users"):
         user_indexes = _index_names("users")
         if "ix_users_calendar_consent" not in user_indexes:
@@ -53,8 +53,8 @@ def downgrade() -> None:
     if inspector.has_table("room_members"):
         room_member_constraints = _unique_constraint_names("room_members")
         if "uq_room_members_room_id_user_id" in room_member_constraints:
-            op.drop_constraint(
-                "uq_room_members_room_id_user_id",
-                "room_members",
-                type_="unique",
-            )
+            with op.batch_alter_table("room_members") as batch_op:
+                batch_op.drop_constraint(
+                    "uq_room_members_room_id_user_id",
+                    type_="unique",
+                )

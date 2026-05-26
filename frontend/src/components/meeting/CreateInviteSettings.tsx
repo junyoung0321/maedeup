@@ -70,7 +70,9 @@ export default function CreateInviteSettings({
   return (
     <div
       style={{
-        width: 666,
+        flex: 1,
+        minWidth: 0,
+        maxWidth: 900,
         borderRadius: 20,
         border: "1px solid #e2e8f0",
         boxShadow: "0 4px 3.5px rgba(0,0,0,0.08)",
@@ -95,7 +97,7 @@ export default function CreateInviteSettings({
         <Users style={{ width: 22, height: 22, color: "#ffffff" }} />
         <span
           style={{
-            fontSize: 19,
+            fontSize: 29,
             fontWeight: 500,
             color: "#ffffff",
             letterSpacing: 0.5,
@@ -117,7 +119,7 @@ export default function CreateInviteSettings({
       >
         {/* 참여자 초대 */}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <label style={{ fontSize: 14, fontWeight: 600, color: "#111827" }}>
+          <label style={{ fontSize: 21, fontWeight: 600, color: "#111827" }}>
             참여자 초대
           </label>
 
@@ -134,7 +136,7 @@ export default function CreateInviteSettings({
             }}
           >
             <Search style={{ width: 16, height: 16, color: "#94a3b8" }} />
-            <span style={{ fontSize: 13, fontWeight: 400, color: "#94a3b8" }}>
+            <span style={{ fontSize: 20, fontWeight: 400, color: "#94a3b8" }}>
               이름 또는 이메일로 검색
             </span>
           </div>
@@ -142,7 +144,7 @@ export default function CreateInviteSettings({
           {/* 멤버 리스트 */}
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {loadingFriends ? (
-              <span style={{ fontSize: 13, color: "#94a3b8", padding: "8px 14px" }}>
+              <span style={{ fontSize: 20, color: "#94a3b8", padding: "8px 14px" }}>
                 친구 목록 불러오는 중...
               </span>
             ) : members.length === 0 ? (
@@ -178,7 +180,7 @@ export default function CreateInviteSettings({
                     <span
                       style={{
                         flex: 1,
-                        fontSize: 14,
+                        fontSize: 21,
                         fontWeight: 500,
                         color: "#111827",
                       }}
@@ -220,7 +222,7 @@ export default function CreateInviteSettings({
           {/* 선택됨 카운트 */}
           <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 14px" }}>
             <Users style={{ width: 16, height: 16, color: "#4f46e5" }} />
-            <span style={{ fontSize: 13, fontWeight: 500, color: "#4f46e5" }}>
+            <span style={{ fontSize: 20, fontWeight: 500, color: "#4f46e5" }}>
               {selectedCount}명 선택됨
             </span>
           </div>
@@ -231,10 +233,10 @@ export default function CreateInviteSettings({
 
         {/* 일정 설정 */}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <label style={{ fontSize: 14, fontWeight: 600, color: "#111827" }}>
+          <label style={{ fontSize: 21, fontWeight: 600, color: "#111827" }}>
             일정 설정
           </label>
-          <span style={{ fontSize: 12, fontWeight: 400, color: "#94a3b8" }}>
+          <span style={{ fontSize: 18, fontWeight: 400, color: "#94a3b8" }}>
             AI가 참여자 일정을 분석하여 최적 시간을 추천합니다
           </span>
 
@@ -257,7 +259,7 @@ export default function CreateInviteSettings({
               <span
                 style={{
                   flex: 1,
-                  fontSize: 14,
+                  fontSize: 21,
                   fontWeight: 500,
                   color: scheduleMethod === "ai" ? "#4f46e5" : "#374151",
                 }}
@@ -294,7 +296,7 @@ export default function CreateInviteSettings({
               <span
                 style={{
                   flex: 1,
-                  fontSize: 14,
+                  fontSize: 21,
                   fontWeight: 500,
                   color: scheduleMethod === "manual" ? "#4f46e5" : "#374151",
                 }}
@@ -331,7 +333,7 @@ export default function CreateInviteSettings({
               <span
                 style={{
                   flex: 1,
-                  fontSize: 14,
+                  fontSize: 21,
                   fontWeight: 500,
                   color: scheduleMethod === "vote" ? "#4f46e5" : "#374151",
                 }}
@@ -357,7 +359,7 @@ export default function CreateInviteSettings({
 
         {/* 장소 설정 */}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <label style={{ fontSize: 14, fontWeight: 600, color: "#111827" }}>
+          <label style={{ fontSize: 21, fontWeight: 600, color: "#111827" }}>
             장소 설정
           </label>
           <div style={{ display: "flex", gap: 8 }}>
@@ -381,7 +383,7 @@ export default function CreateInviteSettings({
               <Sparkles style={{ width: 22, height: 22, color: placeMethod === "ai" ? "#4f46e5" : "#94a3b8" }} />
               <span
                 style={{
-                  fontSize: 13,
+                  fontSize: 20,
                   fontWeight: 500,
                   color: placeMethod === "ai" ? "#4f46e5" : "#64748b",
                 }}
@@ -410,7 +412,7 @@ export default function CreateInviteSettings({
               <MapPin style={{ width: 22, height: 22, color: placeMethod === "manual" ? "#4f46e5" : "#94a3b8" }} />
               <span
                 style={{
-                  fontSize: 13,
+                  fontSize: 20,
                   fontWeight: 500,
                   color: placeMethod === "manual" ? "#4f46e5" : "#64748b",
                 }}
@@ -439,7 +441,7 @@ export default function CreateInviteSettings({
               <Vote style={{ width: 22, height: 22, color: placeMethod === "vote" ? "#4f46e5" : "#94a3b8" }} />
               <span
                 style={{
-                  fontSize: 13,
+                  fontSize: 20,
                   fontWeight: 500,
                   color: placeMethod === "vote" ? "#4f46e5" : "#64748b",
                 }}
@@ -464,7 +466,7 @@ export default function CreateInviteSettings({
               border: "1px solid #e2e8f0",
               background: "#ffffff",
               color: "#374151",
-              fontSize: 15,
+              fontSize: 23,
               fontWeight: 500,
               cursor: "pointer",
               fontFamily: "Pretendard Variable, Pretendard, sans-serif",
@@ -481,7 +483,7 @@ export default function CreateInviteSettings({
               border: "none",
               background: "linear-gradient(135deg, #4338ca, #4f46e5)",
               color: "#ffffff",
-              fontSize: 15,
+              fontSize: 23,
               fontWeight: 500,
               cursor: "pointer",
               fontFamily: "Pretendard Variable, Pretendard, sans-serif",

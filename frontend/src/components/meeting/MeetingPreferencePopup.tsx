@@ -94,7 +94,7 @@ export default function MeetingPreferencePopup({
     border: active ? "none" : "1px solid #cbd5e1",
     background: active ? "#4f46e5" : "#ffffff",
     color: active ? "#ffffff" : "#334155",
-    fontSize: 14,
+    fontSize: 21,
     fontWeight: active ? 600 : 400,
     cursor: "pointer",
     fontFamily: "Pretendard Variable, Pretendard, sans-serif",
@@ -136,7 +136,7 @@ export default function MeetingPreferencePopup({
             padding: "20px 24px 0",
           }}
         >
-          <span style={{ fontSize: 20, fontWeight: 700, color: "#1e293b" }}>
+          <span style={{ fontSize: 30, fontWeight: 700, color: "#1e293b" }}>
             이번 모임 선호 정보
           </span>
           <button
@@ -156,14 +156,14 @@ export default function MeetingPreferencePopup({
             <X style={{ width: 18, height: 18, color: "#64748b" }} />
           </button>
         </div>
-        <p style={{ padding: "8px 24px 0", fontSize: 14, color: "#64748b", margin: 0 }}>
+        <p style={{ padding: "8px 24px 0", fontSize: 21, color: "#64748b", margin: 0 }}>
           모두 입력하면 AI가 최적안을 추천해드려요
         </p>
 
         <div style={{ padding: "16px 24px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
           {/* 시간대 (필수) */}
           <div>
-            <label style={{ fontSize: 14, fontWeight: 600, color: "#1e293b", marginBottom: 8, display: "block" }}>
+            <label style={{ fontSize: 21, fontWeight: 600, color: "#1e293b", marginBottom: 8, display: "block" }}>
               가능한 시간대 *
             </label>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -181,7 +181,7 @@ export default function MeetingPreferencePopup({
 
           {/* 장소 (필수) */}
           <div>
-            <label style={{ fontSize: 14, fontWeight: 600, color: "#1e293b", marginBottom: 8, display: "block" }}>
+            <label style={{ fontSize: 21, fontWeight: 600, color: "#1e293b", marginBottom: 8, display: "block" }}>
               선호 장소
             </label>
             <input
@@ -194,7 +194,7 @@ export default function MeetingPreferencePopup({
                 padding: "10px 14px",
                 borderRadius: 12,
                 border: "1px solid #e2e8f0",
-                fontSize: 14,
+                fontSize: 21,
                 fontFamily: "Pretendard Variable, Pretendard, sans-serif",
                 outline: "none",
                 boxSizing: "border-box",
@@ -212,7 +212,7 @@ export default function MeetingPreferencePopup({
                 border: "none",
                 background: "transparent",
                 color: "#4f46e5",
-                fontSize: 14,
+                fontSize: 21,
                 fontWeight: 500,
                 cursor: "pointer",
                 textAlign: "left",
@@ -227,7 +227,7 @@ export default function MeetingPreferencePopup({
             <>
               {/* 선호 음식 */}
               <div>
-                <label style={{ fontSize: 14, fontWeight: 600, color: "#1e293b", marginBottom: 8, display: "block" }}>
+                <label style={{ fontSize: 21, fontWeight: 600, color: "#1e293b", marginBottom: 8, display: "block" }}>
                   선호 음식
                 </label>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -245,7 +245,7 @@ export default function MeetingPreferencePopup({
 
               {/* 비선호 음식 */}
               <div>
-                <label style={{ fontSize: 14, fontWeight: 600, color: "#1e293b", marginBottom: 8, display: "block" }}>
+                <label style={{ fontSize: 21, fontWeight: 600, color: "#1e293b", marginBottom: 8, display: "block" }}>
                   비선호 음식
                 </label>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -266,7 +266,7 @@ export default function MeetingPreferencePopup({
 
               {/* 메모 */}
               <div>
-                <label style={{ fontSize: 14, fontWeight: 600, color: "#1e293b", marginBottom: 8, display: "block" }}>
+                <label style={{ fontSize: 21, fontWeight: 600, color: "#1e293b", marginBottom: 8, display: "block" }}>
                   한 줄 메모
                 </label>
                 <input
@@ -279,7 +279,7 @@ export default function MeetingPreferencePopup({
                     padding: "10px 14px",
                     borderRadius: 12,
                     border: "1px solid #e2e8f0",
-                    fontSize: 14,
+                    fontSize: 21,
                     fontFamily: "Pretendard Variable, Pretendard, sans-serif",
                     outline: "none",
                     boxSizing: "border-box",
@@ -292,7 +292,7 @@ export default function MeetingPreferencePopup({
 
           {/* Error */}
           {error && (
-            <p style={{ fontSize: 13, color: "#dc2626", margin: 0 }}>{error}</p>
+            <p style={{ fontSize: 20, color: "#dc2626", margin: 0 }}>{error}</p>
           )}
 
           {/* Submit */}
@@ -306,7 +306,7 @@ export default function MeetingPreferencePopup({
               border: "none",
               background: isSubmitting ? "#cbd5e1" : "#4f46e5",
               color: "#ffffff",
-              fontSize: 16,
+              fontSize: 24,
               fontWeight: 700,
               cursor: isSubmitting ? "not-allowed" : "pointer",
               fontFamily: "Pretendard Variable, Pretendard, sans-serif",
@@ -325,7 +325,7 @@ export default function MeetingPreferencePopup({
               border: "none",
               background: "transparent",
               color: "#94a3b8",
-              fontSize: 14,
+              fontSize: 21,
               cursor: "pointer",
               fontFamily: "Pretendard Variable, Pretendard, sans-serif",
             }}

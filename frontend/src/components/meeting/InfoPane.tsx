@@ -5,7 +5,6 @@ import { ChevronLeft, ChevronDown, ChevronUp, CalendarDays } from "lucide-react"
 import CalendarPane from "@/components/meeting/CalendarPane";
 import FinalizationProposalCard from "@/components/meeting/FinalizationProposalCard";
 import PlaceDetailPane from "@/components/meeting/PlaceDetailPane";
-import VoteCardSection from "@/components/meeting/VoteCardSection";
 import TimeBarSelector from "@/components/meeting/TimeBarSelector";
 import HostTimeAdjustModal from "@/components/meeting/HostTimeAdjustModal";
 import { apiFetch } from "@/lib/api";
@@ -115,6 +114,16 @@ export default function InfoPane() {
   const [calendarCollapsed, setCalendarCollapsed] = useState(false);
   // A3-3: 호스트 [조율] 모달 open 상태
   const [showAdjustModal, setShowAdjustModal] = useState(false);
+  // ACT3 timing fix: TimeBar in-card "이 시간으로 확정" 클릭 여부.
+  // true일 때만 두 옵션 카드(✅ 추천 / 🔧 조율) 노출.
+  const [hostFinalizeClicked, setHostFinalizeClicked] = useState(false);
+
+  // scheduleConsensus가 null로 바뀌면 (새 vote_card / WS 안전망) hostFinalizeClicked 초기화.
+  useEffect(() => {
+    if (scheduleConsensus === null) {
+      setHostFinalizeClicked(false);
+    }
+  }, [scheduleConsensus]);
 
   // 방 선호 시간대 (TimeBar AI 추천 범위 우선순위에 사용)
   const [roomPreferences, setRoomPreferences] = useState<RoomPreference[]>([]);
@@ -338,7 +347,9 @@ export default function InfoPane() {
 
               {/* Phase: dateSelected → CalendarPane의 DateCard가 보여줌 (여기서 추가 UI 불필요) */}
 
-              {/* Phase: dateConfirmed → TimeBarSelector */}
+              {/* Phase: dateConfirmed → TimeBarSelector.
+                  Option C: scheduleConsensus 도달 시에도 TimeBar 유지 — 호스트는 TimeBar 안의
+                  "이 시간으로 확정" 버튼으로 최종 합의. timeConfirmed phase 진입 시에만 unmount. */}
               {infoPanePhase === "dateConfirmed" && confirmedDate && (
                 <div style={{ padding: "0 4px" }}>
                   <TimeBarSelector
@@ -347,15 +358,23 @@ export default function InfoPane() {
                     onConfirm={handleTimeConfirm}
                     onBack={() => setInfoPanePhase("dateSelected")}
                     preferredTimeRange={preferredTimeRangeForDate}
+                    // ACT3 timing fix: POST 하지 않고 두 옵션 카드를 노출할 뿐.
+                    // 실제 POST는 두 옵션 카드의 "✅ 추천 시간 그대로 확정" 버튼이 담당.
+                    onHostFinalize={async (_snapshotHash) => {
+                      setHostFinalizeClicked(true);
+                    }}
+                    hostFinalizeClicked={hostFinalizeClicked}
                   />
                 </div>
               )}
 
-              {/* A3-2: TimeBar 전원 합의 → 호스트 "일정 확정하기" 버튼 노출.
-                   비호스트는 "방장이 확정 대기 중" placeholder. */}
+
+              {/* A3-2 (ACT3 timing fix): 호스트가 TimeBar in-card "이 시간으로 확정" 클릭 후에만
+                   두 옵션 카드 노출. hostFinalizeClicked 없으면 카드 미노출.
+                   비호스트는 "방장이 확정 대기 중" placeholder (hostFinalizeClicked 무관). */}
               {scheduleConsensus && currentUserId !== null && (() => {
                 const isHost = scheduleConsensus.host_user_id === currentUserId;
-                if (isHost) {
+                if (isHost && hostFinalizeClicked) {
                   return (
                     <div style={{
                       margin: "0 4px",
@@ -367,10 +386,10 @@ export default function InfoPane() {
                       flexDirection: "column",
                       gap: 10,
                     }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: "#1e1b4b" }}>
+                      <div style={{ fontSize: 21, fontWeight: 700, color: "#1e1b4b" }}>
                         ✅ 모두 시간대를 골랐어요
                       </div>
-                      <div style={{ fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
+                      <div style={{ fontSize: 20, color: "#475569", lineHeight: 1.5 }}>
                         {scheduleConsensus.member_count}명 전원 합의가 모였습니다. 일정을 확정하면 AI가 장소까지 정리해드릴게요.
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -386,6 +405,10 @@ export default function InfoPane() {
                                 }),
                               });
                               setScheduleConsensus(null);
+                              setHostFinalizeClicked(false);
+                              // phase 를 timeConfirmed 로 전이 — TimeBar 재마운트 방지 (무한 루프 차단).
+                              // maedeup_card WS broadcast 가 늦게 도착해도 즉시 UI 안정화.
+                              setInfoPanePhase("timeConfirmed");
                             } catch (err) {
                               console.error("schedule-confirm failed", err);
                             }
@@ -397,7 +420,7 @@ export default function InfoPane() {
                             border: "none",
                             background: "#4f46e5",
                             color: "#fff",
-                            fontSize: 14,
+                            fontSize: 21,
                             fontWeight: 700,
                             cursor: "pointer",
                             fontFamily: "Pretendard Variable, Pretendard, sans-serif",
@@ -414,7 +437,7 @@ export default function InfoPane() {
                             border: "1px solid #cbd5e1",
                             background: "#ffffff",
                             color: "#475569",
-                            fontSize: 14,
+                            fontSize: 21,
                             fontWeight: 700,
                             cursor: "pointer",
                             fontFamily: "Pretendard Variable, Pretendard, sans-serif",
@@ -433,7 +456,7 @@ export default function InfoPane() {
                     borderRadius: 14,
                     background: "#f1f5f9",
                     color: "#64748b",
-                    fontSize: 13,
+                    fontSize: 20,
                     fontWeight: 500,
                     textAlign: "center",
                   }}>
@@ -462,6 +485,7 @@ export default function InfoPane() {
                       });
                       setShowAdjustModal(false);
                       setScheduleConsensus(null);
+                      setHostFinalizeClicked(false);
                     } catch (err) {
                       console.error("schedule-confirm (manual) failed", err);
                     }

@@ -7,8 +7,11 @@ import logging
 import time
 from typing import Any, Optional
 
+from app.observability.snapshot import dump
+
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from sqlalchemy import func
 from sqlmodel import select
 
 from app.api.ws.manager import manager
@@ -22,6 +25,7 @@ from app.repositories.messages import MessageReader
 from app.services import scheduling_round as sr
 from app.services.gemini import call_gemini
 from app.services.langgraph_pipeline import KST, _analyze_conversation, run_pipeline
+from app.services.pipeline.helpers.preferences import load_requester_context
 from app.services.quick_classify import quick_classify
 
 logger = logging.getLogger(__name__)
@@ -35,6 +39,15 @@ async def _publish_agent_message(
     *,
     queue_key: str | None = None,
 ) -> None:
+    try:
+        parsed_msg = json.loads(message)
+    except (json.JSONDecodeError, TypeError):
+        parsed_msg = {}
+    dump("ws_broadcast", None, {
+        "type": parsed_msg.get("type"),
+        "room_id": channel,
+        "summary": {k: parsed_msg.get(k) for k in ("type", "status", "intent") if parsed_msg.get(k) is not None},
+    })
     try:
         if redis_client is not None:
             receivers = await redis_client.publish(channel, message)
@@ -321,6 +334,7 @@ async def _run_auto_trigger_pipeline(
     trigger_intent: str,
     trigger_reason: str,
     slot_context: dict,
+    viewer_user_id: Optional[int] = None,
 ) -> None:
     logger.info(
         "[AUTO_TRIGGER] pipeline entry: room=%s intent=%s reason=%s",
@@ -434,6 +448,40 @@ async def _run_auto_trigger_pipeline(
         if trigger_reason == "all_members_selected":
             async with AsyncSessionLocal() as session:
                 timebar_data = await _build_entities_from_timebar(room_id, session, redis_client)
+
+            # Authoritative time pick from TimeBar majority overlap.
+            # rooms.py schedule-confirm 가 manual_chosen_time 을 이미 넣었으면 그 값 우선.
+            if not slot_context.get("manual_chosen_time") and redis_client is not None:
+                try:
+                    room_pk_int = int(room_id)
+                    avail = await sr.load_room_availability(redis_client, room_id=room_pk_int)
+                    unavail = await sr.load_room_unavailability(redis_client, room_id=room_pk_int)
+                    async with AsyncSessionLocal() as session:
+                        member_count = (
+                            await session.execute(
+                                select(func.count(RoomMember.user_id))
+                                .where(RoomMember.room_id == room_pk_int)
+                            )
+                        ).scalar_one()
+                    majority_result = sr.compute_majority_slot(avail, int(member_count), unavail)
+                    if majority_result is not None:
+                        primary = majority_result.primary
+                        slot_context["manual_chosen_time"] = {
+                            "date": primary["date"],
+                            "start_idx": int(primary["start_idx"]),
+                            "end_idx": int(primary["end_idx"]),
+                        }
+                        logger.info(
+                            "[TIMEBAR] majority slot injected room=%s %s..%s",
+                            room_id, primary["start_idx"], primary["end_idx"],
+                        )
+                except (TypeError, ValueError):
+                    pass
+                except Exception:
+                    logger.warning(
+                        "majority slot calc failed for room %s", room_id, exc_info=True,
+                    )
+
             if timebar_data:
                 pre_extracted = slot_context.get("pre_extracted_signals")
                 if not isinstance(pre_extracted, dict):
@@ -444,15 +492,31 @@ async def _run_auto_trigger_pipeline(
                 slot_context["date_hints"] = timebar_data.get("date_hints", [])
                 slot_context["parsed_time_hint"] = timebar_data.get("parsed_time_hint")
                 slot_context["time_options"] = timebar_data.get("time_options", [])
-                consensus_label = timebar_data.get("consensus_label")
-                if consensus_label:
-                    slot_context["confirmed_time"] = consensus_label
+                # manual_chosen_time 박힌 경우 confirmed_time 은 slot.py 가 정확히 산출 → 덮어쓰지 않음
+                if not slot_context.get("manual_chosen_time"):
+                    consensus_label = timebar_data.get("consensus_label")
+                    if consensus_label:
+                        slot_context["confirmed_time"] = consensus_label
 
         async with AsyncSessionLocal() as session:
+            # 해결점 K: requester_* 주입 — compute_preference_toggle_enabled가
+            # state.requester_home_base / state.requester_preferences를 참조하므로
+            # None이면 C4 즉시 발동 → toggle 항상 false. 발화자 정보를 여기서 주입.
+            if viewer_user_id is not None:
+                try:
+                    requester_ctx = await load_requester_context(session, viewer_user_id)
+                    slot_context["requester_user_id"] = requester_ctx.get("requester_user_id")
+                    slot_context["requester_home_base"] = requester_ctx.get("requester_home_base")
+                    slot_context["requester_preferences"] = requester_ctx.get("requester_preferences")
+                except Exception:
+                    logger.warning(
+                        "load_requester_context failed for user %s room %s",
+                        viewer_user_id, room_id, exc_info=True,
+                    )
             context = await MessageReader.load_agent_context(
                 session=session,
                 room_id=room_pk_val,
-                viewer_user_id=None,
+                viewer_user_id=viewer_user_id,
             )
             result = await run_pipeline(
                 room_id,
@@ -715,13 +779,21 @@ async def agent_ws(
             if not trigger_content:
                 continue
 
+            # user-explicit 트리거 (호스트 A3-2 "추천 시간 그대로 확정" 클릭) 는
+            # 짧은 시간 안에 stalemate→all_members_selected 연속 발생 정상 시나리오 → debounce 예외.
+            trigger_reason_early = trigger.get("trigger_reason", "")
+            is_user_explicit_confirm = trigger_reason_early == "all_members_selected"
+
             # room-singleton lock (Phase 3 eng review §3.4):
             # N users connected = N subscribers to shared channel, all dequeue the trigger.
             # Redis SET NX picks one winner per room; others skip pipeline execution so the
             # AI doesn't run N times per auto-trigger.
             nx_key = f"nx_autotrigger:{room_id}"
             acquired = False
-            if r is not None:
+            if is_user_explicit_confirm:
+                # user-explicit 트리거는 NX lock 우회 — 호스트 확정 명령 묵음 폐기 방지
+                acquired = True
+            elif r is not None:
                 try:
                     acquired = bool(
                         await r.set(
@@ -738,16 +810,18 @@ async def agent_ws(
                 )
                 continue
 
-            # Local debounce as a belt-and-suspenders guard (same-connection dup)
-            now = time.monotonic()
-            if now - _last_auto_trigger_time < _AUTO_TRIGGER_DEBOUNCE_SECONDS:
-                logger.debug(
-                    "Auto-trigger local-debounced for room %s (%.1fs since last)",
-                    room_id,
-                    now - _last_auto_trigger_time,
-                )
-                continue
-            _last_auto_trigger_time = now
+            # Local debounce as a belt-and-suspenders guard (same-connection dup).
+            # user-explicit 트리거는 local debounce 도 예외 — 호스트 의도 보존.
+            if not is_user_explicit_confirm:
+                now = time.monotonic()
+                if now - _last_auto_trigger_time < _AUTO_TRIGGER_DEBOUNCE_SECONDS:
+                    logger.debug(
+                        "Auto-trigger local-debounced for room %s (%.1fs since last)",
+                        room_id,
+                        now - _last_auto_trigger_time,
+                    )
+                    continue
+                _last_auto_trigger_time = now
 
             trigger_reason = trigger.get("trigger_reason", "")
             if trigger_intent not in {"meeting_schedule", "place_suggestion"}:
@@ -760,9 +834,29 @@ async def agent_ws(
             manual_time = trigger.get("manual_chosen_time")
             if isinstance(manual_time, dict):
                 sc["manual_chosen_time"] = manual_time
+
+            # P1 fix (v2): viewer_user_id = 실제 trigger 발화자.
+            # trigger_message_id가 있으면 해당 ChatMessage.user_id 조회 (stalemate / conclusion).
+            # 없으면 (all_members_selected 등) None으로 safe fallback — lock-winner(user_id_check)는
+            # multi-member 환경에서 임의 멤버 user_id가 될 수 있어 다른 멤버의 context 누출 위험.
+            # None 시 _run_auto_trigger_pipeline이 requester_* 주입을 graceful skip.
+            trigger_author_id: Optional[int] = None
+            trigger_msg_id = trigger.get("trigger_message_id")
+            if trigger_msg_id is not None:
+                try:
+                    async with AsyncSessionLocal() as _sess:
+                        _msg = await _sess.get(ChatMessage, int(trigger_msg_id))
+                        if _msg is not None and _msg.user_id is not None:
+                            trigger_author_id = _msg.user_id
+                except Exception:
+                    logger.debug(
+                        "[AUTO_TRIGGER] could not resolve trigger_message_id=%s, using None",
+                        trigger_msg_id,
+                    )
+
             logger.info(
-                "[AUTO_TRIGGER] passed filter: room=%s intent=%s reason=%s",
-                room_id, trigger_intent, trigger_reason,
+                "[AUTO_TRIGGER] passed filter: room=%s intent=%s reason=%s viewer=%s",
+                room_id, trigger_intent, trigger_reason, trigger_author_id,
             )
             try:
                 task = asyncio.create_task(
@@ -772,6 +866,7 @@ async def agent_ws(
                         trigger_intent,
                         trigger_reason,
                         sc,
+                        viewer_user_id=trigger_author_id,
                     )
                 )
                 task.add_done_callback(_log_detached_task_result)
@@ -1004,6 +1099,20 @@ async def agent_ws(
                 slot_context["trigger_message_text"] = content
 
                 async with AsyncSessionLocal() as session:
+                    # 해결점 K: requester_* 주입 — direct_request 발화자의 personal data를
+                    # slot_context에 주입. None이면 compute_preference_toggle_enabled가
+                    # C4 즉시 발동 → toggle 항상 false 회귀.
+                    try:
+                        requester_ctx = await load_requester_context(session, user_id_check)
+                        slot_context["requester_user_id"] = requester_ctx.get("requester_user_id")
+                        slot_context["requester_home_base"] = requester_ctx.get("requester_home_base")
+                        slot_context["requester_preferences"] = requester_ctx.get("requester_preferences")
+                    except Exception:
+                        logger.warning(
+                            "load_requester_context failed for user %s room %s",
+                            user_id_check, room_id, exc_info=True,
+                        )
+
                     context = await MessageReader.load_agent_context(
                         session=session,
                         room_id=room_pk,

@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>매듭 LangGraph 파이프라인 구조 — 장소/시간 영역</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --panel-2: #1c232c;
+    --border: #2a3340;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #f78166;        /* 사용자 영역 */
+    --accent-soft: #f7816622;
+    --accent-line: #f78166aa;
+    --other: #58a6ff;          /* 동료 영역 */
+    --other-soft: #58a6ff18;
+    --shared: #d2a8ff;         /* 공통 */
+    --shared-soft: #d2a8ff18;
+    --route: #a5d6a7;
+    --bad: #ff7b72;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 40px 80px;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", "Pretendard", "Noto Sans KR", system-ui, sans-serif;
+    font-size: 14px; line-height: 1.55;
+  }
+  h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  h2 { font-size: 17px; margin: 36px 0 14px; letter-spacing: -0.01em; }
+  h3 { font-size: 14px; margin: 0 0 8px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .legend { display: flex; gap: 18px; margin: 18px 0 4px; flex-wrap: wrap; font-size: 12px; }
+  .legend-item { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 12px; border: 1px solid var(--border); background: var(--panel); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; }
+  .dot.mine { background: var(--accent); }
+  .dot.other { background: var(--other); }
+  .dot.shared { background: var(--shared); }
+
+  /* === Pipeline flow === */
+  .flow {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px;
+    overflow-x: auto;
+  }
+  .row { display: flex; gap: 14px; align-items: stretch; margin: 8px 0; flex-wrap: wrap; }
+  .node {
+    position: relative;
+    min-width: 168px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    font-size: 13px;
+  }
+  .node.mine    { border-color: var(--accent-line); background: var(--accent-soft); }
+  .node.other   { border-color: #58a6ff66;          background: var(--other-soft); }
+  .node.shared  { border-color: #d2a8ff66;          background: var(--shared-soft); }
+  .node .num { color: var(--muted); font-size: 11px; letter-spacing: 0.05em; }
+  .node .name { font-weight: 700; margin-top: 2px; font-family: ui-monospace, "JetBrains Mono", Consolas, monospace; }
+  .node .meta { color: var(--muted); font-size: 11px; margin-top: 4px; }
+  .arrow { align-self: center; color: var(--muted); font-size: 18px; user-select: none; }
+  .route-label { font-size: 10px; color: var(--route); margin-top: 6px; line-height: 1.4; }
+
+  /* === Module tree === */
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px 20px;
+  }
+  .panel.mine   { border-color: var(--accent-line); }
+  .panel h2     { margin: 0 0 4px; font-size: 16px; }
+  .panel .sub   { margin-bottom: 14px; font-size: 12px; }
+  .file {
+    display: grid; grid-template-columns: 1fr auto auto;
+    gap: 10px; align-items: baseline;
+    padding: 9px 10px; border-radius: 8px;
+    border: 1px solid transparent;
+  }
+  .file + .file { margin-top: 2px; }
+  .file:hover { background: #ffffff08; border-color: var(--border); }
+  .file .path { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
+  .file.mine .path { color: var(--accent); }
+  .file.other .path { color: var(--other); }
+  .file.shared .path { color: var(--shared); }
+  .file .lines, .file .funcs { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .file .lines::before { content: "📄 "; }
+  .file .funcs::before { content: "ƒ "; }
+  .file .desc { grid-column: 1 / -1; color: var(--muted); font-size: 11.5px; margin-top: 2px; padding-left: 2px; }
+
+  /* === Stats === */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin: 8px 0 0; }
+  @media (max-width: 900px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+  .stat {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .stat .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .stat .value { font-size: 22px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .stat.mine .value { color: var(--accent); }
+
+  /* === Owner block === */
+  .owner-detail {
+    background: linear-gradient(180deg, var(--accent-soft) 0%, transparent 60%);
+    border: 1px solid var(--accent-line);
+    border-radius: 14px; padding: 22px 26px;
+  }
+  .owner-detail ul { margin: 8px 0 0; padding-left: 18px; }
+  .owner-detail li { margin-bottom: 6px; }
+  .owner-detail code {
+    background: #00000040; padding: 1px 6px; border-radius: 4px;
+    font-size: 12px; font-family: ui-monospace, Consolas, monospace;
+  }
+
+  .footer { margin-top: 40px; color: var(--muted); font-size: 11px; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>매듭 LangGraph 파이프라인 구조</h1>
+<div class="sub">
+  단일 파일 5,301줄 → 24 모듈 패키지로 분리 완료 (Phase 5.2, 2026-05-13).
+  본인 영역(<b style="color:var(--accent)">장소 추천 · 시간 조율</b>)을 색으로 강조.
+</div>
+
+<div class="legend">
+  <span class="legend-item"><span class="dot mine"></span> 내 영역 (장소/시간)</span>
+  <span class="legend-item"><span class="dot other"></span> 동료 영역</span>
+  <span class="legend-item"><span class="dot shared"></span> 공통 (graph/state/messaging)</span>
+</div>
+
+<!-- ============================================== -->
+<h2>📊 한눈에 보는 분할 결과</h2>
+<div class="stats">
+  <div class="stat"><div class="label">원본 단일 파일</div><div class="value">5,301줄</div></div>
+  <div class="stat"><div class="label">현재 shim</div><div class="value">31줄</div></div>
+  <div class="stat"><div class="label">총 모듈 수</div><div class="value">24개</div></div>
+  <div class="stat mine"><div class="label">내 영역 모듈</div><div class="value">7개</div></div>
+</div>
+
+<!-- ============================================== -->
+<h2>🔀 LangGraph 9-노드 흐름</h2>
+<div class="flow">
+
+  <h3>진입 분기 (trigger_reason 기반)</h3>
+  <div class="row">
+    <div class="node shared">
+      <div class="num">START</div>
+      <div class="name">_route_from_start</div>
+      <div class="route-label">trigger_reason →</div>
+    </div>
+    <span class="arrow">→</span>
+    <div class="node other">
+      <div class="num">노드 1</div>
+      <div class="name">intent_detection</div>
+      <div class="meta">의도 분류</div>
+    </div>
+    <span class="arrow">|</span>
+    <div class="node other">
+      <div class="num">노드 1.5</div>
+      <div class="name">general_response</div>
+      <div class="meta">잡담 응답</div>
+    </div>
+    <span class="arrow">|</span>
+    <div class="node other">
+      <div class="num">노드 2</div>
+      <div class="name">entity_extraction</div>
+      <div class="meta">엔티티 추출</div>
+    </div>
+  </div>
+
+  <h3 style="margin-top:18px">🟧 시간 조율 (내 영역)</h3>
+  <div class="row">
+    <div class="node mine">
+      <div class="num">노드 3</div>
+      <div class="name">slot_filling</div>
+      <div class="meta">date/time/place/headcount 슬롯</div>
+      <div class="route-label">9 분기 (stalemate / conclusion / all_members / default ×6)</div>
+    </div>
+    <span class="arrow">→</span>
+    <div class="node other">
+      <div class="num">노드 4</div>
+      <div class="name">function_calling</div>
+      <div class="meta">캘린더 조회 / 장소 검색 호출</div>
+    </div>
+    <span class="arrow">→</span>
+    <div class="node other">
+      <div class="num">노드 5</div>
+      <div class="name">supervisor_validation</div>
+      <div class="meta">결과 검증 + 라우팅</div>
+    </div>
+  </div>
+
+  <h3 style="margin-top:18px">🟧 결과 카드 분기</h3>
+  <div class="row">
+    <div class="node other">
+      <div class="num">노드 6a</div>
+      <div class="name">vote_card_creation</div>
+      <div class="meta">시간대 투표 카드</div>
+    </div>
+    <span class="arrow">|</span>
+    <div class="node mine">
+      <div class="num">노드 6b</div>
+      <div class="name">place_recommendation</div>
+      <div class="meta">장소 추천 카드 + self-correction</div>
+    </div>
+    <span class="arrow">→</span>
+    <div class="node other">
+      <div class="num">노드 7</div>
+      <div class="name">maedeup_card_creation</div>
+      <div class="meta">최종 매듭 카드</div>
+    </div>
+    <span class="arrow">→</span>
+    <div class="node other">
+      <div class="num">background</div>
+      <div class="name">memory_extraction</div>
+      <div class="meta">fire-and-forget (P0-2)</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ============================================== -->
+<h2>🟧 내 영역 상세 (장소 추천 + 시간 조율)</h2>
+<div class="owner-detail">
+  <p style="margin:0 0 4px"><b>책임 범위</b>: 시간 슬롯 후보 생성 → 추천 노드 직전까지의 전체 파이프라인.</p>
+  <ul>
+    <li><b>노드</b>: <code>slot_filling</code>(시간/날짜/인원/장소힌트 슬롯), <code>place_recommendation</code>(Kakao + ML 추천 + self-correction)</li>
+    <li><b>helpers</b>: <code>slots.py</code>(get_free_slots, multi-date builder) · <code>slot_state.py</code> · <code>dates.py</code>(자연어 날짜) · <code>places.py</code>(cuisine 필터, search_place) · <code>preferences.py</code>(멤버 식단/시간 제약)</li>
+    <li><b>총 라인</b>: 약 <b>3,121줄</b> (전체의 ~52%) — 장소/시간 도메인이 코드 표면적 절반 이상.</li>
+    <li><b>건드리지 말 것</b>: <code>graph.py</code>의 라우터 — <code>_route_after_slot_filling</code> / <code>_route_after_validation</code>은 동료가 의도 분류·검증과 함께 관리.</li>
+  </ul>
+</div>
+
+<!-- ============================================== -->
+<h2>📦 모듈별 파일 (라인 · 함수)</h2>
+<div class="grid">
+
+  <!-- 내 영역 -->
+  <div class="panel mine">
+    <h2 style="color:var(--accent)">🟧 내 영역 — 장소 추천 + 시간 조율</h2>
+    <div class="sub">7 파일 · 약 3,121줄 · 59 함수</div>
+
+    <h3 style="margin-top:14px">노드 (2)</h3>
+    <div class="file mine">
+      <div class="path">nodes/place.py</div>
+      <div class="lines">363줄</div><div class="funcs">2</div>
+      <div class="desc">place_recommendation 노드 + self-correction 헬퍼. Kakao + ML 추천 통합.</div>
+    </div>
+    <div class="file mine">
+      <div class="path">nodes/slot.py</div>
+      <div class="lines">432줄</div><div class="funcs">10</div>
+      <div class="desc">slot_filling 노드 + 9 분기 (stalemate / conclusion / all_members / default 6종).</div>
+    </div>
+
+    <h3 style="margin-top:14px">Helpers (5)</h3>
+    <div class="file mine">
+      <div class="path">helpers/slots.py</div>
+      <div class="lines">798줄</div><div class="funcs">11</div>
+      <div class="desc">가장 큰 헬퍼. get_free_slots 단독 225줄 + multi-date / preference 빌더.</div>
+    </div>
+    <div class="file mine">
+      <div class="path">helpers/preferences.py</div>
+      <div class="lines">544줄</div><div class="funcs">7</div>
+      <div class="desc">방 멤버 식단·시간 제약, social context, meeting preference 로딩.</div>
+    </div>
+    <div class="file mine">
+      <div class="path">helpers/dates.py</div>
+      <div class="lines">368줄</div><div class="funcs">14</div>
+      <div class="desc">한국 휴일, 요일, ISO 변환, Gemini 기반 자연어 날짜 파싱.</div>
+    </div>
+    <div class="file mine">
+      <div class="path">helpers/places.py</div>
+      <div class="lines">264줄</div><div class="funcs">7</div>
+      <div class="desc">한국 지명 패턴, cuisine 키워드, Kakao 검색, place_hint 해석.</div>
+    </div>
+    <div class="file mine">
+      <div class="path">helpers/slot_state.py</div>
+      <div class="lines">152줄</div><div class="funcs">8</div>
+      <div class="desc">슬롯 state 업데이트, preferred_time 정규화, snapshot.</div>
+    </div>
+  </div>
+
+  <!-- 동료 영역 -->
+  <div class="panel">
+    <h2 style="color:var(--other)">🟦 동료 영역 — 의도/엔티티/검증/카드/메모리</h2>
+    <div class="sub">8 파일 · 약 2,141줄 · 22 함수</div>
+
+    <h3 style="margin-top:14px">노드 (8)</h3>
+    <div class="file other">
+      <div class="path">nodes/intent.py</div>
+      <div class="lines">267줄</div><div class="funcs">3</div>
+      <div class="desc">intent_detection + general_response. Gemini 의도 분류.</div>
+    </div>
+    <div class="file other">
+      <div class="path">nodes/entity.py</div>
+      <div class="lines">574줄</div><div class="funcs">3</div>
+      <div class="desc">entity_extraction. date/place/headcount/rejected_dates 추출.</div>
+    </div>
+    <div class="file other">
+      <div class="path">nodes/function_call.py</div>
+      <div class="lines">172줄</div><div class="funcs">1</div>
+      <div class="desc">function_calling. 캘린더 조회 + search_place 호출 디스패치.</div>
+    </div>
+    <div class="file other">
+      <div class="path">nodes/validation.py</div>
+      <div class="lines">121줄</div><div class="funcs">1</div>
+      <div class="desc">supervisor_validation. 카드 발행 전 결과 검증.</div>
+    </div>
+    <div class="file other">
+      <div class="path">nodes/vote_card.py</div>
+      <div class="lines">299줄</div><div class="funcs">3</div>
+      <div class="desc">vote_card_creation. 시간대 투표 카드 + meeting pending.</div>
+    </div>
+    <div class="file other">
+      <div class="path">nodes/maedeup.py</div>
+      <div class="lines">204줄</div><div class="funcs">2</div>
+      <div class="desc">maedeup_card_creation. 최종 매듭 카드 + calendar 등록.</div>
+    </div>
+    <div class="file other">
+      <div class="path">nodes/memory.py</div>
+      <div class="lines">250줄</div><div class="funcs">4</div>
+      <div class="desc">memory_extraction. graph 밖에서 fire-and-forget (P0-2).</div>
+    </div>
+    <div class="file other">
+      <div class="path">nodes/conversation_analyzer.py</div>
+      <div class="lines">303줄</div><div class="funcs">2</div>
+      <div class="desc">_analyze_conversation + suggest_alternative_slots. agent.py에서 직접 호출.</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ============================================== -->
+<h2>🟪 공통 코어 (양쪽이 같이 쓰는 모듈)</h2>
+<div class="panel">
+  <div class="sub" style="margin-bottom:14px">9 파일 · 약 814줄. 수정은 합의 필요.</div>
+  <div class="grid" style="gap:6px">
+    <div>
+      <div class="file shared">
+        <div class="path">graph.py</div>
+        <div class="lines">321줄</div><div class="funcs">8</div>
+        <div class="desc">_build_graph + 6개 라우터 (_route_after_*) + run_pipeline 엔트리.</div>
+      </div>
+      <div class="file shared">
+        <div class="path">state.py</div>
+        <div class="lines">249줄</div><div class="funcs">5</div>
+        <div class="desc">GraphState TypedDict + _default_state + _serialize_context.</div>
+      </div>
+      <div class="file shared">
+        <div class="path">constants.py</div>
+        <div class="lines">32줄</div><div class="funcs">0</div>
+        <div class="desc">KST, SLOT_MINUTES, GOOGLE_FREEBUSY_URL, INTENT_CONFIDENCE_THRESHOLD 등 23개.</div>
+      </div>
+      <div class="file shared">
+        <div class="path">helpers/messaging.py</div>
+        <div class="lines">168줄</div><div class="funcs">4</div>
+        <div class="desc">_emit_assistant_message, _has_node_error, _compress_message_history.</div>
+      </div>
+    </div>
+    <div>
+      <div class="file shared">
+        <div class="path">helpers/formatting.py</div>
+        <div class="lines">81줄</div><div class="funcs">6</div>
+        <div class="desc">_format_slot_label, _user_calendar_key, _infer_time_bucket.</div>
+      </div>
+      <div class="file shared">
+        <div class="path">helpers/json_extract.py</div>
+        <div class="lines">82줄</div><div class="funcs">3</div>
+        <div class="desc">Gemini 응답에서 loose JSON 추출.</div>
+      </div>
+      <div class="file shared">
+        <div class="path">../langgraph_pipeline.py</div>
+        <div class="lines">31줄</div><div class="funcs">0</div>
+        <div class="desc">호환성 shim. 외부 4 파일 import 사이트를 흡수.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================== -->
+<h2>🔗 내 영역 의존 그래프</h2>
+<div class="flow">
+  <div class="row">
+    <div class="node mine">
+      <div class="name">nodes/place.py</div>
+      <div class="meta">depends on ↓</div>
+    </div>
+    <span class="arrow">→</span>
+    <div class="node mine"><div class="name">helpers/places.py</div></div>
+    <div class="node mine"><div class="name">helpers/preferences.py</div></div>
+    <div class="node shared"><div class="name">helpers/messaging.py</div></div>
+    <div class="node shared"><div class="name">helpers/json_extract.py</div></div>
+  </div>
+  <div class="row">
+    <div class="node mine">
+      <div class="name">nodes/slot.py</div>
+      <div class="meta">depends on ↓</div>
+    </div>
+    <span class="arrow">→</span>
+    <div class="node mine"><div class="name">helpers/slot_state.py</div></div>
+    <div class="node mine"><div class="name">helpers/preferences.py</div></div>
+    <div class="node shared"><div class="name">helpers/messaging.py</div></div>
+    <div class="node shared"><div class="name">constants.KST</div></div>
+  </div>
+  <div class="row">
+    <div class="node mine">
+      <div class="name">helpers/slots.py</div>
+      <div class="meta">depends on ↓ (가장 의존성 깊음)</div>
+    </div>
+    <span class="arrow">→</span>
+    <div class="node mine"><div class="name">helpers/dates.py</div></div>
+    <div class="node mine"><div class="name">helpers/slot_state.py</div></div>
+    <div class="node shared"><div class="name">helpers/formatting.py</div></div>
+    <div class="node shared"><div class="name">constants.*</div></div>
+  </div>
+</div>
+
+<div class="footer">
+  매듭 (Maedeup) · 졸업 프로젝트 · 분리 SoT: docs/handoff/2026-05-13-pipeline-split-plan.md
+</div>
+
+</body>
+</html>

@@ -16,6 +16,8 @@ class Settings(BaseSettings):
 
     GEMINI_API_KEY: str = ""
     PAID_GEMINI_API_KEY: str = ""
+    # true면 PAID_GEMINI_API_KEY 우선 사용. false(기본)면 free tier GEMINI_API_KEY만 사용.
+    USE_PAID_GEMINI: bool = False
     KAKAO_API_KEY: str = ""
     KAKAO_REST_API_KEY: str = ""
 
@@ -24,13 +26,16 @@ class Settings(BaseSettings):
     # 라이브 Gemini 호출에 대한 안전망.
     DEMO_FALLBACK_ENABLED: bool = False
 
-    # 시연 안정성: true면 Google Calendar 자동 INSERT 차단 (반복 시연 시 캘린더 누적 방지).
-    DISABLE_CALENDAR_SYNC: bool = False
-
     @property
     def effective_gemini_api_key(self) -> str:
-        """PAID 키가 있으면 우선 사용 (free tier quota 우회). 둘 다 비면 빈 문자열."""
-        return (self.PAID_GEMINI_API_KEY or self.GEMINI_API_KEY).strip()
+        """USE_PAID_GEMINI=true면 PAID 우선, 아니면 free tier GEMINI_API_KEY 사용."""
+        if self.USE_PAID_GEMINI and self.PAID_GEMINI_API_KEY:
+            return self.PAID_GEMINI_API_KEY.strip()
+        return self.GEMINI_API_KEY.strip()
+
+    # 모임 confirm 시 구성원 Google Calendar 자동 등록 여부.
+    # 기본 True (운영 환경 안전). 시연 중 반복 confirm으로 캘린더 오염 방지 시 false 설정.
+    AUTO_CALENDAR_PUSH: bool = True
 
     def required_env_fields(self) -> list[str]:
         required = [
@@ -48,7 +53,7 @@ class Settings(BaseSettings):
         missing: list[str] = []
 
         if not self.effective_gemini_api_key:
-            missing.append("GEMINI_API_KEY (or PAID_GEMINI_API_KEY)")
+            missing.append("GEMINI_API_KEY")
         if not self.GOOGLE_CLIENT_ID.strip():
             missing.append("GOOGLE_CLIENT_ID")
         if not self.GOOGLE_CLIENT_SECRET.strip():

@@ -34,7 +34,9 @@ def upgrade() -> None:
             "payload",
             sa.JSON(),
             nullable=False,
-            server_default=sa.text("'{}'::json"),
+            # dialect-agnostic: postgres·sqlite 양쪽에서 JSON 컬럼에 '{}' valid.
+            # postgres `::json` cast는 불필요, sqlite는 토큰 인식 못함.
+            server_default=sa.text("'{}'"),
         ),
         sa.Column("read_at", sa.DateTime(), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),

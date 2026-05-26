@@ -68,7 +68,6 @@ export default function CreateMeetingPage() {
           justifyContent: "center",
           gap: 28,
           padding: "32px 40px",
-          maxWidth: 1440,
           margin: "0 auto",
         }}
       >

@@ -17,7 +17,7 @@ export default function QuickPreferences() {
 
   return (
     <div
-      className="rounded-[20px] flex flex-col overflow-hidden border border-[#e2e8f0] shadow-[0_4px_10.5px_rgba(0,0,0,0.08)] w-full max-w-full lg:max-w-[414px]"
+      className="rounded-[20px] flex flex-col overflow-hidden border border-[#e2e8f0] shadow-[0_4px_10.5px_rgba(0,0,0,0.08)] w-full"
       style={{ minHeight: 490 }}
     >
       {/* Gradient header */}

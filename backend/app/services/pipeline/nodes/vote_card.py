@@ -26,6 +26,7 @@ from typing import Any
 from sqlmodel import select
 
 from app.db.session import AsyncSessionLocal
+from app.observability.snapshot import dump
 from app.models.meeting import MeetingSchedule
 from app.models.room import RoomMember
 from app.services.pipeline.helpers.dates import _parse_iso_datetime
@@ -37,6 +38,10 @@ from app.services.pipeline.helpers.messaging import (
     _emit_assistant_message,
     _handle_node_exception,
     _has_node_error,
+)
+from app.services.pipeline.helpers.preference_toggle import (
+    compute_preference_source,
+    compute_preference_toggle_enabled,
 )
 from app.services.pipeline.helpers.slot_state import _normalize_preferred_times
 from app.services.pipeline.helpers.slots import _filter_out_rejected
@@ -175,6 +180,13 @@ async def _ensure_pending_meeting_id(state: GraphState, title: str) -> int:
 
 async def vote_card_creation(state: GraphState) -> GraphState:
     _t0 = time.monotonic()
+    dump("node_in", state.get("run_id"), {
+        "node": "vote_card_creation",
+        "status": state.get("status"),
+        "trigger_reason": state.get("trigger_reason"),
+        "has_card": bool(state.get("maedeup_card_payload") or state.get("vote_card_payload")),
+        "message_count": len(state.get("message_records", [])),
+    })
     try:
         if _has_node_error(state):
             return state
@@ -185,6 +197,30 @@ async def vote_card_creation(state: GraphState) -> GraphState:
                 await _emit_assistant_message(state["room_id"], db, narrator, state, shared=True)
             state["status"] = "vote_card_skipped"
             logger.info("[TIMING] vote_card_creation: skipped (no date selection) %.2fs", time.monotonic() - _t0)
+            return state
+
+        # PR-V1.5: F1 외 0 슬롯 reason 분기 narrator.
+        zero_reason = state.get("zero_slot_reason")
+        if zero_reason and not state.get("calendar_free_slots"):
+            if zero_reason == "calendar_consent_zero":
+                narrator = (
+                    "캘린더 동의 후 다시 시도해주세요. "
+                    "오른쪽 설정에서 캘린더 연동을 켜실 수 있어요."
+                )
+            elif zero_reason == "all_blocked":
+                narrator = (
+                    "이번 주 모든 후보가 거부됐어요. 다음 주로 확장할까요? "
+                    "또는 다른 날짜를 제안해주세요."
+                )
+            else:
+                narrator = "일정 후보를 찾지 못했어요. 다른 날짜를 알려주세요."
+            async with AsyncSessionLocal() as db:
+                await _emit_assistant_message(state["room_id"], db, narrator, state, shared=True)
+            state["status"] = "vote_card_skipped"
+            logger.info(
+                "[TIMING] vote_card_creation: skipped (zero_slot_reason=%s) %.2fs",
+                zero_reason, time.monotonic() - _t0,
+            )
             return state
 
         selected_slot = state["calendar_free_slots"][0] if state.get("calendar_free_slots") else {}
@@ -201,11 +237,12 @@ async def vote_card_creation(state: GraphState) -> GraphState:
         # Fix 8b (2026-05-14): direct_request인 경우 단일 슬롯도 카드 발행.
         # "내일 오후 6시 잡아줘"처럼 사용자가 명시 시간 지정한 케이스 — 카드 보장.
         is_preference_based = state.get("calendar_strategy") == "preference_based"
-        is_direct_request = state.get("trigger_reason") == "direct_request"
+        # PR-Y1 (F1 fallback): majority_fallback 전략은 슬롯 수와 무관하게 항상 투표 카드 발행.
+        is_majority_fallback = state.get("calendar_strategy") == "majority_fallback"
         if (
             not is_multi_date
             and not is_preference_based
-            and not is_direct_request
+            and not is_majority_fallback
             and len(calendar_slots) <= 1
         ):
             state["status"] = "vote_card_skipped"
@@ -299,19 +336,29 @@ async def vote_card_creation(state: GraphState) -> GraphState:
                     "is_holiday": slot.get("is_holiday", False),
                     "holiday_name": slot.get("holiday_name"),
                     "is_weekend": slot.get("is_weekend", False),
+                    # PR-Y1: F1 fallback에서 활용하는 가능 멤버 수 / 불참자 필드.
+                    "available_count": slot.get("available_count"),
+                    "total_count": slot.get("total_count"),
+                    "unavailable_users": slot.get("unavailable_users", []),
                 }
                 for slot in vote_slots
             ],
             "headcount": state.get("headcount"),
             "blocker_notification": state.get("blocker_notification_payload"),
             "calendar_strategy": state.get("calendar_strategy"),
+            # PR-Z1 (Q7=B): hybrid 그룹/발화자 토글 메타.
+            "preference_source": compute_preference_source(state),
+            "preference_toggle_enabled": compute_preference_toggle_enabled(state),
         }
         state["status"] = "vote_card_created"
 
         # ── Narrator 메시지 큐에 넣기 (해결점 L: EARLY-EMIT 제거, 정상 emit 경로 단일화)
         try:
             best_label = state.get("calendar_free_slots", [{}])[0].get("label", "")
-            if state.get("date_conflict"):
+            if state.get("calendar_strategy") == "majority_fallback":
+                # PR-Y1 (F1 fallback, spec §4.4): 전원 가능 슬롯이 없을 때 다수결 추천.
+                narrator = "전원 가능한 시간이 없어 다수결로 추천드려요. 가장 많은 멤버가 가능한 3개 시간 중 골라주세요. 📅"
+            elif state.get("date_conflict"):
                 summary = state.get("date_selection_summary", {})
                 parts = [f"{d}: {c}명" for d, c in sorted(summary.items(), key=lambda x: -x[1])]
                 narrator = f"날짜가 엇갈리네요 ({', '.join(parts)}). 가장 많이 선택된 날짜 기준으로 {best_label}을(를) 추천드려요. 📅"
@@ -323,6 +370,12 @@ async def vote_card_creation(state: GraphState) -> GraphState:
             logger.debug("vote_card narrator emit failed", exc_info=True)
 
         logger.info("[TIMING] vote_card_creation: %.2fs", time.monotonic() - _t0)
+        dump("node_out", state.get("run_id"), {
+            "node": "vote_card_creation",
+            "status_after": state.get("status"),
+            "card_type": (state.get("vote_card_payload") or {}).get("type"),
+            "slot_count": len(state.get("calendar_free_slots", [])),
+        })
         return state
     except Exception as exc:
         return await _handle_node_exception("vote_card_creation", state, exc)

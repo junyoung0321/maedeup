@@ -101,7 +101,7 @@ export default function FriendList() {
 
   return (
     <>
-      <div className="bg-white rounded-[20px] p-4 sm:p-5 flex flex-col border border-[#e2e8f0] shadow-[0_4px_2.7px_rgba(0,0,0,0.25)] h-auto lg:h-[620px] min-h-[420px] w-full">
+      <div className="bg-white rounded-[20px] p-4 sm:p-5 flex flex-col border border-[#e2e8f0] shadow-[0_4px_2.7px_rgba(0,0,0,0.25)] h-auto lg:h-[806px] min-h-[546px] w-full">
         {/* Header */}
         <div className="flex items-start justify-between">
           <div>
@@ -184,7 +184,7 @@ export default function FriendList() {
               const isDeleting = deletingIds.has(friend.id);
               return (
                 <div key={friend.id}>
-                  <div className="flex items-center gap-3" style={{ height: 72 }}>
+                  <div className="flex items-center gap-3" style={{ minHeight: 72 }}>
                     <div
                       className="w-[44px] h-[44px] rounded-full flex items-center justify-center text-[#334155] text-[14px] font-semibold shrink-0"
                       style={{ backgroundColor: AVATAR_PALETTE[friend.id % AVATAR_PALETTE.length] }}

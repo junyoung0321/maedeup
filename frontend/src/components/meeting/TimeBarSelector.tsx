@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, Clock } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
@@ -46,6 +46,12 @@ interface TimeBarSelectorProps {
   // 방 선호 시간대 ({start: 18, end: 21} 같은 hour range, end는 exclusive).
   // null/undefined면 기존 동작 (전체 범위 longest streak).
   preferredTimeRange?: { start: number; end: number } | null;
+  // Option C: 호스트 in-card 확정 콜백 — schedule_consensus_ready 도달 후 호스트만 호출.
+  onHostFinalize?: (snapshotHash: string) => Promise<void>;
+  // ACT3 timing fix: InfoPane에서 "이 시간으로 확정" 클릭 여부 전달.
+  // isConfirming은 async 완료 전 마이크로태스크 1틱만 true → 사용자에게 안 보임.
+  // hostFinalizeClicked는 두 옵션 카드가 unmount될 때까지 유지 → 버튼 비활성화 시각 보장.
+  hostFinalizeClicked?: boolean;
 }
 
 function slotToTime(slotIndex: number): string {
@@ -92,13 +98,16 @@ function isBusyAtSlot(
   return false;
 }
 
-export default function TimeBarSelector({ date, roomId, onConfirm, onBack, preferredTimeRange }: TimeBarSelectorProps) {
+export default function TimeBarSelector({ date, roomId, onConfirm, onBack, preferredTimeRange, onHostFinalize, hostFinalizeClicked }: TimeBarSelectorProps) {
   const [memberData, setMemberData] = useState<Record<string, MemberBusyPeriod[]> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectionStart, setSelectionStart] = useState<number | null>(null);
   const [selectionEnd, setSelectionEnd] = useState<number | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
+  // server prefill(myTimeSelection) restore 직후 broadcast echo-back 방지 guard.
+  // restore effect 가 true 로 세팅 → sendTimeSelection useEffect 에서 1회 skip → 즉시 false 로 reset.
+  const restoredFromServer = useRef<boolean>(false);
 
   const { user } = useAuth();
   const myName = user?.name ?? "나";
@@ -116,9 +125,37 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
     infoPanePhase === "placeConfirmed" ||
     infoPanePhase === "done";
 
+  // Option C: 호스트 in-card 확정 — scheduleConsensus 도달 시 호스트 버튼 노출.
+  const scheduleConsensus = meeting?.scheduleConsensus ?? null;
+  const consensusReached = scheduleConsensus !== null;
+  // 호스트 식별: InfoPane.tsx:65~83 의 getCurrentUserIdFromToken 패턴 인라인 복제.
+  // utils 추출은 Commit 4 단계 (현재는 변경 최소화 원칙).
+  const currentUserId = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    const token = localStorage.getItem("auth_token");
+    if (!token) return null;
+    try {
+      const payloadPart = token.split(".")[1];
+      if (!payloadPart) return null;
+      const normalized = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
+      const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+      const decoded = JSON.parse(atob(padded));
+      if (decoded?.sub) {
+        const asNum = Number(decoded.sub);
+        if (Number.isFinite(asNum)) return asNum;
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }, []);
+  const isHost = consensusReached && scheduleConsensus.host_user_id === currentUserId;
+
   // 리프레시 복구: 마운트 + date 변경 시 서버가 push한 내 이전 선택이 있으면 복원.
+  // restoredFromServer guard 마킹 → 아래 sendTimeSelection useEffect 가 echo-back broadcast skip.
   useEffect(() => {
     if (myTimeSelection && myTimeSelection.date === date) {
+      restoredFromServer.current = true;
       setSelectionStart(myTimeSelection.start);
       setSelectionEnd(myTimeSelection.end);
     }
@@ -198,16 +235,24 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
     return { counts, totalPeers: relevant.length };
   }, [peerTimeSelections, date]);
 
-  // 내 선택 변경 시 브로드캐스트
+  // 내 선택 변경 시 브로드캐스트 — range 완성 후에만 (단일 슬롯 race 방지).
+  // 시작만 클릭한 상태에서는 backend availability 부분 등록 차단 — TimeBar 즉시 unmount 방지.
+  // server prefill restore 직후 1회 echo-back 방지: restoredFromServer guard 체크.
   useEffect(() => {
     if (!sendTimeSelection) return;
+    // server prefill restore 직후 broadcast skip (echo-back → 즉시 consensus 방지)
+    if (restoredFromServer.current) {
+      restoredFromServer.current = false;
+      return;
+    }
     if (selectionStart === null) {
+      // 선택 클리어
       sendTimeSelection(date, null, null);
       return;
     }
-    // 끝 선택 전 (단일 slot)도 실시간으로 보여줌
-    const endVal = selectionEnd ?? selectionStart;
-    sendTimeSelection(date, selectionStart, endVal);
+    // 끝 슬롯 미선택 상태에서는 broadcast 보류
+    if (selectionEnd === null) return;
+    sendTimeSelection(date, selectionStart, selectionEnd);
   }, [selectionStart, selectionEnd, date, sendTimeSelection]);
 
   // 날짜 바뀌면 현재 선택 리셋 (이전 날짜의 선택이 새 날짜에 이어지지 않게)
@@ -352,10 +397,10 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
         textAlign: "center",
         fontFamily: "Pretendard Variable, Pretendard, sans-serif",
       }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: "#4f46e5", marginBottom: 8 }}>
+        <div style={{ fontSize: 21, fontWeight: 600, color: "#4f46e5", marginBottom: 8 }}>
           가용성 조회 중...
         </div>
-        <div style={{ fontSize: 13, color: "#64748b" }}>
+        <div style={{ fontSize: 20, color: "#64748b" }}>
           멤버 일정을 확인하고 있어요
         </div>
       </div>
@@ -371,10 +416,10 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
         border: "1px solid #fecaca",
         fontFamily: "Pretendard Variable, Pretendard, sans-serif",
       }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: "#dc2626", marginBottom: 4 }}>
+        <div style={{ fontSize: 21, fontWeight: 600, color: "#dc2626", marginBottom: 4 }}>
           가용성 조회 실패
         </div>
-        <div style={{ fontSize: 13, color: "#7f1d1d" }}>{error}</div>
+        <div style={{ fontSize: 20, color: "#7f1d1d" }}>{error}</div>
       </div>
     );
   }
@@ -406,8 +451,8 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
           <Clock style={{ width: 18, height: 18, color: "#4f46e5" }} />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: "#4f46e5" }}>시간 선택</span>
-          <span style={{ fontSize: 15, fontWeight: 700, color: "#1e293b" }}>{dateLabel}</span>
+          <span style={{ fontSize: 18, fontWeight: 600, color: "#4f46e5" }}>시간 선택</span>
+          <span style={{ fontSize: 23, fontWeight: 700, color: "#1e293b" }}>{dateLabel}</span>
         </div>
       </div>
 
@@ -428,7 +473,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
                 key={i}
                 style={{
                   width: CELL_WIDTH * 2,
-                  fontSize: 10,
+                  fontSize: 15,
                   fontWeight: 500,
                   color: "#94a3b8",
                   textAlign: "left",
@@ -446,7 +491,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
               role="rowheader"
               style={{
                 width: NAME_WIDTH,
-                fontSize: 11,
+                fontSize: 17,
                 fontWeight: 600,
                 color: "#4f46e5",
                 overflow: "hidden",
@@ -503,7 +548,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
               role="rowheader"
               style={{
                 width: NAME_WIDTH,
-                fontSize: 11,
+                fontSize: 17,
                 fontWeight: 500,
                 color: "#0369a1",
                 flexShrink: 0,
@@ -549,7 +594,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
               role="rowheader"
               style={{
                 width: NAME_WIDTH,
-                fontSize: 11,
+                fontSize: 17,
                 fontWeight: 700,
                 color: "#1e293b",
                 flexShrink: 0,
@@ -605,7 +650,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
       </div>
 
       {/* Legend */}
-      <div style={{ display: "flex", gap: 10, fontSize: 11, color: "#64748b", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 10, fontSize: 17, color: "#64748b", flexWrap: "wrap" }}>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ width: 12, height: 12, borderRadius: 3, background: COLOR_MY_PICK, display: "inline-block" }} /> 내 선택
         </span>
@@ -632,7 +677,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
           borderRadius: 10,
           background: "#eff6ff",
           border: "1px solid #bfdbfe",
-          fontSize: 13,
+          fontSize: 20,
           fontWeight: 500,
           color: "#1d4ed8",
         }}>
@@ -647,7 +692,7 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
           borderRadius: 10,
           background: "#eef2ff",
           border: "1px solid #c7d2fe",
-          fontSize: 13,
+          fontSize: 20,
           fontWeight: 600,
           color: "#4f46e5",
         }}>
@@ -657,46 +702,97 @@ export default function TimeBarSelector({ date, roomId, onConfirm, onBack, prefe
 
       {/* Help text */}
       {selectionStart === null && (
-        <div style={{ fontSize: 12, color: "#94a3b8", textAlign: "center" }}>
+        <div style={{ fontSize: 18, color: "#94a3b8", textAlign: "center" }}>
           시작 시간을 클릭한 후 끝 시간을 클릭하세요
         </div>
       )}
 
-      {/* Confirm button — F-5: 그룹 일정 확정 후 비활성화 + 안내 메시지 */}
-      {isMeetingConfirmed ? (
+      {/* Option C: 호스트 in-card 확정 — schedule_consensus_ready 도달 + 본인이 호스트일 때만 */}
+      {consensusReached && isHost && !isMeetingConfirmed && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+          <div style={{
+            padding: "10px 12px", borderRadius: 10,
+            background: "#eef2ff", border: "1px solid #c7d2fe",
+            fontSize: 20, fontWeight: 600, color: "#4338ca",
+            fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+          }}>
+            ✅ 모두 시간대를 골랐어요 — 위 그래프 확인 후 확정해주세요
+          </div>
+          <button
+            onClick={async () => {
+              if (!onHostFinalize || !scheduleConsensus) return;
+              setIsConfirming(true);
+              try {
+                await onHostFinalize(scheduleConsensus.snapshot_hash);
+              } finally {
+                setIsConfirming(false);
+              }
+            }}
+            disabled={isConfirming || !!hostFinalizeClicked}
+            style={{
+              width: "100%",
+              padding: "11px 14px", borderRadius: 10, border: "none",
+              background: isConfirming || hostFinalizeClicked ? "#cbd5e1" : "#4f46e5",
+              color: "#fff", fontSize: 21, fontWeight: 700,
+              cursor: isConfirming || hostFinalizeClicked ? "not-allowed" : "pointer",
+              fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+            }}
+          >
+            {isConfirming || hostFinalizeClicked ? "확정 중..." : "이 시간으로 확정"}
+          </button>
+        </div>
+      )}
+
+      {/* Option C: 게스트는 안내만 — 호스트 결재 대기 */}
+      {consensusReached && !isHost && !isMeetingConfirmed && (
         <div style={{
-          width: "100%",
-          padding: "10px 14px",
-          borderRadius: 14,
-          background: "#ecfdf5",
-          border: "1px solid #86efac",
-          color: "#166534",
-          fontSize: 13,
-          fontWeight: 700,
-          textAlign: "center",
+          padding: "10px 12px", borderRadius: 10,
+          background: "#f1f5f9", color: "#64748b",
+          fontSize: 20, fontWeight: 500, textAlign: "center", marginTop: 8,
           fontFamily: "Pretendard Variable, Pretendard, sans-serif",
         }}>
-          ✓ 일정이 확정되었습니다
+          ⏳ 방장 확정 대기 중 — 시간은 자유롭게 변경 가능합니다
         </div>
-      ) : (
-        <button
-          onClick={handleConfirm}
-          disabled={selectionStart === null || selectionEnd === null || isConfirming}
-          style={{
+      )}
+
+      {/* Confirm button — F-5: 그룹 일정 확정 후 비활성화 + 안내 메시지.
+          Option C: consensus 도달 후에는 숨김 — 호스트 in-card 버튼이 대신함. */}
+      {!consensusReached && (
+        isMeetingConfirmed ? (
+          <div style={{
             width: "100%",
-            padding: "12px 14px",
+            padding: "10px 14px",
             borderRadius: 14,
-            border: "none",
-            background: selectionStart === null || selectionEnd === null || isConfirming ? "#cbd5e1" : "#4f46e5",
-            color: "#ffffff",
-            cursor: selectionStart === null || selectionEnd === null || isConfirming ? "not-allowed" : "pointer",
-            fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-            fontSize: 14,
+            background: "#ecfdf5",
+            border: "1px solid #86efac",
+            color: "#166534",
+            fontSize: 20,
             fontWeight: 700,
-          }}
-        >
-          {isConfirming ? "확정 중..." : selectionLabel ? `${selectionLabel}로 확정` : "시간을 선택해주세요"}
-        </button>
+            textAlign: "center",
+            fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+          }}>
+            ✓ 일정이 확정되었습니다
+          </div>
+        ) : (
+          <button
+            onClick={handleConfirm}
+            disabled={selectionStart === null || selectionEnd === null || isConfirming}
+            style={{
+              width: "100%",
+              padding: "12px 14px",
+              borderRadius: 14,
+              border: "none",
+              background: selectionStart === null || selectionEnd === null || isConfirming ? "#cbd5e1" : "#4f46e5",
+              color: "#ffffff",
+              cursor: selectionStart === null || selectionEnd === null || isConfirming ? "not-allowed" : "pointer",
+              fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+              fontSize: 21,
+              fontWeight: 700,
+            }}
+          >
+            {isConfirming ? "확정 중..." : selectionLabel ? `${selectionLabel}로 확정` : "시간을 선택해주세요"}
+          </button>
+        )
       )}
     </div>
   );

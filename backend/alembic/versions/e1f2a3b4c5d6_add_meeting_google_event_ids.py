@@ -39,7 +39,8 @@ def upgrade() -> None:
                 "google_event_ids",
                 sa.JSON(),
                 nullable=False,
-                server_default=sa.text("'{}'::json"),
+                # dialect-agnostic: postgres·sqlite 양쪽에서 JSON 컬럼에 '{}' valid.
+                server_default=sa.text("'{}'"),
             ),
         )
 

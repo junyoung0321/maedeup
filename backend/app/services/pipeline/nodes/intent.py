@@ -21,6 +21,7 @@ import logging
 import re
 import time
 
+from app.observability.snapshot import dump
 from app.services.gemini import call_gemini
 from app.services.intent_classifier import classify_intent
 from app.services.meeting_history import get_recent_meeting_records
@@ -112,6 +113,13 @@ def _try_template_response(user_msg: str, state: GraphState) -> str | None:
 async def general_response(state: GraphState) -> GraphState:
     """일반 대화에 대해 Gemini로 친근한 응답을 반환합니다."""
     _t0 = time.monotonic()
+    dump("node_in", state.get("run_id"), {
+        "node": "general_response",
+        "status": state.get("status"),
+        "trigger_reason": state.get("trigger_reason"),
+        "has_card": bool(state.get("maedeup_card_payload") or state.get("vote_card_payload")),
+        "message_count": len(state.get("message_records", [])),
+    })
     try:
         if _has_node_error(state):
             return state
@@ -128,6 +136,12 @@ async def general_response(state: GraphState) -> GraphState:
             await _emit_assistant_message(state["room_id"], state["db"], template_reply, state)
             state["status"] = "general_response_sent"
             logger.info("[TIMING] general_response (template): %.2fs", time.monotonic() - _t0)
+            dump("node_out", state.get("run_id"), {
+                "node": "general_response",
+                "status_after": state.get("status"),
+                "card_type": None,
+                "slot_count": len(state.get("missing_slots", [])),
+            })
             return state
 
         # --- Gemini 호출이 필요한 실제 대화 ---
@@ -175,6 +189,12 @@ async def general_response(state: GraphState) -> GraphState:
         await _emit_assistant_message(state["room_id"], state["db"], reply, state)
         state["status"] = "general_response_sent"
         logger.info("[TIMING] general_response (gemini): %.2fs", time.monotonic() - _t0)
+        dump("node_out", state.get("run_id"), {
+            "node": "general_response",
+            "status_after": state.get("status"),
+            "card_type": None,
+            "slot_count": len(state.get("missing_slots", [])),
+        })
         return state
     except Exception as exc:
         return await _handle_node_exception("general_response", state, exc)
@@ -182,6 +202,13 @@ async def general_response(state: GraphState) -> GraphState:
 
 async def intent_detection(state: GraphState) -> GraphState:
     _t0 = time.monotonic()
+    dump("node_in", state.get("run_id"), {
+        "node": "intent_detection",
+        "status": state.get("status"),
+        "trigger_reason": state.get("trigger_reason"),
+        "has_card": bool(state.get("maedeup_card_payload") or state.get("vote_card_payload")),
+        "message_count": len(state.get("message_records", [])),
+    })
     try:
         if _has_node_error(state):
             return state
@@ -220,7 +247,9 @@ async def intent_detection(state: GraphState) -> GraphState:
                 # pref_keywords_loose보다 먼저 시도 — "강남 한식 추천해줘"가 loose에 잡혀 meeting_schedule로
                 # 오분류되는 사각지대 방지 (Codex review 2026-05-07 P2).
                 place_kw = _extract_korean_place_keyword(latest_user_message)
-                cuisine = _detect_cuisine_type(latest_user_message)
+                # PR-V1.5 / S18: _detect_cuisine_type → list[str]. 첫 매칭만 fast-path에 사용.
+                cuisines = _detect_cuisine_type(latest_user_message)
+                cuisine = cuisines[0] if cuisines else None
                 has_place_intent = bool(cuisine) or bool(_PLACE_INTENT_PATTERN.search(latest_user_message))
                 has_other_entities = bool(_OTHER_ENTITY_SIGNAL_PATTERN.search(latest_user_message))
                 if place_kw and has_place_intent and not has_other_entities:
@@ -262,6 +291,12 @@ async def intent_detection(state: GraphState) -> GraphState:
 
         state["status"] = "intent_detected"
         logger.info("[TIMING] intent_detection: %.2fs", time.monotonic() - _t0)
+        dump("node_out", state.get("run_id"), {
+            "node": "intent_detection",
+            "status_after": state.get("status"),
+            "card_type": None,
+            "slot_count": len(state.get("missing_slots", [])),
+        })
         return state
     except Exception as exc:
         return await _handle_node_exception("intent_detection", state, exc)

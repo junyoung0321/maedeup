@@ -161,7 +161,7 @@ export default function PlaceDetailPane({ place, roomId, meetingId, onConfirmed 
       >
         <span
           style={{
-            fontSize: 26,
+            fontSize: 39,
             fontWeight: 400,
             color: "#000000",
             letterSpacing: 0.75,
@@ -208,7 +208,7 @@ export default function PlaceDetailPane({ place, roomId, meetingId, onConfirmed 
             </div>
             <span
               style={{
-                fontSize: 15,
+                fontSize: 23,
                 fontWeight: 400,
                 color: "#94a3b8",
                 textAlign: "center",
@@ -219,7 +219,7 @@ export default function PlaceDetailPane({ place, roomId, meetingId, onConfirmed 
             </span>
             <span
               style={{
-                fontSize: 13,
+                fontSize: 20,
                 color: "#cbd5e1",
                 textAlign: "center",
                 lineHeight: 1.5,
@@ -250,7 +250,7 @@ export default function PlaceDetailPane({ place, roomId, meetingId, onConfirmed 
                     alignItems: "center",
                     justifyContent: "center",
                     color: "#94a3b8",
-                    fontSize: 14,
+                    fontSize: 21,
                   }}
                 >
                   좌표 정보가 없어 지도를 표시할 수 없습니다
@@ -270,7 +270,7 @@ export default function PlaceDetailPane({ place, roomId, meetingId, onConfirmed 
               {/* Name */}
               <h4
                 style={{
-                  fontSize: 22,
+                  fontSize: 33,
                   fontWeight: 600,
                   color: "#1e293b",
                   margin: 0,
@@ -284,7 +284,7 @@ export default function PlaceDetailPane({ place, roomId, meetingId, onConfirmed 
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <span
                     style={{
-                      fontSize: 12,
+                      fontSize: 18,
                       fontWeight: 500,
                       color: "#4f46e5",
                       backgroundColor: "#eef2ff",
@@ -297,7 +297,7 @@ export default function PlaceDetailPane({ place, roomId, meetingId, onConfirmed 
                   {place.score != null && (
                     <span
                       style={{
-                        fontSize: 12,
+                        fontSize: 18,
                         fontWeight: 600,
                         color: "#4f46e5",
                         backgroundColor: "#eef2ff",
@@ -327,7 +327,7 @@ export default function PlaceDetailPane({ place, roomId, meetingId, onConfirmed 
                       flexShrink: 0,
                     }}
                   />
-                  <span style={{ fontSize: 14, fontWeight: 400, color: "#475569", lineHeight: 1.5 }}>
+                  <span style={{ fontSize: 21, fontWeight: 400, color: "#475569", lineHeight: 1.5 }}>
                     {place.address}
                   </span>
                 </div>
@@ -343,7 +343,7 @@ export default function PlaceDetailPane({ place, roomId, meetingId, onConfirmed 
                         flexShrink: 0,
                       }}
                     />
-                    <span style={{ fontSize: 14, fontWeight: 400, color: "#475569" }}>
+                    <span style={{ fontSize: 21, fontWeight: 400, color: "#475569" }}>
                       {place.phone}
                     </span>
                   </div>
@@ -365,7 +365,7 @@ export default function PlaceDetailPane({ place, roomId, meetingId, onConfirmed 
                       target="_blank"
                       rel="noopener noreferrer"
                       style={{
-                        fontSize: 14,
+                        fontSize: 21,
                         fontWeight: 500,
                         color: "#4f46e5",
                         textDecoration: "none",
@@ -387,7 +387,7 @@ export default function PlaceDetailPane({ place, roomId, meetingId, onConfirmed 
                         flexShrink: 0,
                       }}
                     />
-                    <span style={{ fontSize: 14, fontWeight: 400, color: "#475569" }}>
+                    <span style={{ fontSize: 21, fontWeight: 400, color: "#475569" }}>
                       중심지에서 {distanceLabel}
                     </span>
                   </div>
@@ -409,7 +409,7 @@ export default function PlaceDetailPane({ place, roomId, meetingId, onConfirmed 
               background: "#ecfdf5",
               border: "1px solid #86efac",
               color: "#166534",
-              fontSize: 14,
+              fontSize: 21,
               fontWeight: 600,
               textAlign: "center",
             }}
@@ -426,7 +426,7 @@ export default function PlaceDetailPane({ place, roomId, meetingId, onConfirmed 
                 height: 44,
                 background: place && hasValidMeeting && !isConfirming ? "#4f46e5" : "#cbd5e1",
                 color: "#ffffff",
-                fontSize: 14,
+                fontSize: 21,
                 fontWeight: 500,
                 borderRadius: 12,
                 border: "none",
@@ -437,7 +437,7 @@ export default function PlaceDetailPane({ place, roomId, meetingId, onConfirmed 
               {isConfirming ? "확정 중..." : hasValidMeeting ? "이 장소로 확정" : "일정을 먼저 확정해주세요"}
             </button>
             {confirmError && (
-              <span style={{ fontSize: 13, fontWeight: 500, color: "#dc2626", textAlign: "center" }}>
+              <span style={{ fontSize: 20, fontWeight: 500, color: "#dc2626", textAlign: "center" }}>
                 {confirmError}
               </span>
             )}

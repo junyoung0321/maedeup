@@ -114,8 +114,14 @@ export default function AiAssistantPane() {
   const setInfoPanePhaseCtx = meetingContext?.setInfoPanePhase;
   const setConfirmedPlaceIdCtx = meetingContext?.setConfirmedPlaceId;
   const currentPhaseCtx = meetingContext?.infoPanePhase;
+  // Option C 보존: scheduleConsensus 살아있는 동안은 호스트 in-card 확정 흐름을 보호하기 위해
+  // phase 자동 advance를 보류한다. 호스트가 명시적으로 "이 시간으로 확정" / "추천 시간 그대로 확정"을
+  // 누르면 onHostFinalize / A3-2 핸들러에서 setInfoPanePhase("timeConfirmed")를 직접 호출한다.
+  const scheduleConsensusCtx = meetingContext?.scheduleConsensus;
   useEffect(() => {
     if (!activeMaedeupCard) return;
+    // Option C: scheduleConsensus 살아있으면 호스트 in-card 확정 흐름 보존 — phase 자동 advance 보류.
+    if (scheduleConsensusCtx) return;
     // forward-only — 이미 timeConfirmed/placeConfirmed/done이면 noop (setInfoPanePhase는
     // 같은 phase 호출을 무시함)
     if (currentPhaseCtx === "idle" || currentPhaseCtx === "dateSelected" || currentPhaseCtx === "dateConfirmed") {
@@ -125,7 +131,7 @@ export default function AiAssistantPane() {
       ?? (activeMaedeupCard.selected_place as { place_id?: string; id?: string } | undefined)?.id
       ?? null;
     if (placeId) setConfirmedPlaceIdCtx?.(placeId);
-  }, [activeMaedeupCard, currentPhaseCtx, setInfoPanePhaseCtx, setConfirmedPlaceIdCtx]);
+  }, [activeMaedeupCard, currentPhaseCtx, scheduleConsensusCtx, setInfoPanePhaseCtx, setConfirmedPlaceIdCtx]);
 
   const activeVoteCard = useMemo(
     () => [...activeCards].reverse().find((card) => card.type === "vote_card")?.payload ?? null,
@@ -366,7 +372,7 @@ export default function AiAssistantPane() {
             padding: "8px 16px",
             background: status === "connecting" ? "#fef3c7" : "#fee2e2",
             color: status === "connecting" ? "#92400e" : "#991b1b",
-            fontSize: 13,
+            fontSize: 20,
             fontWeight: 500,
           }}
         >
@@ -392,7 +398,7 @@ export default function AiAssistantPane() {
             padding: "8px 16px",
             background: "linear-gradient(135deg, #4f46e5, #0891b2)",
             color: "#fff",
-            fontSize: 13,
+            fontSize: 20,
             fontWeight: 500,
             animation: "fadeIn 0.3s ease-in",
           }}
@@ -407,7 +413,7 @@ export default function AiAssistantPane() {
               color: "#fff",
               cursor: "pointer",
               padding: 0,
-              fontSize: 14,
+              fontSize: 21,
               lineHeight: 1,
             }}
           >
@@ -534,7 +540,14 @@ export default function AiAssistantPane() {
         {timeline.map((item, index) => {
           if (item.kind === "card") {
             const card = item.data;
-            if (card.type === "vote_card") {
+            // vote_card 는 ACT 3 시간 확정(timeConfirmed) 직후엔 숨김.
+            // backend partial maedeup_card 가 늦게 도착해도 즉시 UI 깔끔하게.
+            if (
+              card.type === "vote_card" &&
+              currentPhaseCtx !== "timeConfirmed" &&
+              currentPhaseCtx !== "placeConfirmed" &&
+              currentPhaseCtx !== "done"
+            ) {
               return (
                 <ScheduleRecommendationCard
                   key={`card-${card.type}-${card.meeting_id}`}
@@ -559,6 +572,7 @@ export default function AiAssistantPane() {
               );
             }
 
+            if (card.type !== "maedeup_card") return null;
             const maedeupCard = card.payload;
             const partialCard = maedeupCard as NonNullable<typeof maedeupCard> & {
               place_pending?: boolean;
@@ -625,7 +639,7 @@ export default function AiAssistantPane() {
                     참석 인원 {maedeupCard.headcount ?? "-"}명
                   </span>
                   {timeLabel && (
-                    <span style={{ fontSize: 15, lineHeight: 1.5 }}>
+                    <span style={{ fontSize: 23, lineHeight: 1.5 }}>
                       시간 {timeLabel}
                     </span>
                   )}
@@ -720,7 +734,7 @@ export default function AiAssistantPane() {
                     alignItems: "center",
                     justifyContent: "center",
                     color: "#fff",
-                    fontSize: 12,
+                    fontSize: 18,
                     fontWeight: 300,
                     flexShrink: 0,
                   }}
@@ -871,7 +885,7 @@ export default function AiAssistantPane() {
               padding: "8px 14px",
               background: "#fef3c7",
               borderRadius: 12,
-              fontSize: 13,
+              fontSize: 20,
               color: "#92400e",
               fontWeight: 500,
             }}
@@ -899,7 +913,7 @@ export default function AiAssistantPane() {
                 alignItems: "center",
                 justifyContent: "center",
                 color: "#fff",
-                fontSize: 12,
+                fontSize: 18,
                 fontWeight: 300,
                 flexShrink: 0,
               }}
@@ -958,7 +972,7 @@ export default function AiAssistantPane() {
               />
             </div>
             {aiTimeoutMessage && (
-              <span style={{ fontSize: 12, color: "#92400e", marginLeft: 40 }}>
+              <span style={{ fontSize: 18, color: "#92400e", marginLeft: 40 }}>
                 {aiTimeoutMessage}
               </span>
             )}

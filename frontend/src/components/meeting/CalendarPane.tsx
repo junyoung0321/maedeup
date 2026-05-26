@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Ban, ChevronLeft, ChevronRight } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useMeetingOptional } from "@/contexts/MeetingContext";
@@ -100,6 +100,9 @@ export default function CalendarPane() {
   const [month, setMonth] = useState(initialView.month);
   const [clickedDay, setClickedDay] = useState<number | null>(initialView.clickedDay);
   const [blockMode, setBlockMode] = useState(false);
+  // vote_card 첫 도착 시 자동 jump를 1회만 허용하기 위한 guard.
+  // 동일 meetingId에 대해 이미 jump했으면 useEffect re-run이 와도 다시 강제 이동하지 않음.
+  const jumpedForMeetingIdRef = useRef<number | null>(null);
 
   // 월/클릭 날짜 변경 시 localStorage에 저장 (본인만 쓰는 UI 선호).
   useEffect(() => {
@@ -116,16 +119,23 @@ export default function CalendarPane() {
 
   // 서버 스냅샷으로 복구된 내 date_selection이 오면 그 날짜가 현재 월과 맞으면 clickedDay로.
   // 단, localStorage에 이미 clickedDay가 저장돼 있었다면 localStorage 우선.
+  // voteAwaitingTimeMeetingId 첫 도착 시 jump는 1회만 허용 (jumpedForMeetingIdRef guard).
+  // 사용자가 goPrev/goNext로 다른 월을 탐색해도 jump 재실행 안 함.
   useEffect(() => {
     if (!myDateSelection) return;
     if (clickedDay !== null && !voteAwaitingTimeMeetingId) return; // 사용자가 이미 골라둔 게 있으면 덮어쓰지 않음
     const [py, pm, pd] = myDateSelection.split("-").map(Number);
     if (voteAwaitingTimeMeetingId) {
+      // 동일 meetingId에 대해 이미 jump했으면 재실행 차단 (사용자 월 탐색 의도 보존).
+      if (jumpedForMeetingIdRef.current === voteAwaitingTimeMeetingId) return;
+      jumpedForMeetingIdRef.current = voteAwaitingTimeMeetingId;
       setYear(py);
       setMonth(pm);
       setClickedDay(pd);
       return;
     }
+    // voteAwaitingTimeMeetingId가 null로 reset되면 ref도 초기화.
+    jumpedForMeetingIdRef.current = null;
     if (py === year && pm === month) {
       setClickedDay(pd);
     }
@@ -471,36 +481,6 @@ export default function CalendarPane() {
                     {avail.count}/{avail.total}
                   </span>
                 )}
-                {(() => {
-                  const othersBlocked = blockedCount - (isMyBlocked ? 1 : 0);
-                  if (othersBlocked <= 0) return null;
-                  return (
-                    <span
-                      aria-label={`${othersBlocked}명 불가능`}
-                      title={`${othersBlocked}명 이 날 불가능`}
-                      style={{
-                        position: "absolute",
-                        top: 2,
-                        right: 2,
-                        minWidth: 14,
-                        height: 14,
-                        padding: "0 3px",
-                        borderRadius: 7,
-                        background: "#ef4444",
-                        color: "#ffffff",
-                        fontSize: 9,
-                        fontWeight: 700,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        lineHeight: 1,
-                        fontFamily: "Inter, sans-serif",
-                      }}
-                    >
-                      {othersBlocked}
-                    </span>
-                  );
-                })()}
                 {peersForDay.length > 0 && (
                   <div
                     style={{
@@ -531,7 +511,7 @@ export default function CalendarPane() {
                     {peersForDay.length > 3 && (
                       <span
                         style={{
-                          fontSize: 8,
+                          fontSize: 12,
                           color: "#64748b",
                           lineHeight: 1,
                         }}
@@ -578,7 +558,7 @@ export default function CalendarPane() {
               gap: 4,
             }}
           >
-            <span style={{ fontSize: 11, fontWeight: 700, color: "#854d0e" }}>
+            <span style={{ fontSize: 17, fontWeight: 700, color: "#854d0e" }}>
               다른 참여자 선택
             </span>
             {Object.entries(peerDateSelections)
@@ -598,7 +578,7 @@ export default function CalendarPane() {
                         flexShrink: 0,
                       }}
                     />
-                    <span style={{ fontSize: 12, color: "#475569" }}>
+                    <span style={{ fontSize: 18, color: "#475569" }}>
                       {s.name}님이 {Number(pm)}월 {Number(pd)}일 선택 중
                     </span>
                   </div>
@@ -620,7 +600,7 @@ export default function CalendarPane() {
           >
             <span
               style={{
-                fontSize: 12,
+                fontSize: 18,
                 fontWeight: 600,
                 color: "#1e293b",
                 display: "block",
@@ -632,32 +612,32 @@ export default function CalendarPane() {
             </span>
             {(availabilityData[clickedDay]?.available ?? []).length > 0 && (
               <div style={{ display: "flex", gap: 4, marginBottom: 3, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 11, color: "#94a3b8" }}>✅</span>
-                <span style={{ fontSize: 11, color: "#16a34a", fontFamily: "Inter, sans-serif" }}>
+                <span style={{ fontSize: 17, color: "#94a3b8" }}>✅</span>
+                <span style={{ fontSize: 17, color: "#16a34a", fontFamily: "Inter, sans-serif" }}>
                   {availabilityData[clickedDay]!.available!.join(", ")}
                 </span>
               </div>
             )}
             {(availabilityData[clickedDay]?.busy ?? []).length > 0 && (
               <div style={{ display: "flex", gap: 4, marginBottom: 3, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 11, color: "#94a3b8" }}>❌</span>
-                <span style={{ fontSize: 11, color: "#ef4444", fontFamily: "Inter, sans-serif" }}>
+                <span style={{ fontSize: 17, color: "#94a3b8" }}>❌</span>
+                <span style={{ fontSize: 17, color: "#ef4444", fontFamily: "Inter, sans-serif" }}>
                   {availabilityData[clickedDay]!.busy!.join(", ")}
                 </span>
               </div>
             )}
             {(availabilityData[clickedDay]?.unconnected ?? []).length > 0 && (
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 11, color: "#94a3b8" }}>🔗</span>
-                <span style={{ fontSize: 11, color: "#94a3b8", fontFamily: "Inter, sans-serif" }}>
+                <span style={{ fontSize: 17, color: "#94a3b8" }}>🔗</span>
+                <span style={{ fontSize: 17, color: "#94a3b8", fontFamily: "Inter, sans-serif" }}>
                   {availabilityData[clickedDay]!.unconnected!.join(", ")}
                 </span>
               </div>
             )}
             {(availabilityData[clickedDay]?.blocked ?? []).length > 0 && (
               <div style={{ display: "flex", gap: 4, marginTop: 3, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 11, color: "#ef4444" }}>🚫</span>
-                <span style={{ fontSize: 11, color: "#ef4444", fontFamily: "Inter, sans-serif" }}>
+                <span style={{ fontSize: 17, color: "#ef4444" }}>🚫</span>
+                <span style={{ fontSize: 17, color: "#ef4444", fontFamily: "Inter, sans-serif" }}>
                   {availabilityData[clickedDay]!.blocked!.join(", ")} 불가능 표시
                 </span>
               </div>
@@ -665,13 +645,13 @@ export default function CalendarPane() {
             {(availabilityData[clickedDay]?.available ?? []).length === 0 &&
               (availabilityData[clickedDay]?.busy ?? []).length === 0 &&
               (availabilityData[clickedDay]?.unconnected ?? []).length === 0 && (
-              <span style={{ fontSize: 11, color: "#94a3b8", fontFamily: "Inter, sans-serif" }}>
+              <span style={{ fontSize: 17, color: "#94a3b8", fontFamily: "Inter, sans-serif" }}>
                 멤버 정보 없음
               </span>
             )}
             {/* 가용 인원 요약 */}
             {availabilityData[clickedDay] && (
-              <div style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: "#475569" }}>
+              <div style={{ marginTop: 6, fontSize: 18, fontWeight: 600, color: "#475569" }}>
                 가능 인원: {availabilityData[clickedDay]!.available?.length ?? 0}/{availabilityData[clickedDay]!.total ?? 0}명
               </div>
             )}
@@ -691,7 +671,7 @@ export default function CalendarPane() {
                       borderRadius: 6,
                       background: "#dbeafe",
                       color: "#1d4ed8",
-                      fontSize: 11,
+                      fontSize: 17,
                       fontWeight: 600,
                       marginTop: 6,
                     }}>
@@ -708,7 +688,7 @@ export default function CalendarPane() {
                         background: "#fef2f2",
                         border: "1px solid #fecaca",
                         color: "#991b1b",
-                        fontSize: 11,
+                        fontSize: 17,
                         fontWeight: 500,
                       }}
                     >
@@ -725,7 +705,7 @@ export default function CalendarPane() {
                         background: "#fff7ed",
                         border: "1px solid #fed7aa",
                         color: "#9a3412",
-                        fontSize: 11,
+                        fontSize: 17,
                         fontWeight: 500,
                       }}
                     >
@@ -773,7 +753,7 @@ export default function CalendarPane() {
                     color: "#ffffff",
                     cursor: "pointer",
                     fontFamily: "Pretendard Variable, Pretendard, sans-serif",
-                    fontSize: 13,
+                    fontSize: 20,
                     fontWeight: 700,
                   }}
                 >
@@ -793,7 +773,7 @@ export default function CalendarPane() {
               alignItems: "center",
               justifyContent: "center",
               color: "#94a3b8",
-              fontSize: 13,
+              fontSize: 20,
             }}
           >
             불러오는 중...
@@ -807,7 +787,7 @@ export default function CalendarPane() {
               alignItems: "center",
               justifyContent: "center",
               color: "#94a3b8",
-              fontSize: 13,
+              fontSize: 20,
             }}
           >
             캘린더 연동 멤버가 없어요. 날짜를 선택해서 일정을 잡아보세요.

@@ -39,53 +39,61 @@ logging.basicConfig(level=logging.INFO, format="[%(name)s] %(message)s")
 
 
 # 시나리오 박힌 시드. user.name 매칭 (정확한 표기 가정).
-# 구조: { name: { category: { "value": ..., "quote": "시연 발화 인용" } } }
-SEED_MAP: dict[str, dict[str, dict[str, Any]]] = {
-    "김창윤": {
-        "food_preferences": {
-            "value": ["한식"],
-            "quote": "안 매운 한식 어때?",
-        },
-        "liked_areas": {
-            "value": ["강남"],
-            "quote": "강남 자주 가니까 강남 좋아",
-        },
-        "time_preference": {
-            "value": "저녁형",
-            "quote": "평일 저녁이 편해",
-        },
-    },
-    "지민": {
-        "food_preferences": {
-            "value": ["한식"],
-            "quote": "지난번 한식 진짜 좋았어",
-        },
-        "liked_areas": {
-            "value": ["강남"],
-            "quote": "강남역 근처가 편하더라",
-        },
-        "time_preference": {
-            "value": "저녁형",
-            "quote": "저녁 시간대가 제일 편해",
-        },
-    },
+#
+# ACT 5.5 토글 활성 조건 (compute_preference_toggle_enabled):
+#   - C4 회피: home_base 또는 prefs 둘 중 하나라도 존재 → OK
+#   - C1 회피: share_food_data / share_location_data / share_schedule_data 모두 True → OK
+#   - C3 회피: requester_home_base(방장="신촌") ≠ default_place_hint(그룹 다수결="강남") → home_matches=False → C3 false → OK
+#
+# 그룹(게스트 3명) 다수결: preferred_location 다수 = "강남" → default_place_hint = "강남"
+# 방장 home_base = "신촌" → 불일치 → C3 차단되지 않음 → 토글 노출 ✓
+#
+# food Jaccard: 방장=["일식","양식","디저트"] vs 그룹union=["한식","중식"] → 교집합=0 → 0% < 70% → C3 해당 없음 ✓
+_지민_DATA: dict[str, object] = {
+    "food_preferences": ["일식", "양식", "디저트"],  # 그룹(한식·중식)과 교집합 0% → C3 food 조건 불충족
+    "liked_areas": ["신촌", "홍대"],
+    "home_base": "신촌",           # 그룹 다수결 "강남"과 불일치 → C3 home_matches=False → 토글 활성
+    "time_preference": "저녁형",
+    "share_food_data": True,
+    "share_location_data": True,
+    "share_schedule_data": True,   # C1 완전 회피
+}
+
+SEED_MAP: dict[str, dict[str, object]] = {
+    "지민": _지민_DATA,
+    "김창윤": _지민_DATA,         # 실제 host alias — 동일 시드 적용
     "수현": {
-        "food_restrictions": {
-            "value": ["채식"],
-            "quote": "나 채식 위주로 먹어",
-        },
-        "disliked_areas": {
-            "value": ["홍대"],
-            "quote": "홍대는 너무 복잡해서 별로야",
-        },
+        "food_preferences": ["한식"],   # 그룹 다수결 형성용 (한식)
+        "food_restrictions": ["채식"],
+        "liked_areas": ["강남"],
+        "disliked_areas": ["홍대"],     # ACT 5 reasoning 인용용 (보존)
+        "home_base": "강남",           # 그룹 다수결 → preferred_location "강남" 기여
+        "share_food_data": True,
+        "share_location_data": True,
+        "share_schedule_data": True,
     },
     "민수": {
-        "transport_mode": {
-            "value": "지하철",
-            "quote": "지하철로 가는 게 제일 편해",
-        },
+        "food_preferences": ["중식"],   # 그룹 union 기여 (중식)
+        "transport_mode": "지하철",
+        "home_base": "강남",           # 강남 다수결 강화
+        "share_food_data": True,
+        "share_location_data": True,
+        "share_schedule_data": True,
     },
-    # 예린은 게스트 — 시드 없음 (의도)
+    "예린": {
+        "food_preferences": ["한식"],   # 그룹 union — 한식 빈도 높여 다수결 안정화
+        "home_base": "강남역",          # "강남역" ≠ "강남" (별도 값)이라 다수결 계산에 따라 강남 우세 유지
+        "share_food_data": True,
+        "share_location_data": True,
+        "share_schedule_data": True,
+    },
+    # [refresh route] default_place_hint = MeetingPreference.preferred_location 다수결.
+    #   방장이 ACT 1 팝업에서 "강남" 입력 → MeetingPreference.preferred_location="강남" 저장.
+    #   requester_home_base(User.home_base)="신촌" ≠ default_place_hint="강남" → C3 home_matches=False → 토글 활성 ✓
+    # [pipeline/agent] default_place_hint = owner.home_base.
+    #   owner.home_base="신촌" == requester_home_base="신촌" → home_matches=True,
+    #   BUT preference_common_foods는 pipeline state에 미주입 → food 비교 skip → C3=False → 토글 활성 ✓
+    # group food union = ["한식","중식"], 방장 food = ["일식","양식","디저트"] → Jaccard = 0% < 70% → C3 food도 safe ✓
 }
 
 # User 모델에 실제로 존재하는 personal data 필드

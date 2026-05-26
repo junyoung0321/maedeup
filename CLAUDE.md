@@ -2,36 +2,30 @@
 
 ## 진행 중인 작업
 세션 시작 시 `docs/handoff/` 폴더의 가장 최근 문서를 먼저 확인하세요.
-**현재 task**: 시연 직전 (D-4, 2026-05-16) — 해결점 A~P + Fix 1~14 + demo-stab 백포팅 + call_gemini 결정성 강화 완료. 실측 검증 통과.
-
-### 실측 latency (2026-05-16, 3회 평균)
-- ACT 2 (자동 개입, stalemate): **8s** (분산 ±1s)
-- ACT 5 (장소 추천, direct_request): **3.41s** (분산 ±0.05s) — 5s 목표 달성 ✅
-- 결정성: tool 시퀀스 100% 동일 (top_p=0.1, top_k=1 효과)
-- 회귀: 0건
-
-### 시연 자동화 (순서 엄수)
-**사전 절차 (시연 시작 전 1회):**
-1. `.env`에 `DEMO_FALLBACK_ENABLED=true` 설정 (없으면 personal_data_extractor canned fallback 비활성 → ACT 6 학습 안 됨)
-2. `docker exec maedeup-api python -m scripts.seed_demo` — 시연 멤버(지민·수현·민수) DB 시드 + personal data 사전 학습
-3. JWT 발급: `docker exec maedeup-api python -c "from app.core.security import issue_jwt; print(issue_jwt(user_id=1, email='dnfltkagudwp123@gmail.com', name='정준영', picture=None, calendar_consent=True))"` → `.gstack-demo-token`에 저장
-
-**실행:**
-- 터미널 1: `python .gstack-browser-launch.py`
-- 터미널 2: `python .gstack-demo.py` (`--fast` 옵션 가능)
-
-**ACT 6 학습 모먼트 검증:** `docker logs maedeup-api | Select-String "users affected"` — `0 users affected` 보이면 seed_demo 실행 필요. 1+ 보이면 정상.
-
-### 시연 후 보완 항목 (D+ 작업)
-1. 해결점 P 정교화 (번복 처리, 게스트 정책) — 시연 시나리오에 등장 안 함, 우선순위 낮음
-2. 해결점 O (정규식 단축 사각지대) — ✅ 2026-05-16 완료 (`_REJECT_SIGNAL_PATTERN` 보강)
-3. ACT 4 confirm 후속 메시지 — 자동화 검증 통과, manual 발견 시 진행
-4. ACT 5 quick_classify 보강 — ✅ 2026-05-16 완료 (한식집/술집/회식/모임/약속 키워드 + 어때/골라 동사)
-
+**현재 task**: spec v1.0 + Option C (TimeBar in-card 호스트 확정) + CalendarPane 빨간 배지 제거 + ACT 2 자연 표현 + 시나리오 정합성 7건 fix + 시연 D-6 (2026-05-22 금 점심) 준비 완료 (HEAD `4a98d2f`). **다음**: 시연 영상 5/18 (월) 촬영 + v2 spec 본문 작성.
+시연 자동화 (WSL venv v2, 2026-05-15):
+- 터미널 1: `~/.venv-maedeup-demo/bin/python3 .gstack-browser-launch.py`
+- 터미널 2: `~/.venv-maedeup-demo/bin/python3 .gstack-demo.py` (또는 `--fast`)
+- 사전에 `.gstack-demo-token` 파일에 JWT 저장.
+- Windows 발표자 환경 병행: `.venv\Scripts\python.exe .gstack-demo.py`
+미해결 backlog:
+1. 해결점 P 정교화 (번복 처리, 게스트 정책)
+2. 해결점 O (정규식 단축 사각지대) — spec v2 옵션 B 권고
+3. ACT 4 confirm 후속 메시지 / ACT 5 quick_classify 보강
+4. LIMIT-7 (free-slots 캐싱), LIMIT-8
+5. F4 narrator (Q17 후속)
+6. 코덱스 P1 backlog (Option C 라운드 1~9 완료 후 추가 필요 검토, TODOS.md §10) — vote_update 좁히기·VoteCardSection 회귀 테스트·timeConfirmed mount·seed 주석·refresh state 통일
+7. 장소 추천 vote 시스템 검토 (v2 spec PR-v2.1 후보)
 참고:
-- `docs/handoff/2026-05-06-demo-loop-progress.md`
-- `docs/handoff/demo-scenario.md` (시연 시나리오 SoT)
+- `docs/handoff/2026-05-16-option-c-natural.md` (오늘 진행 기록 — Option C 라운드 1~9 + 자연 표현 + 시나리오 정합성, 2026-05-16)
+- `docs/handoff/2026-05-15-round4-green.md` (자동 루프 5라운드 + GREEN 도달, 2026-05-15)
+- `docs/handoff/2026-05-14-spec-progress.md` (v20 — spec v1.0 + PR-V1.5 + QA v2 + v3 자동화 + Option C 통합 보고)
+- `docs/handoff/2026-05-14-spec-v2-plan.md` (v2 spec 38 항목 계획서)
+- `docs/handoff/demo-scenario-v3.md` (시연 시나리오 SoT, 2026-05-16 갱신)
+- `docs/handoff/spec-time-coordination.md` (619줄, v1.0)
+- `docs/handoff/spec-common.md`
 - `docs/handoff/audit-findings.md` (해결점 A~P)
+- `docs/SESSION_STATE.md`, `docs/TODO.md`, `docs/DECISIONS.md`, `docs/BUGS.md` (복구 SoT 4파일, 646d252 commit)
 - `docs/handoff/diagrams/`
 
 ## Project
@@ -46,9 +40,14 @@ AI 모임 조율 플랫폼 (졸업 프로젝트). 채팅방에서 일정/장소 
 
 ## Structure
 backend/
-  app/services/langgraph_pipeline.py  # 핵심 AI 파이프라인 (8노드)
-  app/routers/                        # API 엔드포인트
+  app/services/langgraph_pipeline.py  # 31줄 re-export shim (Phase 5.2, dce4357)
+  app/services/pipeline/              # 실제 파이프라인 (graph + nodes + helpers + constants)
+    nodes/                            # conversation_analyzer, slot, memory, validation, maedeup 등
+    helpers/                          # dates, formatting, json_extract, messaging, slot_state
+    graph.py                          # 라우터 6 + _build_graph + run_pipeline
+  app/api/routes/                     # API 엔드포인트 (auth/calendar/chat/events/finalization/places/recommendations/rooms/users/notifications/intents)
   app/models/                         # SQLModel 모델
+  alembic/versions/                   # DB 마이그레이션 (idempotent 패턴 필수)
 frontend/
   src/components/meeting/             # 채팅방, AI 어시스턴트 패널
 

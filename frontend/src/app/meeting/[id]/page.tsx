@@ -117,7 +117,7 @@ function MeetingPageInner() {
               border: "1px solid rgba(255,255,255,0.3)",
               background: "rgba(255,255,255,0.15)",
               color: "#ffffff",
-              fontSize: 13,
+              fontSize: 20,
               fontWeight: 600,
               cursor: "pointer",
               fontFamily: "Pretendard, sans-serif",
@@ -138,7 +138,6 @@ function MeetingPageInner() {
           padding: "clamp(6px, 0.8vw, 16px)",
           flex: 1,
           minHeight: 0,
-          maxWidth: 1800,
           margin: "0 auto",
           width: "100%",
         }}

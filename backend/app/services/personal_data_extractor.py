@@ -303,7 +303,7 @@ async def _gemini_extract(
 ) -> dict[int, dict[str, CategoryExtraction]]:
     """실 Gemini 호출. JSON-only 응답 강제."""
     if not settings.effective_gemini_api_key:
-        raise RuntimeError("GEMINI_API_KEY (or PAID_GEMINI_API_KEY) is empty — cannot do real extraction")
+        raise RuntimeError("GEMINI_API_KEY is empty — cannot do real extraction")
     if not transcript:
         return {mid: {} for mid in member_ids}
 

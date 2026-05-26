@@ -32,11 +32,11 @@ def upgrade() -> None:
         return
     meeting_participant_constraints = _unique_constraint_names("meeting_participants")
     if "uq_meeting_participants_meeting_id_user_id" not in meeting_participant_constraints:
-        op.create_unique_constraint(
-            "uq_meeting_participants_meeting_id_user_id",
-            "meeting_participants",
-            ["meeting_id", "user_id"],
-        )
+        with op.batch_alter_table("meeting_participants") as batch_op:
+            batch_op.create_unique_constraint(
+                "uq_meeting_participants_meeting_id_user_id",
+                ["meeting_id", "user_id"],
+            )
 
     if inspector.has_table("meeting_schedules"):
         meeting_indexes = _index_names("meeting_schedules")
@@ -54,8 +54,8 @@ def downgrade() -> None:
     if inspector.has_table("meeting_participants"):
         meeting_participant_constraints = _unique_constraint_names("meeting_participants")
         if "uq_meeting_participants_meeting_id_user_id" in meeting_participant_constraints:
-            op.drop_constraint(
-                "uq_meeting_participants_meeting_id_user_id",
-                "meeting_participants",
-                type_="unique",
-            )
+            with op.batch_alter_table("meeting_participants") as batch_op:
+                batch_op.drop_constraint(
+                    "uq_meeting_participants_meeting_id_user_id",
+                    type_="unique",
+                )

@@ -13,7 +13,33 @@ export interface VoteCardTimeOption {
   is_holiday?: boolean;
   holiday_name?: string | null;
   is_weekend?: boolean;
+  // PR-Y1 (F1 fallback): 슬롯별 가능자 수 + 불참자 명단 (다수결 추천 시).
+  available_count?: number;
+  total_count?: number;
+  unavailable_users?: string[];
 }
+
+export type VoteCardCalendarStrategy =
+  | "all_members_available"
+  | "n_minus_one"
+  | "multi_date_vote"
+  | "preference_based"
+  | "natural_language_time_options"
+  | "majority_fallback";
+
+export type VoteCardBlockerNotification =
+  | {
+      type: "social_system_message";
+      reason?: string;
+      [key: string]: unknown;
+    }
+  | {
+      type: "f1_fallback";
+      reason: string;
+      missing_count: number;
+      total_count: number;
+      max_available_count: number;
+    };
 
 export interface VoteCardPayload {
   type: "vote_card";
@@ -22,7 +48,15 @@ export interface VoteCardPayload {
   meeting_id?: number;
   time_options: VoteCardTimeOption[];
   headcount: number | null;
-  calendar_strategy?: string | null;
+  calendar_strategy?: VoteCardCalendarStrategy | string | null;
+  blocker_notification?: VoteCardBlockerNotification | null;
+  // PR-Z1/Z2 (Q5 hybrid): 추천 기준 출처 및 토글 가능 여부.
+  // 기본값은 "group" (다수결). 발화자/방장이 "내 선호" 기준으로 재추천 요청 가능.
+  preference_source?: "group" | "speaker";
+  preference_toggle_enabled?: boolean;
+  // P0 hydration: pending-vote 복구 시 서버가 본인 투표 인덱스를 미리 추출해 내려줌.
+  // WS vote_card 이벤트에는 없는 필드 (undefined). null = 미투표.
+  current_user_vote?: number | null;
 }
 
 export interface VoteUpdatePayload {
@@ -30,6 +64,7 @@ export interface VoteUpdatePayload {
   meeting_id: number;
   votes: Record<string, number>;
   total_voters: number;
+  user_votes?: Record<string, number>;
 }
 
 export interface PlaceRecommendationItem {
@@ -54,6 +89,22 @@ export interface PlaceRecommendationPayload {
   // A5-2: 백엔드가 _build_named_constraints_summary로 박는 멤버별 제약 요약.
   // 시드된 PersonalData가 있으면 이름+✨ 인용, 없으면 익명 그룹 톤.
   group_constraints_summary?: string;
+  // PR-Z1/Z2 (Q5 hybrid): 추천 기준 출처 및 토글 가능 여부.
+  preference_source?: "group" | "speaker";
+  preference_toggle_enabled?: boolean;
+}
+
+// PR-Z1/Z2 (Q5 hybrid): 백엔드 §10에 명시된 narrator broadcast 메시지.
+// 발행 시 일반 chat message가 아닌 별도 type으로 받을 수 있음.
+// (현재 본 hook은 별도 처리하지 않고 chat message 흐름으로 흘려보냄 —
+//  필요 시 추후 분기 추가)
+export interface RefreshNarratorMessage {
+  type: "preference_refresh_narrator";
+  room_id: string;
+  meeting_id: number;
+  preference_source: "group" | "speaker";
+  requester_user_id: number;
+  content: string;
 }
 
 export interface MaedeupCardSelectionTime {

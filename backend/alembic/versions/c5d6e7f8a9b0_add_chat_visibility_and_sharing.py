@@ -34,81 +34,74 @@ def upgrade() -> None:
     cols = [c["name"] for c in inspector.get_columns("chat_messages")]
 
     if "user_id" not in cols:
-        op.add_column(
-            "chat_messages",
-            sa.Column("user_id", sa.Integer(), nullable=True),
-        )
-        op.create_index(
-            "ix_chat_messages_user_id",
-            "chat_messages",
-            ["user_id"],
-            unique=False,
-        )
-        op.create_foreign_key(
-            "fk_chat_messages_user_id_users",
-            "chat_messages",
-            "users",
-            ["user_id"],
-            ["id"],
-            ondelete="SET NULL",
-        )
+        with op.batch_alter_table("chat_messages") as batch_op:
+            batch_op.add_column(
+                sa.Column("user_id", sa.Integer(), nullable=True),
+            )
+            batch_op.create_index(
+                "ix_chat_messages_user_id",
+                ["user_id"],
+                unique=False,
+            )
+            batch_op.create_foreign_key(
+                "fk_chat_messages_user_id_users",
+                "users",
+                ["user_id"],
+                ["id"],
+                ondelete="SET NULL",
+            )
 
     if "visibility" not in cols:
-        op.add_column(
-            "chat_messages",
-            sa.Column(
-                "visibility",
-                sa.String(length=16),
-                nullable=False,
-                server_default="shared",
-            ),
-        )
-        op.create_index(
-            "ix_chat_messages_visibility",
-            "chat_messages",
-            ["visibility"],
-            unique=False,
-        )
+        with op.batch_alter_table("chat_messages") as batch_op:
+            batch_op.add_column(
+                sa.Column(
+                    "visibility",
+                    sa.String(length=16),
+                    nullable=False,
+                    server_default="shared",
+                ),
+            )
+            batch_op.create_index(
+                "ix_chat_messages_visibility",
+                ["visibility"],
+                unique=False,
+            )
 
     if "shared_from_id" not in cols:
-        op.add_column(
-            "chat_messages",
-            sa.Column("shared_from_id", sa.Integer(), nullable=True),
-        )
-        op.create_index(
-            "ix_chat_messages_shared_from_id",
-            "chat_messages",
-            ["shared_from_id"],
-            unique=False,
-        )
-        op.create_foreign_key(
-            "fk_chat_messages_shared_from_id_chat_messages",
-            "chat_messages",
-            "chat_messages",
-            ["shared_from_id"],
-            ["id"],
-            ondelete="SET NULL",
-        )
+        with op.batch_alter_table("chat_messages") as batch_op:
+            batch_op.add_column(
+                sa.Column("shared_from_id", sa.Integer(), nullable=True),
+            )
+            batch_op.create_index(
+                "ix_chat_messages_shared_from_id",
+                ["shared_from_id"],
+                unique=False,
+            )
+            batch_op.create_foreign_key(
+                "fk_chat_messages_shared_from_id_chat_messages",
+                "chat_messages",
+                ["shared_from_id"],
+                ["id"],
+                ondelete="SET NULL",
+            )
 
     if "shared_by_user_id" not in cols:
-        op.add_column(
-            "chat_messages",
-            sa.Column("shared_by_user_id", sa.Integer(), nullable=True),
-        )
-        op.create_index(
-            "ix_chat_messages_shared_by_user_id",
-            "chat_messages",
-            ["shared_by_user_id"],
-            unique=False,
-        )
-        op.create_foreign_key(
-            "fk_chat_messages_shared_by_user_id_users",
-            "chat_messages",
-            "users",
-            ["shared_by_user_id"],
-            ["id"],
-            ondelete="SET NULL",
-        )
+        with op.batch_alter_table("chat_messages") as batch_op:
+            batch_op.add_column(
+                sa.Column("shared_by_user_id", sa.Integer(), nullable=True),
+            )
+            batch_op.create_index(
+                "ix_chat_messages_shared_by_user_id",
+                ["shared_by_user_id"],
+                unique=False,
+            )
+            batch_op.create_foreign_key(
+                "fk_chat_messages_shared_by_user_id_users",
+                "users",
+                ["shared_by_user_id"],
+                ["id"],
+                ondelete="SET NULL",
+            )
 
 
 def downgrade() -> None:
@@ -122,39 +115,40 @@ def downgrade() -> None:
     idx_names = {ix["name"] for ix in inspector.get_indexes("chat_messages")}
 
     if "shared_by_user_id" in cols:
-        if "fk_chat_messages_shared_by_user_id_users" in fk_names:
-            op.drop_constraint(
-                "fk_chat_messages_shared_by_user_id_users",
-                "chat_messages",
-                type_="foreignkey",
-            )
-        if "ix_chat_messages_shared_by_user_id" in idx_names:
-            op.drop_index("ix_chat_messages_shared_by_user_id", table_name="chat_messages")
-        op.drop_column("chat_messages", "shared_by_user_id")
+        with op.batch_alter_table("chat_messages") as batch_op:
+            if "fk_chat_messages_shared_by_user_id_users" in fk_names:
+                batch_op.drop_constraint(
+                    "fk_chat_messages_shared_by_user_id_users",
+                    type_="foreignkey",
+                )
+            if "ix_chat_messages_shared_by_user_id" in idx_names:
+                batch_op.drop_index("ix_chat_messages_shared_by_user_id")
+            batch_op.drop_column("shared_by_user_id")
 
     if "shared_from_id" in cols:
-        if "fk_chat_messages_shared_from_id_chat_messages" in fk_names:
-            op.drop_constraint(
-                "fk_chat_messages_shared_from_id_chat_messages",
-                "chat_messages",
-                type_="foreignkey",
-            )
-        if "ix_chat_messages_shared_from_id" in idx_names:
-            op.drop_index("ix_chat_messages_shared_from_id", table_name="chat_messages")
-        op.drop_column("chat_messages", "shared_from_id")
+        with op.batch_alter_table("chat_messages") as batch_op:
+            if "fk_chat_messages_shared_from_id_chat_messages" in fk_names:
+                batch_op.drop_constraint(
+                    "fk_chat_messages_shared_from_id_chat_messages",
+                    type_="foreignkey",
+                )
+            if "ix_chat_messages_shared_from_id" in idx_names:
+                batch_op.drop_index("ix_chat_messages_shared_from_id")
+            batch_op.drop_column("shared_from_id")
 
     if "visibility" in cols:
-        if "ix_chat_messages_visibility" in idx_names:
-            op.drop_index("ix_chat_messages_visibility", table_name="chat_messages")
-        op.drop_column("chat_messages", "visibility")
+        with op.batch_alter_table("chat_messages") as batch_op:
+            if "ix_chat_messages_visibility" in idx_names:
+                batch_op.drop_index("ix_chat_messages_visibility")
+            batch_op.drop_column("visibility")
 
     if "user_id" in cols:
-        if "fk_chat_messages_user_id_users" in fk_names:
-            op.drop_constraint(
-                "fk_chat_messages_user_id_users",
-                "chat_messages",
-                type_="foreignkey",
-            )
-        if "ix_chat_messages_user_id" in idx_names:
-            op.drop_index("ix_chat_messages_user_id", table_name="chat_messages")
-        op.drop_column("chat_messages", "user_id")
+        with op.batch_alter_table("chat_messages") as batch_op:
+            if "fk_chat_messages_user_id_users" in fk_names:
+                batch_op.drop_constraint(
+                    "fk_chat_messages_user_id_users",
+                    type_="foreignkey",
+                )
+            if "ix_chat_messages_user_id" in idx_names:
+                batch_op.drop_index("ix_chat_messages_user_id")
+            batch_op.drop_column("user_id")

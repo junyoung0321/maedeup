@@ -548,3 +548,56 @@ async def _load_meeting_preferences(state: GraphState) -> dict[str, Any]:
         "all_preferred_foods": all_preferred,
         "notes": notes,
     }
+
+
+async def load_requester_context(
+    db: AsyncSession,
+    user_id: int,
+) -> dict[str, Any]:
+    """PR-Z1 (P0-2·3·4 plumbing) — 발화자(요청자)의 본인 personal data lookup.
+
+    recommendations/refresh 라우트가 호출. 결과를 GraphState의
+    `requester_home_base` / `requester_preferences`에 주입.
+
+    Returns:
+        {
+            "requester_user_id": user_id,
+            "requester_home_base": str | None,
+            "requester_preferences": {
+                "food_preferences", "food_restrictions",
+                "liked_areas", "disliked_areas",
+                "transport_mode", "time_preference",
+                "share_food_data", "share_location_data", "share_schedule_data",
+                "is_guest"
+            } | None
+        }
+
+    user 미존재 시 home_base / preferences = None.
+    """
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        return {
+            "requester_user_id": user_id,
+            "requester_home_base": None,
+            "requester_preferences": None,
+        }
+
+    preferences = {
+        "food_preferences": user.food_preferences,
+        "food_restrictions": user.food_restrictions,
+        "liked_areas": user.liked_areas,
+        "disliked_areas": user.disliked_areas,
+        "transport_mode": user.transport_mode,
+        "time_preference": user.time_preference,
+        "share_food_data": bool(user.share_food_data),
+        "share_location_data": bool(user.share_location_data),
+        "share_schedule_data": bool(user.share_schedule_data),
+        "is_guest": bool(user.is_guest),
+    }
+
+    return {
+        "requester_user_id": user_id,
+        "requester_home_base": user.home_base,
+        "requester_preferences": preferences,
+    }

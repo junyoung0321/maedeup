@@ -33,6 +33,7 @@ import redis.asyncio as aioredis
 
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
+from app.observability.snapshot import dump
 from app.services.gemini import call_gemini
 from app.services.pipeline.helpers.json_extract import _extract_json_array
 from app.services.pipeline.helpers.messaging import (
@@ -40,9 +41,15 @@ from app.services.pipeline.helpers.messaging import (
     _handle_node_exception,
     _has_node_error,
 )
+from app.services.kakao_maps import KakaoApiError
 from app.services.pipeline.helpers.places import (
     _contains_disliked_keyword,
+    _filter_out_rejected_places,
     _resolve_place_hint,
+)
+from app.services.pipeline.helpers.preference_toggle import (
+    compute_preference_source,
+    compute_preference_toggle_enabled,
 )
 from app.services.pipeline.helpers.preferences import (
     _build_group_constraints_summary,
@@ -65,6 +72,47 @@ try:
 except Exception:
     _ml_place_search = None  # type: ignore[assignment]
     _ML_AVAILABLE = False
+
+
+def _compute_final_score(item: dict[str, Any]) -> float:
+    """PR-V1.5 / S20 (Q4=A): 점수 통합 공식.
+
+    final_score = 0.4 * ml_score + 0.3 * gemini_score + 0.3 * distance_score
+
+    Missing 값은 0.0 처리. distance_score는 search_place에서 항상 채움.
+    ml_score는 ml_place_search 성공 시 박힘. gemini_score는 Gemini scoring
+    분기에서 박힘. 둘 다 없으면 distance만으로 final = 0.3 * distance.
+    """
+    try:
+        ml = float(item.get("ml_score") or 0.0)
+    except (TypeError, ValueError):
+        ml = 0.0
+    try:
+        gemini = float(item.get("gemini_score") or 0.0)
+    except (TypeError, ValueError):
+        gemini = 0.0
+    try:
+        distance = float(item.get("distance_score") or 0.0)
+    except (TypeError, ValueError):
+        distance = 0.0
+    return round(0.4 * ml + 0.3 * gemini + 0.3 * distance, 4)
+
+
+def _sort_by_final_score(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """PR-V1.5 / F8 — 명시적 tiebreaker.
+
+    1차: final_score 내림차순
+    2차: distance_m 오름차순 (가까운 순)
+    3차: place_id 사전순 (결정적 — 동률 시 매 실행 같은 순서)
+    """
+    return sorted(
+        items,
+        key=lambda p: (
+            -float(p.get("final_score") or 0.0),
+            float(p.get("distance_m") or 99999),
+            str(p.get("place_id") or ""),
+        ),
+    )
 
 
 async def _run_place_self_correction(
@@ -107,12 +155,24 @@ async def _run_place_self_correction(
     for corrected_place in corrected_places:
         place_id = str(corrected_place.get("place_id", ""))
         base_place = original_by_id.get(place_id, {})
-        merged_places.append({**base_place, **corrected_place})
+        merged = {**base_place, **corrected_place}
+        # Fix #2: corrected_place에 x/y가 없으면 base 값 복원 (place_id mismatch 시 base_place={} → 증발 방지)
+        for coord_key in ("x", "y"):
+            if not merged.get(coord_key) and base_place.get(coord_key):
+                merged[coord_key] = base_place[coord_key]
+        merged_places.append(merged)
     return merged_places
 
 
 async def place_recommendation(state: GraphState) -> GraphState:
     _t0 = time.monotonic()
+    dump("node_in", state.get("run_id"), {
+        "node": "place_recommendation",
+        "status": state.get("status"),
+        "trigger_reason": state.get("trigger_reason"),
+        "has_card": bool(state.get("maedeup_card_payload") or state.get("vote_card_payload")),
+        "message_count": len(state.get("message_records", [])),
+    })
     try:
         if _has_node_error(state):
             return state
@@ -126,18 +186,23 @@ async def place_recommendation(state: GraphState) -> GraphState:
                     state,
                     f"{state.get('meeting_type') or '모임'} 장소 추천",
                 )
+            # Fix #1: confirmed_place path — x/y를 place_coord에서 보존
+            _place_coord = state.get("place_coord") or {}
+            _confirmed_item: dict[str, Any] = {
+                "name": state.get("confirmed_place"),
+                "score": 1.0,
+                "is_confirmed": True,
+            }
+            if _place_coord.get("x"):
+                _confirmed_item["x"] = _place_coord["x"]
+            if _place_coord.get("y"):
+                _confirmed_item["y"] = _place_coord["y"]
             state["place_recommendation_payload"] = {
                 "type": "place_recommendation",
                 "room_id": state["room_id"],
                 "meeting_id": meeting_id,
                 "place_hint": state.get("place_hint"),
-                "recommendations": [
-                    {
-                        "name": state.get("confirmed_place"),
-                        "score": 1.0,
-                        "is_confirmed": True,
-                    }
-                ],
+                "recommendations": [_confirmed_item],
             }
             state["status"] = "place_recommended"
             logger.info("[TIMING] place_recommendation (confirmed): %.2fs", time.monotonic() - _t0)
@@ -175,6 +240,14 @@ async def place_recommendation(state: GraphState) -> GraphState:
         headcount = state.get("headcount") or 0
         meeting_type = state.get("meeting_type") or "모임"
 
+        # PR-V1.5 / F9: ML 비활성 메트릭 로깅 (structured log).
+        if not _ML_AVAILABLE:
+            logger.info(
+                "[FALLBACK] ml_disabled=true room_id=%s meeting_type=%s "
+                "headcount=%d — using Gemini + distance only",
+                state.get("room_id"), meeting_type, headcount,
+            )
+
         if _ML_AVAILABLE and state.get("place_hint"):
             try:
                 ml_results = await _ml_place_search(
@@ -184,7 +257,14 @@ async def place_recommendation(state: GraphState) -> GraphState:
                     top_k=5,
                 )
                 if ml_results:
-                    ranked_places = ml_results
+                    # PR-V1.5 / S20 (Q4=A): ML 결과의 score를 ml_score 슬롯에 박음.
+                    # 후속 final_score = 0.4*ml_score + 0.3*gemini_score + 0.3*distance_score.
+                    ranked_places = []
+                    for item in ml_results:
+                        item_copy = dict(item)
+                        if "ml_score" not in item_copy:
+                            item_copy["ml_score"] = float(item_copy.get("score") or 0.0)
+                        ranked_places.append(item_copy)
                     _ml_ranked = True
                     logger.info("[ML] ml_place_search 성공: %d개", len(ml_results))
             except Exception as _ml_err:
@@ -208,13 +288,24 @@ async def place_recommendation(state: GraphState) -> GraphState:
                         str(place_copy.get("category", "")),
                         disliked_foods,
                     )
+                    # PR-V1.5 / S20: Gemini 스코어 없음 → 0.0 (distance만 final에 기여).
+                    place_copy.setdefault("gemini_score", 0.0)
                     if disliked_keyword:
-                        place_copy["score"] = 0.1
+                        # Codex P1 (2026-05-15): disliked 페널티는 final_score 자체에
+                        # 반영해야 _sort_by_final_score가 disliked 항목을 뒤로 밀어냄.
+                        # 기존: score=0.1만 설정했고 _compute_final_score는 disliked를
+                        # 모름 → distance가 가까우면 disliked 매장이 1위로 올라가는
+                        # 회귀. 명시적으로 score+final_score 둘 다 0.0으로 고정.
+                        place_copy["score"] = 0.0
+                        place_copy["final_score"] = 0.0
                         place_copy["reason"] = (
                             f"멤버 비선호 음식인 {disliked_keyword} 카테고리와 겹쳐 점수를 낮췄어요."
                         )
+                    else:
+                        place_copy["final_score"] = _compute_final_score(place_copy)
                     reranked.append(place_copy)
-                reranked.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
+                # PR-V1.5 / F8: tiebreaker sort.
+                reranked = _sort_by_final_score(reranked)
                 ranked_places = reranked + place_results[5:]
             else:
                 # Gemini scoring for larger result sets (>3)
@@ -290,24 +381,33 @@ async def place_recommendation(state: GraphState) -> GraphState:
                     reranked = []
                     for place in top_candidates:
                         place_copy = dict(place)
-                        place_copy["score"] = score_map.get(str(place.get("place_id")), 0.5)
+                        gemini_score = score_map.get(str(place.get("place_id")), 0.5)
+                        # PR-V1.5 / S20 (Q4=A): Gemini 점수를 gemini_score 슬롯에 박음.
+                        place_copy["gemini_score"] = gemini_score
+                        place_copy["score"] = gemini_score  # legacy 호환
                         disliked_keyword = _contains_disliked_keyword(
                             str(place_copy.get("category", "")),
                             disliked_foods,
                         )
                         if disliked_keyword and float(place_copy.get("score", 0.0)) > 0.6:
                             place_copy["score"] = 0.1
+                            place_copy["gemini_score"] = 0.1
                             place_copy["reason"] = (
                                 f"멤버 비선호 음식인 {disliked_keyword} 카테고리와 겹쳐 점수를 낮췄어요."
                             )
+                        # PR-V1.5 / S20: 통합 final_score 계산.
+                        place_copy["final_score"] = _compute_final_score(place_copy)
                         reranked.append(place_copy)
-                    reranked.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
+                    # PR-V1.5 / F8: tiebreaker sort.
+                    reranked = _sort_by_final_score(reranked)
                     ranked_places = reranked + place_results[5:]
                 except Exception:
                     ranked_places = []
                     for place in place_results:
                         place_copy = dict(place)
                         place_copy["score"] = 0.5
+                        place_copy.setdefault("gemini_score", 0.0)
+                        place_copy["final_score"] = _compute_final_score(place_copy)
                         ranked_places.append(place_copy)
         elif not _ml_ranked:
             ranked_places = []
@@ -320,6 +420,20 @@ async def place_recommendation(state: GraphState) -> GraphState:
             ranked_places = corrected_places + remaining_places
         elif ranked_places:
             logger.info("[OPT] Skipping place self-correction: no disliked foods")
+
+        # PR-V1.5 / S20 (Q4=A) + F8: ML ranked 또는 self_correction 후에도
+        # final_score 누락 가능 → 일괄 채우고 tiebreaker 정렬.
+        for place_copy in ranked_places:
+            if "final_score" not in place_copy:
+                place_copy.setdefault("gemini_score", 0.0)
+                place_copy["final_score"] = _compute_final_score(place_copy)
+        ranked_places = _sort_by_final_score(list(ranked_places))
+
+        # PR-V1.5 / §6.15: rejected_places 최종 필터 (검색 단계에서 한 번,
+        # ranking 후에도 다시 — ML/Gemini 결과에 거부 키워드가 섞일 수 있음).
+        rejected_places = state.get("rejected_places") or []
+        if rejected_places:
+            ranked_places = _filter_out_rejected_places(ranked_places, rejected_places)
 
         state["place_search_results"] = ranked_places
         if meeting_id is None:
@@ -336,6 +450,9 @@ async def place_recommendation(state: GraphState) -> GraphState:
             # 익명 group constraint 요약 (디자인 P2). 누가 어떤 값을 가졌는지는
             # 식별되지 않음. 프론트는 추천 카드 옆에 이 문장을 reasoning으로 노출.
             "group_constraints_summary": group_constraints_summary,
+            # PR-Z1 (Q7=B): hybrid 그룹/발화자 토글 메타.
+            "preference_source": compute_preference_source(state),
+            "preference_toggle_enabled": compute_preference_toggle_enabled(state),
         }
         state["status"] = "place_recommended"
 
@@ -354,20 +471,56 @@ async def place_recommendation(state: GraphState) -> GraphState:
             logger.debug("place_rec cache failed", exc_info=True)
 
         # Narrator: 카드만 띄우고 끝내면 사용자가 "AI가 대답 안 했나?" 헷갈림.
+        # PR-V1.5 / F7 + S18 + §6.15: narrator 분기.
+        #   - kakao_api_error → "장소 검색 서비스 일시 불가".
+        #   - cuisine 2개 이상 → ambiguity 안내 + 정상 추천 narrator.
+        #   - place_search_empty (0건 정상 응답) → "다른 지역" 유도.
+        #   - count == 0 (필터 후 0건) → 기존 fallback.
         try:
             count = len(ranked_places[:5])
             hint = state.get("place_hint") or "요청하신 지역"
-            narrator = (
-                f"{hint} 근처 추천 장소 {count}개를 정리했어요. 📍 아래 카드에서 확인해 주세요."
-                if count > 0
-                else "추천 장소를 정리해봤어요. 📍 아래 카드를 확인해 주세요."
-            )
+            cuisines = state.get("detected_cuisines") or []
+            place_empty = bool(state.get("place_search_empty"))
+            kakao_error = bool(state.get("kakao_api_error"))
+
+            narrator_parts: list[str] = []
+            # F7: 장애가 최우선 — 다른 narrator 무력화.
+            if kakao_error and count == 0:
+                narrator_parts.append(
+                    "장소 검색 서비스가 일시적으로 불가합니다. 잠시 후 다시 시도해주세요."
+                )
+            else:
+                # S18: 다중 cuisine ambiguity narrator (정상 추천 앞에 prefix).
+                if isinstance(cuisines, list) and len(cuisines) >= 2:
+                    cuisine_label = "·".join(cuisines)
+                    narrator_parts.append(
+                        f"{cuisine_label} 모두 추천 중이에요. 한 종류만 원하시면 말씀해주세요."
+                    )
+                # §6.15: 정상 0건 → 지역 변경 유도.
+                if place_empty and count == 0:
+                    narrator_parts.append(
+                        f"{hint}에서 추천 결과를 찾지 못했어요. 다른 지역을 알려주실래요?"
+                    )
+                elif count > 0:
+                    narrator_parts.append(
+                        f"{hint} 근처 추천 장소 {count}개를 정리했어요. 아래 카드에서 확인해 주세요."
+                    )
+                else:
+                    narrator_parts.append("추천 장소를 정리해봤어요. 아래 카드를 확인해 주세요.")
+
+            narrator = " ".join(narrator_parts).strip()
             async with AsyncSessionLocal() as db:
                 await _emit_assistant_message(state["room_id"], db, narrator, state, shared=True)
         except Exception:
             logger.debug("place_recommendation narrator emit failed", exc_info=True)
 
         logger.info("[TIMING] place_recommendation: %.2fs", time.monotonic() - _t0)
+        dump("node_out", state.get("run_id"), {
+            "node": "place_recommendation",
+            "status_after": state.get("status"),
+            "card_type": (state.get("place_recommendation_payload") or {}).get("type"),
+            "slot_count": len(state.get("place_search_results", [])),
+        })
         return state
     except Exception as exc:
         return await _handle_node_exception("place_recommendation", state, exc)

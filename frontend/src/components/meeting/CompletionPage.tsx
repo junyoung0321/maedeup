@@ -233,7 +233,7 @@ export default function CompletionPage() {
         <button
           className="flex items-center justify-center rounded-xl transition-colors hover:opacity-90"
           style={{
-            fontSize: 15,
+            fontSize: 23,
             fontWeight: 300,
             fontFamily: "Pretendard Variable, Pretendard, sans-serif",
             color: "#ffffff",
@@ -247,7 +247,7 @@ export default function CompletionPage() {
         <button
           className="flex items-center justify-center rounded-xl transition-colors hover:opacity-90"
           style={{
-            fontSize: 15,
+            fontSize: 23,
             fontWeight: 300,
             fontFamily: "Pretendard Variable, Pretendard, sans-serif",
             color: "#4f46e5",

@@ -145,11 +145,11 @@ export default function HostTimeAdjustModal({
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <Clock size={20} style={{ color: "#4f46e5" }} />
-          <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#1e1b4b" }}>
+          <h3 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: "#1e1b4b" }}>
             시간대 조율
           </h3>
         </div>
-        <div style={{ fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
+        <div style={{ fontSize: 20, color: "#475569", lineHeight: 1.5 }}>
           {confirmedDate} · 총 {memberCount}명 합산 가능 시간 — 슬라이더로 정밀 선택
         </div>
 
@@ -177,7 +177,7 @@ export default function HostTimeAdjustModal({
             })}
           </div>
           {/* 시간 라벨 (2시간마다 = 4슬롯마다) */}
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(${TOTAL_SLOTS}, 1fr)`, gap: 1, fontSize: 10, color: "#94a3b8" }}>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${TOTAL_SLOTS}, 1fr)`, gap: 1, fontSize: 15, color: "#94a3b8" }}>
             {Array.from({ length: TOTAL_SLOTS }, (_, i) => (
               <div key={i} style={{ textAlign: "center", fontVariantNumeric: "tabular-nums" }}>
                 {i % 4 === 0 ? slotToTime(i) : ""}
@@ -187,7 +187,7 @@ export default function HostTimeAdjustModal({
         </div>
 
         {/* 범례 */}
-        <div style={{ display: "flex", gap: 14, fontSize: 11, color: "#475569" }}>
+        <div style={{ display: "flex", gap: 14, fontSize: 17, color: "#475569" }}>
           <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <span style={{ width: 12, height: 12, background: "#10b981", borderRadius: 2 }} /> 전원 가능
           </span>
@@ -201,7 +201,7 @@ export default function HostTimeAdjustModal({
 
         {/* 슬라이더 */}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <label style={{ fontSize: 12, color: "#475569", display: "flex", justifyContent: "space-between" }}>
+          <label style={{ fontSize: 18, color: "#475569", display: "flex", justifyContent: "space-between" }}>
             <span>시작</span>
             <span style={{ fontWeight: 600, color: "#1e293b", fontVariantNumeric: "tabular-nums" }}>{slotToTime(startIdx)}</span>
           </label>
@@ -213,7 +213,7 @@ export default function HostTimeAdjustModal({
             onChange={(e) => handleStartChange(Number(e.target.value))}
             style={{ width: "100%", accentColor: "#4f46e5" }}
           />
-          <label style={{ fontSize: 12, color: "#475569", display: "flex", justifyContent: "space-between" }}>
+          <label style={{ fontSize: 18, color: "#475569", display: "flex", justifyContent: "space-between" }}>
             <span>끝</span>
             <span style={{ fontWeight: 600, color: "#1e293b", fontVariantNumeric: "tabular-nums" }}>{slotToTime(endIdx + 1)}</span>
           </label>
@@ -234,7 +234,7 @@ export default function HostTimeAdjustModal({
             borderRadius: 10,
             background: isFullConsensus ? "#ecfdf5" : isValid ? "#fef3c7" : "#fee2e2",
             border: `1px solid ${isFullConsensus ? "#86efac" : isValid ? "#fcd34d" : "#fca5a5"}`,
-            fontSize: 13,
+            fontSize: 20,
             color: isFullConsensus ? "#166534" : isValid ? "#92400e" : "#991b1b",
             lineHeight: 1.5,
           }}
@@ -257,7 +257,7 @@ export default function HostTimeAdjustModal({
               border: "1px solid #e2e8f0",
               background: "#ffffff",
               color: "#475569",
-              fontSize: 14,
+              fontSize: 21,
               fontWeight: 600,
               cursor: "pointer",
               fontFamily: "inherit",
@@ -275,7 +275,7 @@ export default function HostTimeAdjustModal({
               border: "none",
               background: isValid ? "#4f46e5" : "#cbd5e1",
               color: "#ffffff",
-              fontSize: 14,
+              fontSize: 21,
               fontWeight: 700,
               cursor: isValid ? "pointer" : "not-allowed",
               fontFamily: "inherit",

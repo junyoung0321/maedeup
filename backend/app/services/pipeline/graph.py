@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any, Literal
+from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +47,7 @@ from app.services.pipeline.nodes.place import place_recommendation
 from app.services.pipeline.nodes.slot import slot_filling
 from app.services.pipeline.nodes.validation import supervisor_validation
 from app.services.pipeline.nodes.vote_card import vote_card_creation
+from app.observability.snapshot import dump
 from app.services.pipeline.state import GraphState, _default_state
 
 logger = logging.getLogger(__name__)
@@ -57,113 +59,171 @@ def _route_from_start(state: GraphState) -> Literal["entity_extraction", "slot_f
     - stalemate_judged / conclusion_detected: 의도 자명 → 노드3 entity_extraction부터 (~1s 절약)
     - all_members_selected: TimeBar 데이터 주입됨 → 노드4 slot_filling부터 (~3s 절약)
     - direct_request: quick_classify가 이미 general을 걸렀으므로 노드3 entity_extraction부터
+    - preference_toggle (PR-Z1): refresh 라우트 재호출. intent/entity 재추출 불필요 —
+        confirmed slot · place_hint · preference_source 가 이미 박혀 있음.
+        → vote_card scope면 slot_filling부터 (function_calling/validation 재실행),
+          place scope면 entity_extraction부터 (place_hint 보존하면서 재추천).
+        scope는 slot_context["partial_mode"]에 매핑됨.
     - 미지정: 기존 노드1 intent_detection 경로
     """
     trigger = state.get("trigger_reason")
-    if trigger in {"stalemate_judged", "conclusion_detected", "direct_request"}:
-        return "entity_extraction"
-    if trigger == "all_members_selected":
-        return "slot_filling"
-    return "intent_detection"
+    if trigger == "preference_toggle":
+        # refresh 라우트는 partial_mode = "place_only" | "vote_only" | None(both) 형태로 전달.
+        partial = state.get("partial_mode")
+        if partial == "place_only":
+            decision = "entity_extraction"
+        else:
+            # vote_only / both — slot_filling 진입해 function_calling→validation→vote_card 흐름.
+            decision = "slot_filling"
+    elif trigger in {"stalemate_judged", "conclusion_detected", "direct_request"}:
+        decision = "entity_extraction"
+    elif trigger == "all_members_selected":
+        decision = "slot_filling"
+    else:
+        decision = "intent_detection"
+    dump("route", state.get("run_id"), {
+        "router": "_route_from_start",
+        "decision": decision,
+        "status": state.get("status"),
+    })
+    return decision  # type: ignore[return-value]
 
 
 def _route_after_intent(state: GraphState) -> Literal["entity_extraction", "general_response"]:
     """general 의도이고 슬롯 필링 진행 중이 아니면 일반 응답으로 분기."""
     if _has_node_error(state):
-        return "general_response"
-    if float(state.get("confidence_score", 0.0)) < INTENT_CONFIDENCE_THRESHOLD:
-        return "general_response"
-    if state.get("intent") == "general" and state.get("slot_filling_turns", 0) == 0:
-        return "general_response"
-    return "entity_extraction"
+        decision = "general_response"
+    elif float(state.get("confidence_score", 0.0)) < INTENT_CONFIDENCE_THRESHOLD:
+        decision = "general_response"
+    elif state.get("intent") == "general" and state.get("slot_filling_turns", 0) == 0:
+        decision = "general_response"
+    else:
+        decision = "entity_extraction"
+    dump("route", state.get("run_id"), {
+        "router": "_route_after_intent",
+        "decision": decision,
+        "status": state.get("status"),
+    })
+    return decision  # type: ignore[return-value]
 
 
 def _route_after_slot_filling(state: GraphState) -> Literal["slot_filling", "function_calling", "__end__"]:
     if _has_node_error(state):
-        return END
-    status = state.get("status", "")
-    if status in ("conclusion_false_positive", "time_only_ready"):
-        return "function_calling"
-    if state.get("is_location_first"):
-        return "function_calling"
-    if state.get("all_slots_filled"):
-        return "function_calling"
-    # 부분 정보만 있거나 정보가 없는 경우 → 질문 없이 종료
-    if status in ("no_slots_yet", "partial_info_acknowledged"):
-        return END
-    if state.get("wait_timed_out") or state.get("awaiting_user_reply"):
-        return END
-    return "slot_filling"
+        decision = END
+    else:
+        status = state.get("status", "")
+        if status in ("conclusion_false_positive", "time_only_ready"):
+            decision = "function_calling"
+        elif state.get("is_location_first"):
+            decision = "function_calling"
+        elif state.get("all_slots_filled"):
+            decision = "function_calling"
+        # 부분 정보만 있거나 정보가 없는 경우 → 질문 없이 종료
+        elif status in ("no_slots_yet", "partial_info_acknowledged"):
+            decision = END
+        elif state.get("wait_timed_out") or state.get("awaiting_user_reply"):
+            decision = END
+        else:
+            decision = "slot_filling"
+    dump("route", state.get("run_id"), {
+        "router": "_route_after_slot_filling",
+        "decision": decision,
+        "status": state.get("status"),
+    })
+    return decision  # type: ignore[return-value]
 
 
 def _route_after_validation(
     state: GraphState,
-) -> Literal["vote_card_creation", "place_recommendation", "maedeup_card_creation", "__end__"]:
+) -> Literal["vote_card_creation", "place_recommendation", "maedeup_card_creation", "function_calling", "__end__"]:
     if _has_node_error(state):
-        return END
-    status = state.get("status")
-    if status == "conclusion_false_positive":
-        return END
-    if status == "time_only_ready":
-        state["partial_mode"] = "time_only"
-        return "maedeup_card_creation"
-    if not state.get("validation_passed"):
-        return END
-
-    # 해결점 C: trigger_reason 기반 라우팅 차별화
-    trigger = state.get("trigger_reason")
-    if trigger == "conclusion_detected":
-        # 결론 합의됐으니 vote/place 스킵, 매듭 카드 직행
-        return "maedeup_card_creation"
-    if trigger == "all_members_selected":
-        # TimeBar로 시간 확정됨, 장소 추천만
-        return "place_recommendation"
-
-    # 해결점 E A1: direct_request로 place 분류된 경우 vote 건너뛰고 place_recommendation
-    direct_kind = state.get("direct_request_kind")
-    if direct_kind == "place":
-        return "place_recommendation"
-
-    # 해결점 E A2: 이미 일정 확정된 상태면 vote_card 다시 만들 필요 없음 → place_recommendation
-    if state.get("confirmed_date") and state.get("place_search_results"):
-        return "place_recommendation"
-
-    if state.get("intent") == "place_suggestion" and state.get("place_search_results"):
-        return "place_recommendation"
-    # 선호 데이터 기반 자동 제안: 투표 카드를 먼저 생성 (시간대 투표)
-    if state.get("preference_common_times") and state.get("intent") != "place_suggestion":
-        return "vote_card_creation"
-    if state.get("is_location_first") and not state.get("date_hint"):
-        return "place_recommendation"
-    return "vote_card_creation"
+        decision = END
+    else:
+        status = state.get("status")
+        if status == "conclusion_false_positive":
+            decision = END
+        elif status == "time_only_ready":
+            state["partial_mode"] = "time_only"
+            decision = "maedeup_card_creation"
+        elif status == "needs_expansion":
+            # 호스트 GCal full-block → date_hint +7일 shift 후 function_calling 재실행
+            decision = "function_calling"
+        elif not state.get("validation_passed"):
+            decision = END
+        else:
+            # 해결점 C: trigger_reason 기반 라우팅 차별화
+            trigger = state.get("trigger_reason")
+            if trigger == "conclusion_detected":
+                # 결론 합의됐으니 vote/place 스킵, 매듭 카드 직행
+                decision = "maedeup_card_creation"
+            elif trigger == "all_members_selected":
+                # TimeBar로 시간 확정됨, 장소 추천만
+                decision = "place_recommendation"
+            else:
+                # 해결점 E A1: direct_request로 place 분류된 경우 vote 건너뛰고 place_recommendation
+                direct_kind = state.get("direct_request_kind")
+                if direct_kind == "place":
+                    decision = "place_recommendation"
+                # 해결점 E A2: 이미 일정 확정된 상태면 vote_card 다시 만들 필요 없음 → place_recommendation
+                elif state.get("confirmed_date") and state.get("place_search_results"):
+                    decision = "place_recommendation"
+                elif state.get("intent") == "place_suggestion" and state.get("place_search_results"):
+                    decision = "place_recommendation"
+                # 선호 데이터 기반 자동 제안: 투표 카드를 먼저 생성 (시간대 투표)
+                elif state.get("preference_common_times") and state.get("intent") != "place_suggestion":
+                    decision = "vote_card_creation"
+                elif state.get("is_location_first") and not state.get("date_hint"):
+                    decision = "place_recommendation"
+                else:
+                    decision = "vote_card_creation"
+    dump("route", state.get("run_id"), {
+        "router": "_route_after_validation",
+        "decision": decision,
+        "status": state.get("status"),
+    })
+    return decision  # type: ignore[return-value]
 
 
 def _route_after_vote_card_creation(state: GraphState) -> Literal["place_recommendation", "maedeup_card_creation", "__end__"]:
     if _has_node_error(state):
-        return END
+        decision = END
     # 사용자가 이미 시간/장소를 확정한 상태에서 진입한 경우 (vote 후 별도 트리거)
-    if state.get("confirmed_place"):
-        return "maedeup_card_creation"
-    # 일반 흐름: vote_card만 발행하고 사용자 vote 대기.
-    # 사용자가 vote → confirm endpoint가 새 run_pipeline 실행 시
-    # confirmed_date/place 박아 보내면 그때 maedeup으로 진입.
-    return END
+    elif state.get("confirmed_place"):
+        decision = "maedeup_card_creation"
+    else:
+        # 일반 흐름: vote_card만 발행하고 사용자 vote 대기.
+        # 사용자가 vote → confirm endpoint가 새 run_pipeline 실행 시
+        # confirmed_date/place 박아 보내면 그때 maedeup으로 진입.
+        decision = END
+    dump("route", state.get("run_id"), {
+        "router": "_route_after_vote_card_creation",
+        "decision": decision,
+        "status": state.get("status"),
+    })
+    return decision  # type: ignore[return-value]
 
 
 def _route_after_place_recommendation(state: GraphState) -> Literal["maedeup_card_creation", "__end__"]:
     if _has_node_error(state):
-        return END
-    if state.get("is_location_first") and not state.get("date_hint"):
-        return END
+        decision = END
+    elif state.get("is_location_first") and not state.get("date_hint"):
+        decision = END
     # 사용자가 이미 장소를 확정한 상태에서 진입한 경우만 매듭 카드로 직진
-    if state.get("confirmed_place"):
-        return "maedeup_card_creation"
+    elif state.get("confirmed_place"):
+        decision = "maedeup_card_creation"
     # direct_request로 진입한 경우 — vote_card 패턴과 일관되게 사용자 confirm 대기.
     # 사용자가 place 카드에서 "이 장소로 확정" 클릭 → confirm endpoint가 별도 trigger로
     # maedeup_card_creation 발화시킴. 자동 진행하면 confirmed_date와 데이터 불일치 가능.
-    if state.get("trigger_reason") == "direct_request":
-        return END
-    return "maedeup_card_creation"
+    elif state.get("trigger_reason") == "direct_request":
+        decision = END
+    else:
+        decision = "maedeup_card_creation"
+    dump("route", state.get("run_id"), {
+        "router": "_route_after_place_recommendation",
+        "decision": decision,
+        "status": state.get("status"),
+    })
+    return decision  # type: ignore[return-value]
 
 
 def _build_graph() -> Any:
@@ -217,6 +277,7 @@ def _build_graph() -> Any:
             "vote_card_creation": "vote_card_creation",
             "place_recommendation": "place_recommendation",
             "maedeup_card_creation": "maedeup_card_creation",  # 해결점 C: conclusion 직행
+            "function_calling": "function_calling",             # next-week expansion redirect
             END: END,
         },
     )
@@ -260,6 +321,7 @@ async def run_pipeline(
     """
     MessageReader.ensure_branded(context)
     _pipeline_t0 = time.monotonic()
+    run_id = uuid4().hex[:8]
     initial_state = _default_state(
         room_id=room_id,
         db=db,
@@ -267,6 +329,12 @@ async def run_pipeline(
         slot_context=slot_context,
         viewer_user_id=context.viewer_user_id,
     )
+    initial_state["run_id"] = run_id
+    dump("pipeline_start", run_id, {
+        "initial_keys": list(initial_state.keys()),
+        "trigger": initial_state.get("trigger_reason"),
+    })
+    logger.debug("[run=%s] pipeline_start room=%s trigger=%s", run_id, room_id, initial_state.get("trigger_reason"))
     await _compress_message_history(initial_state)
     # 소셜(방 전체) 채팅 컨텍스트 preload — entity/general 노드가 _serialize_context로 읽음.
     try:
@@ -277,12 +345,19 @@ async def run_pipeline(
     except Exception:
         logger.debug("social context preload failed room=%s", room_id, exc_info=True)
     final_state = await GRAPH.ainvoke(initial_state)
+    _elapsed = time.monotonic() - _pipeline_t0
     logger.info(
-        "[TIMING] run_pipeline TOTAL: %.2fs | intent=%s status=%s",
-        time.monotonic() - _pipeline_t0,
+        "[run=%s] [TIMING] run_pipeline TOTAL: %.2fs | intent=%s status=%s",
+        run_id,
+        _elapsed,
         final_state.get("intent"),
         final_state.get("status"),
     )
+    dump("pipeline_end", run_id, {
+        "final_status": final_state.get("status"),
+        "card_type": (final_state.get("maedeup_card_payload") or final_state.get("vote_card_payload") or final_state.get("place_recommendation_payload") or {}).get("type"),
+        "elapsed": round(_elapsed, 3),
+    })
     return {
         "status": final_state.get("status"),
         "intent": final_state.get("intent"),

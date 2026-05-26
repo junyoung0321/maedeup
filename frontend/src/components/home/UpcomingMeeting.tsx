@@ -81,8 +81,8 @@ export default function UpcomingMeeting() {
 
   if (loading) {
     return (
-      <div className="relative w-full max-w-full">
-        <div className="border border-[#e5e7eb] rounded-[24px] p-6 flex items-center justify-center shadow-sm" style={{ height: 320, background: "#f9fafb" }}>
+      <div className="relative w-full max-w-full h-full">
+        <div className="border border-[#e5e7eb] rounded-[24px] p-6 flex items-center justify-center shadow-sm h-full" style={{ minHeight: 416, background: "#f9fafb" }}>
           <span className="text-[#94a3b8] text-sm">불러오는 중...</span>
         </div>
       </div>
@@ -91,12 +91,12 @@ export default function UpcomingMeeting() {
 
   if (!meeting) {
     return (
-      <div className="relative w-full max-w-full">
-        <div className="border border-[#e5e7eb] rounded-[24px] p-6 flex flex-col items-center justify-center gap-3" style={{ height: 320, background: "linear-gradient(to bottom, #ffffff, #f5f3ff)" }}>
-          <span className="text-[22px] font-semibold text-[#94a3b8]">예정된 모임이 없어요</span>
+      <div className="relative w-full max-w-full h-full">
+        <div className="border border-[#e5e7eb] rounded-[24px] p-6 flex flex-col items-center justify-center gap-3 h-full" style={{ minHeight: 416, background: "linear-gradient(to bottom, #ffffff, #f5f3ff)" }}>
+          <span className="text-[33px] font-semibold text-[#94a3b8]">예정된 모임이 없어요</span>
           <button
             onClick={() => router.push("/meeting/new")}
-            className="px-6 py-2.5 rounded-full bg-[#4f46e5] text-white text-[14px] font-semibold hover:bg-[#4338ca] transition-colors"
+            className="px-6 py-2.5 rounded-full bg-[#4f46e5] text-white text-[21px] font-semibold hover:bg-[#4338ca] transition-colors"
           >
             모임 만들기
           </button>
@@ -113,7 +113,7 @@ export default function UpcomingMeeting() {
     <div className="relative w-full max-w-full">
       {/* Pink callout bubble */}
       <div
-        className="absolute -top-12 left-6 px-5 py-2.5 rounded-[20px] text-white text-[20px] font-semibold whitespace-nowrap z-10 animate-float"
+        className="absolute -top-6 left-6 px-5 py-2.5 rounded-[20px] text-white text-[30px] font-semibold whitespace-nowrap z-10 animate-float"
         style={{ backgroundColor: "#fa35a4" }}
       >
         가장 먼저 다가오는 모임이에요!
@@ -129,41 +129,41 @@ export default function UpcomingMeeting() {
 
       {/* Card */}
       <div
-        className="border border-[#e5e7eb] rounded-[24px] p-6 flex overflow-hidden shadow-[0_4px_3px_rgba(79,70,229,0.25)]"
-        style={{ height: 320, background: "linear-gradient(to bottom, #ffffff, #f5f3ff)" }}
+        className="border border-[#e5e7eb] rounded-[24px] p-6 flex overflow-hidden shadow-[0_4px_3px_rgba(79,70,229,0.25)] h-full"
+        style={{ minHeight: 416, background: "linear-gradient(to bottom, #ffffff, #f5f3ff)" }}
       >
         {/* Left info */}
         <div className="flex-1 flex flex-col justify-center pr-4">
-          <h3 className="text-[30px] font-semibold text-[#0f172a]" style={{ lineHeight: 1.08 }}>
+          <h3 className="text-[45px] font-semibold text-[#0f172a]" style={{ lineHeight: 1.08 }}>
             {meeting.title}
           </h3>
-          <p className="text-[20px] font-semibold text-[#334155] mt-2">
+          <p className="text-[30px] font-semibold text-[#334155] mt-2">
             {formatSchedule(meeting.scheduled_at)}
             {meeting.location_name ? ` · ${meeting.location_name}` : ""}
           </p>
-          <p className="text-[18px] text-[#64748b] mt-1">
+          <p className="text-[27px] text-[#64748b] mt-1">
             {isPast ? "모임 시간이 지났어요" : `시작까지 ${remainingTime.h > 0 ? `${remainingTime.h}시간 ` : ""}${remainingTime.m}분`}
           </p>
           {meeting.location_address && (
-            <p className="text-[14px] text-[#94a3b8] mt-2">{meeting.location_address}</p>
+            <p className="text-[21px] text-[#94a3b8] mt-2">{meeting.location_address}</p>
           )}
         </div>
 
         {/* Right purple gradient column */}
         <div
-          className="w-[176px] rounded-[16px] flex flex-col items-center justify-center gap-3 shrink-0 p-[14px]"
+          className="w-[264px] rounded-[16px] flex flex-col items-center justify-center gap-3 shrink-0 p-[14px]"
           style={{ background: "linear-gradient(180deg, #6366f1 0%, #4f46e5 100%)" }}
         >
-          <span className="text-[#ddd6fe] text-[11px] font-bold tracking-widest uppercase">
+          <span className="text-[#ddd6fe] text-[17px] font-bold tracking-widest uppercase">
             {isPast ? "STARTED" : "START IN"}
           </span>
-          <span className="text-white text-[28px] font-extrabold tracking-wider">
+          <span className="text-white text-[42px] font-extrabold tracking-wider">
             {timerStr}
           </span>
           <div className="flex flex-col gap-2 w-full mt-2">
             <button
               onClick={() => router.push(`/meeting/${meeting.id}`)}
-              className="w-full py-2 rounded-[10px] bg-white text-[#4f46e5] text-[14px] font-bold hover:bg-white/90 transition-colors"
+              className="w-full py-2 rounded-[10px] bg-white text-[#4f46e5] text-[21px] font-bold hover:bg-white/90 transition-colors"
             >
               바로 입장
             </button>

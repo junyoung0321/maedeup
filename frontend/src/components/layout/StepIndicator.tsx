@@ -59,7 +59,7 @@ export default function StepIndicator({ currentStep }: StepIndicatorProps) {
             <span
               className="hidden lg:inline whitespace-nowrap"
               style={{
-                fontSize: "clamp(14px, 0.6vw + 8px, 20px)",
+                fontSize: "clamp(21px, 0.9vw + 12px, 30px)",
                 letterSpacing: 0.6,
                 fontFamily: "Pretendard, sans-serif",
                 fontWeight: isActive ? 500 : 300,

@@ -26,6 +26,7 @@ from typing import Any
 from sqlmodel import select
 
 from app.models.meeting import MeetingSchedule
+from app.observability.snapshot import dump
 from app.services.pipeline.helpers.messaging import (
     _handle_node_exception,
     _has_node_error,
@@ -53,6 +54,13 @@ async def _register_google_calendar(state: GraphState) -> dict[str, Any]:
 
 async def maedeup_card_creation(state: GraphState) -> GraphState:
     _t0 = time.monotonic()
+    dump("node_in", state.get("run_id"), {
+        "node": "maedeup_card_creation",
+        "status": state.get("status"),
+        "trigger_reason": state.get("trigger_reason"),
+        "has_card": bool(state.get("maedeup_card_payload") or state.get("vote_card_payload")),
+        "message_count": len(state.get("message_records", [])),
+    })
     try:
         if _has_node_error(state):
             return state
@@ -197,6 +205,12 @@ async def maedeup_card_creation(state: GraphState) -> GraphState:
         }
         state["status"] = "completed"
         logger.info("[TIMING] maedeup_card_creation: %.2fs", time.monotonic() - _t0)
+        dump("node_out", state.get("run_id"), {
+            "node": "maedeup_card_creation",
+            "status_after": state.get("status"),
+            "card_type": (state.get("maedeup_card_payload") or {}).get("type"),
+            "slot_count": len(state.get("calendar_free_slots", [])),
+        })
         # P0-2: memory_extraction 분리 — graph latency에서 빼서 사용자 인식 latency ↓.
         asyncio.create_task(_spawn_memory_extraction_async(state))
         return state

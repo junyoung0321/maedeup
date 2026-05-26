@@ -25,10 +25,13 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import redis.asyncio as aioredis
 from sqlmodel import select
 
+from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.meeting import MeetingSchedule
+from app.services.agent_messaging import emit_agent_message
 
 # Fix 14 (2026-05-14): 사람 명사 패턴 — headcount 최소 2명 추정용.
 _PEOPLE_NOUN_RE = re.compile(
@@ -361,6 +364,24 @@ async def _slot_filling_all_members(state: GraphState, pref_data: dict[str, Any]
                             "[VOTE_OPTIONS_PATCH] room=%s meeting=%s before='%s' after='%s'",
                             room_pk, pending_ms.id, old_opts_repr, str(updated_opts),
                         )
+                        # BUG-26-E: vote_options 갱신 후 narrator 메시지도 동기화.
+                        # vote_card 발행 시 18:00 으로 emit 됐던 narrator 가 그대로 남아
+                        # vote_card 19:30 vs narrator 18:00 불일치 발생 → 재 emit 으로 해소.
+                        try:
+                            _redis = aioredis.from_url(
+                                settings.REDIS_URL, decode_responses=True,
+                                socket_connect_timeout=2, socket_timeout=2,
+                            )
+                            try:
+                                await emit_agent_message(
+                                    _redis,
+                                    int(state["room_id"]),
+                                    f"⏰ {date_str} {start_str}~{end_str}로 조정했어요.",
+                                )
+                            finally:
+                                await _redis.aclose()
+                        except Exception:
+                            logger.warning("[BUG-26-E] narrator emit 실패", exc_info=True)
             except Exception as _patch_err:
                 logger.warning("[VOTE_OPTIONS_PATCH] 실패 (무시): %s", _patch_err)
             return state

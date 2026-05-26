@@ -1,0 +1,402 @@
+[
+  {
+    "id": "k2-001",
+    "category": "banmal",
+    "input": "야 다음주 점심 어때",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"date_hint": "next week", "meal_type": "lunch"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-002",
+    "category": "banmal",
+    "input": "그날 나 안돼 다른 날로 바꾸자",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"rejection": true},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-003",
+    "category": "banmal",
+    "input": "낼 모레 시간 있어?",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"date_hint": "day after tomorrow"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-004",
+    "category": "banmal",
+    "input": "나 그날 바빠서 못 가",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"rejection": true},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-005",
+    "category": "banmal",
+    "input": "오늘 저녁 같이 먹자",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"date_hint": "today", "meal_type": "dinner"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-006",
+    "category": "banmal",
+    "input": "밥은 먹었어?",
+    "expected_intent": "general",
+    "expected_slot": {},
+    "should_trigger": false
+  },
+  {
+    "id": "k2-007",
+    "category": "banmal",
+    "input": "ㅋㅋ 알겠어",
+    "expected_intent": "general",
+    "expected_slot": {},
+    "should_trigger": false
+  },
+  {
+    "id": "k2-008",
+    "category": "banmal",
+    "input": "이번 주 금요일 저녁 어때",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"date_hint": "this Friday", "meal_type": "dinner"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-009",
+    "category": "banmal",
+    "input": "어디서 볼지 정했어?",
+    "expected_intent": "place_suggestion",
+    "expected_slot": {},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-010",
+    "category": "banmal",
+    "input": "요즘 어떻게 지내",
+    "expected_intent": "general",
+    "expected_slot": {},
+    "should_trigger": false
+  },
+  {
+    "id": "k2-011",
+    "category": "jurimmal",
+    "input": "ㄱㄱ 다음주 토요일",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"date_hint": "next Saturday"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-012",
+    "category": "jurimmal",
+    "input": "ㄴㄴ 그날 안됨",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"rejection": true},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-013",
+    "category": "jurimmal",
+    "input": "ㅇㅋ 그럼 거기서 봐",
+    "expected_intent": "general",
+    "expected_slot": {},
+    "should_trigger": false
+  },
+  {
+    "id": "k2-014",
+    "category": "jurimmal",
+    "input": "ㄱㅊ 내일 저녁",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"date_hint": "tomorrow", "meal_type": "dinner"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-015",
+    "category": "jurimmal",
+    "input": "ㅅㄱ 다들",
+    "expected_intent": "general",
+    "expected_slot": {},
+    "should_trigger": false
+  },
+  {
+    "id": "k2-016",
+    "category": "jurimmal",
+    "input": "ㅇㅈ 다음주 ㄱㄱ",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"date_hint": "next week"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-017",
+    "category": "jurimmal",
+    "input": "ㄷㄷ 강남 어때",
+    "expected_intent": "place_suggestion",
+    "expected_slot": {"area": "강남"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-018",
+    "category": "jurimmal",
+    "input": "ㅎㅎ 맛집 ㄱㄱ",
+    "expected_intent": "place_suggestion",
+    "expected_slot": {},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-019",
+    "category": "jurimmal",
+    "input": "ㅂㅂ 다음에 봐",
+    "expected_intent": "general",
+    "expected_slot": {},
+    "should_trigger": false
+  },
+  {
+    "id": "k2-020",
+    "category": "jurimmal",
+    "input": "ㄱ 홍대 근처",
+    "expected_intent": "place_suggestion",
+    "expected_slot": {"area": "홍대"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-021",
+    "category": "emoji",
+    "input": "🍕 다음주 금요일 어때?",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"date_hint": "next Friday"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-022",
+    "category": "emoji",
+    "input": "다음주 화요일 ❌ 다른 날로",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"rejection": true, "date_hint": "next Tuesday"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-023",
+    "category": "emoji",
+    "input": "ㅇㅋ 😊 거기서 보자",
+    "expected_intent": "general",
+    "expected_slot": {},
+    "should_trigger": false
+  },
+  {
+    "id": "k2-024",
+    "category": "emoji",
+    "input": "🏠 강남역 근처 어때",
+    "expected_intent": "place_suggestion",
+    "expected_slot": {"area": "강남역"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-025",
+    "category": "emoji",
+    "input": "내일 점심 🥗",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"date_hint": "tomorrow", "meal_type": "lunch"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-026",
+    "category": "emoji",
+    "input": "🤔 장소 어디로 할까",
+    "expected_intent": "place_suggestion",
+    "expected_slot": {},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-027",
+    "category": "emoji",
+    "input": "😂 ㅋㅋ 알겠어",
+    "expected_intent": "general",
+    "expected_slot": {},
+    "should_trigger": false
+  },
+  {
+    "id": "k2-028",
+    "category": "emoji",
+    "input": "이번 주 토요일 🙆‍♂️",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"date_hint": "this Saturday"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-029",
+    "category": "emoji",
+    "input": "🍖 고기 먹으러 가자",
+    "expected_intent": "place_suggestion",
+    "expected_slot": {"category": "고기"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-030",
+    "category": "emoji",
+    "input": "⏰ 몇 시에 봐?",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-031",
+    "category": "otta",
+    "input": "다음주 화요읾 어때",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"date_hint": "next Tuesday"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-032",
+    "category": "otta",
+    "input": "강남 한식 추천해 주세여",
+    "expected_intent": "place_suggestion",
+    "expected_slot": {"area": "강남", "category": "한식"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-033",
+    "category": "otta",
+    "input": "내일 저녋 어때요",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"date_hint": "tomorrow", "meal_type": "dinner"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-034",
+    "category": "otta",
+    "input": "그날 안됭 다른 날로 하자",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"rejection": true},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-035",
+    "category": "otta",
+    "input": "홍대 마짐 추천해줘",
+    "expected_intent": "place_suggestion",
+    "expected_slot": {"area": "홍대"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-036",
+    "category": "otta",
+    "input": "ㅋㅋ 그거 아라?",
+    "expected_intent": "general",
+    "expected_slot": {},
+    "should_trigger": false
+  },
+  {
+    "id": "k2-037",
+    "category": "otta",
+    "input": "이번주 수욜 저녁 괜찬아?",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"date_hint": "this Wednesday", "meal_type": "dinner"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-038",
+    "category": "otta",
+    "input": "성수 카패 어때",
+    "expected_intent": "place_suggestion",
+    "expected_slot": {"area": "성수", "category": "카페"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-039",
+    "category": "otta",
+    "input": "다들 연락해줘요 언재 되는지",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-040",
+    "category": "otta",
+    "input": "요즘 어떻케 지내?",
+    "expected_intent": "general",
+    "expected_slot": {},
+    "should_trigger": false
+  },
+  {
+    "id": "k2-041",
+    "category": "eono",
+    "input": "킹받네 그날 왜 다들 안돼",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"rejection": true},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-042",
+    "category": "eono",
+    "input": "갓생 모임 다음주 ㄱ",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"date_hint": "next week"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-043",
+    "category": "eono",
+    "input": "JMT 한식 맛집 추천해줘",
+    "expected_intent": "place_suggestion",
+    "expected_slot": {"category": "한식"},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-044",
+    "category": "eono",
+    "input": "레전드 장소 어디 있어",
+    "expected_intent": "place_suggestion",
+    "expected_slot": {},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-045",
+    "category": "eono",
+    "input": "오조오억년만에 다같이 모이는 거잖아",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-046",
+    "category": "eono",
+    "input": "빡세게 일정 잡자 이번엔",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-047",
+    "category": "eono",
+    "input": "그냥 아무데나 ㄱ",
+    "expected_intent": "general",
+    "expected_slot": {},
+    "should_trigger": false
+  },
+  {
+    "id": "k2-048",
+    "category": "eono",
+    "input": "TMI인데 나 그날 선약 있음",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {"rejection": true},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-049",
+    "category": "eono",
+    "input": "별다줄 언제 만나",
+    "expected_intent": "meeting_schedule",
+    "expected_slot": {},
+    "should_trigger": true
+  },
+  {
+    "id": "k2-050",
+    "category": "eono",
+    "input": "넘나 좋은 것 성수 카페",
+    "expected_intent": "place_suggestion",
+    "expected_slot": {"area": "성수", "category": "카페"},
+    "should_trigger": true
+  }
+]

@@ -821,6 +821,18 @@ async def run_demo(flags: DemoFlags) -> None:
                         # 호스트 slot 클릭 → sendTimeSelection WS 브로드캐스트 → 전원 row 초록 전환 시청
                         await asyncio.sleep(pace["act_3_after_host_vote"])
 
+                        # BUG-26-H: 게스트 3명 vote 호출 — vote_count 0 고정 해소.
+                        # vote_as_user 는 sync 함수. meeting_id 는 sync helper 로 조회.
+                        log("step 3.5 — 게스트 3명 vote (index=0) 호출 → vote_count 0 고정 해소")
+                        _vote_meeting_id = get_pending_meeting_id(room_id, host_token)
+                        if _vote_meeting_id:
+                            for _guest, _name in [(suhyun, "수현"), (minsu, "민수"), (yerin, "예린")]:
+                                vote_as_user(_vote_meeting_id, _guest.token, option_index=0, name_hint=_name)
+                                await asyncio.sleep(0.3)
+                            log(f"  ✓ 게스트 3명 vote 완료 (meeting_id={_vote_meeting_id})")
+                        else:
+                            log("  [BACKUP] pending meeting_id 조회 실패 — vote 스킵 (시연 계속)")
+
                         # step 4: Option C — TimeBar in-card "이 시간으로 확정" 버튼 활성 대기 + 호스트 클릭
                         # scheduleConsensus 도달(전원 time_selection 완료) → TimeBar 내부 호스트 확정 버튼 노출.
                         log("step 4 — TimeBar in-card '이 시간으로 확정' 버튼 활성 대기 (최대 30s)")

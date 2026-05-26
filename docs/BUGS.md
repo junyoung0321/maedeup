@@ -148,3 +148,21 @@
 - **P1**: 1건 (WSL venv 의존 — 현재 해소 상태, 재발 주의)
 - **P2**: 9건 (모두 시연 영향 미미) — LIMIT-10 추가
 - **P3**: 1건 (cosmetic)
+
+---
+
+## main 정리 후 잔여 (2026-05-26)
+
+`docs/handoff/2026-05-26-main-reconciliation-result.md` 참조. 머지 회귀 2건 (Bug-M1/M2) 은 commit `a73b188` + `2391b38` 으로 해소 + push 완료.
+
+| # | 증상 | 우선순위 | 의심 코드 | 메모 |
+|---|---|---|---|---|
+| BUG-26-1 | `/free-slots` API 가 특정 날짜에 1슬롯 (오전 9-10시) 만 반환 — 시간대 다양성 누락 | **P1** | `backend/app/api/routes/calendar.py` 의 free_slots 빌더. `detail_date` 인자 시 시간대별 슬롯 생성 로직 | 공통 회귀 (working/main 양쪽 재현). 머지와 무관. |
+| BUG-26-2 | `/free-slots` 라벨 `오전 11:00 ~ 10:00` (시작 11시 → 종료 10시) — 시각 normalize 버그 | P2 | label 포맷 helper (`pipeline/helpers/formatting` 또는 calendar route) | working-only. |
+| BUG-26-3 | Gemini 2회 timeout(15s × 2) 시 vote_card fallback 메시지 본문 시각이 TimeBar 합의 최종값과 다름 (`5/27 18:00` 추천 vs `5/27 19:30` 합의) | P2 | `gemini.py` timeout 15s + retry, vote_card fallback message builder | 채팅 본문 클로즈업 안 하면 시연 영상 영향 X. |
+| BUG-26-4 | `_detect_and_notify_intent` 외층 `except Exception: logger.debug(...)` — silent fail 패턴. trigger NameError 가 1차 진단에서 무음 통과 | **P1** | `backend/app/api/ws/social.py` `_detect_and_notify_intent` 외층 except | 회귀 방지 위해 `logger.warning` 으로 승격 권장. 같은 패턴 다른 영역도 감사 필요. |
+| BUG-26-5 | `_PEOPLE_NOUN_RE` (slot.py) + `call_gemini` cfg/timeout (gemini.py) 같은 정의 누락이 `-X theirs` 머지에서 발생. AST 정적 분석으로는 못 잡음 (사용은 있고 정의가 사라진 패턴) | P2 | merge strategy + lint | 향후 큰 머지 시 정의/사용 짝 + 함수 본문 hunk 충돌을 사람이 review 권고. |
+
+**우선순위 합계** (2026-05-26 추가분):
+- P1: 2건 (BUG-26-1, BUG-26-4)
+- P2: 3건 (BUG-26-2, BUG-26-3, BUG-26-5)

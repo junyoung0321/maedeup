@@ -909,6 +909,35 @@ async def patch_meeting_place(
             exc_info=True,
         )
 
+    # BUG-26-B: ACT 6 모임 요약 채팅 멘트 — 시각 카드(_publish_maedeup_place_update)
+    # 발행 직후, 어시스턴트 채팅 멘트가 없어 시청자가 "끝났다" 인식 못 하는 문제 해결.
+    # NX lock(600s)으로 동일 meeting_id PlacePATCH 중복 호출 시 1회만 발행.
+    try:
+        from app.services.agent_messaging import emit_agent_message, format_korean_meeting_time
+        time_label = format_korean_meeting_time(meeting.scheduled_at)
+        place_label = meeting.location_name or place
+        nx_key = f"maedeup_summary_emitted:{meeting.id}"
+        redis_for_summary = aioredis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+        try:
+            acquired = bool(await redis_for_summary.set(nx_key, "1", nx=True, ex=600))
+            if acquired:
+                await emit_agent_message(
+                    redis_for_summary,
+                    meeting.room_id,
+                    f"✨ 매듭 완성! {time_label} {place_label}에서 만나요",
+                )
+        finally:
+            await redis_for_summary.aclose()
+    except Exception:
+        logger.warning(
+            "ACT 6 summary emit failed (meeting_id=%s)", meeting.id, exc_info=True,
+        )
+
     # 모임 히스토리 저장 (non-critical, after commit)
     try:
         await save_meeting_record(meeting.id, session)

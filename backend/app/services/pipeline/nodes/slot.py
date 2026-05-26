@@ -22,8 +22,13 @@ from __future__ import annotations
 import logging
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from sqlmodel import select
+
+from app.db.session import AsyncSessionLocal
+from app.models.meeting import MeetingSchedule
 
 # Fix 14 (2026-05-14): 사람 명사 패턴 — headcount 최소 2명 추정용.
 _PEOPLE_NOUN_RE = re.compile(
@@ -306,6 +311,54 @@ async def _slot_filling_all_members(state: GraphState, pref_data: dict[str, Any]
                 "[TRIGGER] all_members_selected manual host pick: %s %s~%s",
                 date_str, start_str, end_str,
             )
+            # BUG-26-C: vote_options 라벨을 manual pick 시각으로 갱신.
+            # vote_card 발행 시점 18:00 값이 그대로 남아 새로고침 시 19:30 과 충돌하는 문제 수정.
+            try:
+                async with AsyncSessionLocal() as _db:
+                    room_pk = state.get("room_id")
+                    now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+                    recent_threshold = now_naive - timedelta(minutes=30)
+                    pending_ms = (
+                        await _db.execute(
+                            select(MeetingSchedule)
+                            .where(MeetingSchedule.room_id == room_pk)
+                            .where(MeetingSchedule.status == "pending")
+                            .where(MeetingSchedule.created_at > recent_threshold)
+                            .order_by(MeetingSchedule.created_at.desc())
+                            .limit(1)
+                        )
+                    ).scalar_one_or_none()
+                    if pending_ms is not None and pending_ms.vote_options:
+                        old_opts_repr = str(pending_ms.vote_options)
+                        # 가장 근접한 옵션 1개: date_str 로 시작하는 start_at 가진 옵션 우선,
+                        # 없으면 index 0 fallback.
+                        target_prefix = f"{date_str}T"
+                        best_idx = next(
+                            (
+                                i for i, o in enumerate(pending_ms.vote_options)
+                                if isinstance(o, dict) and isinstance(o.get("start_at"), str)
+                                and o["start_at"].startswith(target_prefix)
+                            ),
+                            0,
+                        )
+                        new_label = f"{date_str} {start_str}~{end_str}"
+                        new_start_at = f"{date_str}T{start_str}:00"
+                        new_end_at = f"{date_str}T{end_str}:00"
+                        updated_opts = list(pending_ms.vote_options)
+                        opt_copy = dict(updated_opts[best_idx])
+                        opt_copy["label"] = new_label
+                        opt_copy["start_at"] = new_start_at
+                        opt_copy["end_at"] = new_end_at
+                        updated_opts[best_idx] = opt_copy
+                        pending_ms.vote_options = updated_opts
+                        _db.add(pending_ms)
+                        await _db.commit()
+                        logger.info(
+                            "[VOTE_OPTIONS_PATCH] room=%s meeting=%s before='%s' after='%s'",
+                            room_pk, pending_ms.id, old_opts_repr, str(updated_opts),
+                        )
+            except Exception as _patch_err:
+                logger.warning("[VOTE_OPTIONS_PATCH] 실패 (무시): %s", _patch_err)
             return state
 
     best_location = pref_data.get("best_location")

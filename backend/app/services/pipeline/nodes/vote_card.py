@@ -373,8 +373,14 @@ async def vote_card_creation(state: GraphState) -> GraphState:
                 narrator = f"날짜가 엇갈리네요 ({', '.join(parts)}). 가장 많이 선택된 날짜 기준으로 {best_label}을(를) 추천드려요. 📅"
             else:
                 narrator = f"캘린더 확인 결과, {best_label}을(를) 추천드려요. 📅 아래에서 확인해주세요."
+            _prev_msg_count = len(state.get("new_assistant_messages") or [])
             async with AsyncSessionLocal() as db:
                 await _emit_assistant_message(state["room_id"], db, narrator, state, shared=True)
+            # BUG-26-G: 첫 추천 메시지 ID 추적 — manual pick 시 content update를 위해 저장.
+            _new_msgs = state.get("new_assistant_messages") or []
+            if len(_new_msgs) > _prev_msg_count:
+                state["vote_card_recommend_msg_id"] = _new_msgs[-1]["id"]  # type: ignore[typeddict-unknown-key]
+                logger.debug("[BUG-26-G] vote_card_recommend_msg_id=%s", state["vote_card_recommend_msg_id"])
         except Exception:
             logger.debug("vote_card narrator emit failed", exc_info=True)
 

@@ -30,6 +30,7 @@ from sqlmodel import select
 
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
+from app.models.chat import ChatMessage
 from app.models.meeting import MeetingSchedule
 from app.services.agent_messaging import emit_agent_message
 
@@ -364,6 +365,55 @@ async def _slot_filling_all_members(state: GraphState, pref_data: dict[str, Any]
                             "[VOTE_OPTIONS_PATCH] room=%s meeting=%s before='%s' after='%s'",
                             room_pk, pending_ms.id, old_opts_repr, str(updated_opts),
                         )
+                        # BUG-26-G: 첫 추천 메시지 본문 update — manual pick 후 시각 동기화.
+                        # vote_card_creation 이 emit 한 "6월 8일 오후 6:00 추천드려요" 가
+                        # manual pick 후에도 history 에 남아 새 시각 (19:30 등) 과 충돌하는 문제 수정.
+                        # state["vote_card_recommend_msg_id"] 가 있을 때만 update (없으면 skip).
+                        _recommend_msg_id = state.get("vote_card_recommend_msg_id")
+                        if _recommend_msg_id:
+                            try:
+                                _new_content = f"캘린더 확인 결과, {date_str} {start_str}~{end_str}을(를) 추천드려요. 📅 아래에서 확인해주세요."
+                                async with AsyncSessionLocal() as _msg_db:
+                                    _msg_row = (
+                                        await _msg_db.execute(
+                                            select(ChatMessage).where(ChatMessage.id == _recommend_msg_id)
+                                        )
+                                    ).scalar_one_or_none()
+                                    if _msg_row is not None:
+                                        _msg_row.content = _new_content
+                                        _msg_db.add(_msg_row)
+                                        await _msg_db.commit()
+                                        logger.info(
+                                            "[BUG-26-G] recommend msg id=%s content updated: %s",
+                                            _recommend_msg_id, _new_content,
+                                        )
+                                        # WS broadcast: chat_message_update → frontend 실시간 반영
+                                        try:
+                                            import json as _json
+                                            _redis_g = aioredis.from_url(
+                                                settings.REDIS_URL, decode_responses=True,
+                                                socket_connect_timeout=2, socket_timeout=2,
+                                            )
+                                            try:
+                                                _channel = f"agent:{int(state['room_id'])}"
+                                                _payload = _json.dumps(
+                                                    {
+                                                        "type": "chat_message_update",
+                                                        "id": _recommend_msg_id,
+                                                        "content": _new_content,
+                                                    },
+                                                    ensure_ascii=False,
+                                                )
+                                                await _redis_g.publish(_channel, _payload)
+                                            finally:
+                                                await _redis_g.aclose()
+                                        except Exception:
+                                            logger.warning("[BUG-26-G] WS broadcast 실패 (무시)", exc_info=True)
+                                    else:
+                                        logger.debug("[BUG-26-G] recommend msg id=%s not found — skip", _recommend_msg_id)
+                            except Exception:
+                                logger.warning("[BUG-26-G] 첫 추천 메시지 update 실패 (무시)", exc_info=True)
+
                         # BUG-26-E: vote_options 갱신 후 narrator 메시지도 동기화.
                         # vote_card 발행 시 18:00 으로 emit 됐던 narrator 가 그대로 남아
                         # vote_card 19:30 vs narrator 18:00 불일치 발생 → 재 emit 으로 해소.

@@ -313,6 +313,25 @@ function toCardPayload(data: unknown): CardPayload | null {
   return null;
 }
 
+// BUG-26-G: manual pick 후 첫 추천 메시지 본문 실시간 반영.
+interface ChatMessageUpdatePayload {
+  type: "chat_message_update";
+  id: number;
+  content: string;
+}
+
+function isChatMessageUpdatePayload(data: unknown): data is ChatMessageUpdatePayload {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+  const candidate = data as Partial<ChatMessageUpdatePayload>;
+  return (
+    candidate.type === "chat_message_update" &&
+    typeof candidate.id === "number" &&
+    typeof candidate.content === "string"
+  );
+}
+
 function isMeetingResolvedPayload(data: unknown): data is { type: "meeting_confirmed" | "meeting_cancelled"; meeting_id: number } {
   if (!data || typeof data !== "object") {
     return false;
@@ -530,6 +549,16 @@ export function useAgentWebSocket(roomId: string, sender: string, options?: Agen
 
         if (isVoteUpdatePayload(parsed)) {
           setVoteUpdate(parsed);
+          return;
+        }
+
+        // BUG-26-G: manual pick 후 첫 추천 메시지 본문 실시간 업데이트.
+        if (isChatMessageUpdatePayload(parsed)) {
+          setMessages((prev) =>
+            prev.map((message) =>
+              message.id === parsed.id ? { ...message, content: parsed.content } : message,
+            ),
+          );
           return;
         }
 

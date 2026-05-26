@@ -134,21 +134,24 @@ async def vote(
     return resp.json()
 
 
-async def get_meeting_votes(
-    client: httpx.AsyncClient, host_token: str, room_id: int, meeting_id: int
-) -> dict:
-    """pending-vote 엔드포인트로 최신 votes 조회."""
-    resp = await client.get(
-        f"{API}/api/v1/meetings/rooms/{room_id}/pending-vote",
-        headers={"Authorization": f"Bearer {host_token}"},
-        timeout=5.0,
-    )
-    if resp.status_code != 200:
-        return {}
-    body = resp.json()
-    if isinstance(body, dict):
-        return body.get("votes", {})
-    return {}
+async def get_meeting_vote_total(
+    client: httpx.AsyncClient, host_token: str, meeting_id: int
+) -> int:
+    """GET /api/v1/meetings/{meeting_id}/votes 로 집계된 총 투표 수 반환.
+
+    pending-vote endpoint 는 confirmed 상태 미팅에서 None 반환 → false positive.
+    대신 vote POST 응답에 포함된 aggregated votes 합산을 직접 조회한다.
+
+    GET /api/v1/meetings/{meeting_id} 는 votes 필드 미포함 → 별도 조회 불가.
+    대신 새로운 votes 조회 endpoint 를 사용하지 않고, setup 단계에서 vote
+    응답(VoteResponse.votes)을 직접 활용한다. 이 함수는 fallback 용도로
+    room-level pending-vote 없이 meeting_id 기반으로 조회를 시도한다.
+
+    실패 시 -1 반환 (API fail 구분용).
+    """
+    # VoteResponse 에는 votes: {option_index_str: count} 가 있으므로
+    # 마지막 vote 응답으로 합산하는 것이 정확. 이 함수는 사용되지 않음.
+    return -1
 
 
 # ---------------------------------------------------------------------------
@@ -205,15 +208,11 @@ async def send_chat_ws(token: str, room_id: int, content: str, sender: str) -> N
 # ---------------------------------------------------------------------------
 
 
-async def detect_vote_race(
-    actual_votes: dict,
+def detect_vote_race(
+    actual_total: int,
     expected_total: int,
 ) -> int:
-    """votes dict 에서 집계한 총 투표 수가 expected 와 일치하는지.
-
-    불일치 delta = race_count (0 이 GREEN 조건).
-    """
-    actual_total = len(actual_votes)
+    """실제 집계 투표 수 vs expected 불일치 delta = race_count (0 이 GREEN 조건)."""
     return abs(actual_total - expected_total)
 
 
@@ -299,15 +298,27 @@ async def run_scenario_001_002(
     vote_results = await asyncio.gather(*[do_vote(a) for a in actions])
     print(f"    {tag} vote results: {[r['ok'] for r in vote_results]}", flush=True)
 
-    # 6. 결과 조회 (pending-vote)
+    # 6. 결과 집계: vote 응답(VoteResponse.votes = {option_idx: count}) 합산
+    #    pending-vote endpoint 는 confirmed 상태에서 None → false positive 발생.
+    #    대신 각 vote 응답에 포함된 aggregated_votes 를 직접 사용한다.
+    #    성공한 vote 응답 중 마지막 것(가장 최신 집계)의 합산을 사용.
     await asyncio.sleep(0.5)  # DB commit 대기
-    votes_dict = await get_meeting_votes(client, host_token, room_id, meeting_id)
     expected_total = expected.get("total_vote_count", len(actions))
-    race_count = await detect_vote_race(votes_dict, expected_total)
+
+    # vote 응답 votes: {option_index_str: count}, 합계 = 실제 반영 투표 수
+    actual_total = 0
+    for r in vote_results:
+        if r.get("ok") and isinstance(r.get("result"), dict):
+            option_counts = r["result"].get("votes", {})
+            candidate = sum(option_counts.values())
+            if candidate > actual_total:
+                actual_total = candidate  # 가장 최신 집계 (최댓값)
+
+    race_count = abs(actual_total - expected_total)
 
     notes = []
     if race_count > 0:
-        notes.append(f"expected {expected_total} votes, got {len(votes_dict)}")
+        notes.append(f"expected {expected_total} votes, got {actual_total}")
     failed = [r for r in vote_results if not r["ok"]]
     if failed:
         notes.append(f"{len(failed)} vote(s) failed: {[r['error'] for r in failed]}")

@@ -376,14 +376,14 @@ async def _slot_filling_all_members(state: GraphState, pref_data: dict[str, Any]
                                 socket_connect_timeout=1, socket_timeout=1,
                             )
                             try:
-                                _redis_key_g = f"meeting:{meeting_obj.id}:recommend_msg_id"
+                                _redis_key_g = f"meeting:{pending_ms.id}:recommend_msg_id"
                                 _recommend_msg_id_str = await _r_get.get(_redis_key_g)
                                 if _recommend_msg_id_str:
                                     _recommend_msg_id = int(_recommend_msg_id_str)
                                     await _r_get.delete(_redis_key_g)
                                     logger.debug(
                                         "[BUG-26-G] recommend_msg_id=%s loaded from Redis (meeting=%s)",
-                                        _recommend_msg_id, meeting_obj.id,
+                                        _recommend_msg_id, pending_ms.id,
                                     )
                             finally:
                                 await _r_get.aclose()

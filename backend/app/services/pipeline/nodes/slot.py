@@ -368,8 +368,27 @@ async def _slot_filling_all_members(state: GraphState, pref_data: dict[str, Any]
                         # BUG-26-G: 첫 추천 메시지 본문 update — manual pick 후 시각 동기화.
                         # vote_card_creation 이 emit 한 "6월 8일 오후 6:00 추천드려요" 가
                         # manual pick 후에도 history 에 남아 새 시각 (19:30 등) 과 충돌하는 문제 수정.
-                        # state["vote_card_recommend_msg_id"] 가 있을 때만 update (없으면 skip).
-                        _recommend_msg_id = state.get("vote_card_recommend_msg_id")
+                        # Redis key meeting:{id}:recommend_msg_id 에서 1회용으로 GET + DELETE.
+                        _recommend_msg_id = None
+                        try:
+                            _r_get = aioredis.from_url(
+                                settings.REDIS_URL, decode_responses=True,
+                                socket_connect_timeout=1, socket_timeout=1,
+                            )
+                            try:
+                                _redis_key_g = f"meeting:{meeting_obj.id}:recommend_msg_id"
+                                _recommend_msg_id_str = await _r_get.get(_redis_key_g)
+                                if _recommend_msg_id_str:
+                                    _recommend_msg_id = int(_recommend_msg_id_str)
+                                    await _r_get.delete(_redis_key_g)
+                                    logger.debug(
+                                        "[BUG-26-G] recommend_msg_id=%s loaded from Redis (meeting=%s)",
+                                        _recommend_msg_id, meeting_obj.id,
+                                    )
+                            finally:
+                                await _r_get.aclose()
+                        except Exception:
+                            logger.warning("[BUG-26-G] recommend msg id Redis load 실패", exc_info=True)
                         if _recommend_msg_id:
                             try:
                                 _new_content = f"캘린더 확인 결과, {date_str} {start_str}~{end_str}을(를) 추천드려요. 📅 아래에서 확인해주세요."

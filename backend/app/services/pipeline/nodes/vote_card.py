@@ -25,6 +25,9 @@ from typing import Any
 
 from sqlmodel import select
 
+import redis.asyncio as aioredis
+
+from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.observability.snapshot import dump
 from app.models.meeting import MeetingSchedule
@@ -376,11 +379,31 @@ async def vote_card_creation(state: GraphState) -> GraphState:
             _prev_msg_count = len(state.get("new_assistant_messages") or [])
             async with AsyncSessionLocal() as db:
                 await _emit_assistant_message(state["room_id"], db, narrator, state, shared=True)
-            # BUG-26-G: 첫 추천 메시지 ID 추적 — manual pick 시 content update를 위해 저장.
+            # BUG-26-G: 첫 추천 메시지 ID 추적 — Redis 에 저장 (run 격리 회피).
             _new_msgs = state.get("new_assistant_messages") or []
             if len(_new_msgs) > _prev_msg_count:
-                state["vote_card_recommend_msg_id"] = _new_msgs[-1]["id"]  # type: ignore[typeddict-unknown-key]
-                logger.debug("[BUG-26-G] vote_card_recommend_msg_id=%s", state["vote_card_recommend_msg_id"])
+                _emitted_msg_id = _new_msgs[-1]["id"]
+                _meeting_id_for_redis = _card_payload_meeting_id(state.get("vote_card_payload"))
+                if _meeting_id_for_redis and _emitted_msg_id:
+                    try:
+                        _r = aioredis.from_url(
+                            settings.REDIS_URL, decode_responses=True,
+                            socket_connect_timeout=1, socket_timeout=1,
+                        )
+                        try:
+                            await _r.set(
+                                f"meeting:{_meeting_id_for_redis}:recommend_msg_id",
+                                str(_emitted_msg_id),
+                                ex=86400,
+                            )
+                            logger.debug(
+                                "[BUG-26-G] recommend_msg_id=%s stored in Redis (meeting=%s)",
+                                _emitted_msg_id, _meeting_id_for_redis,
+                            )
+                        finally:
+                            await _r.aclose()
+                    except Exception:
+                        logger.warning("[BUG-26-G] recommend msg id Redis save 실패", exc_info=True)
         except Exception:
             logger.debug("vote_card narrator emit failed", exc_info=True)
 

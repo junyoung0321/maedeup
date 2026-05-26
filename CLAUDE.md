@@ -2,7 +2,7 @@
 
 ## 진행 중인 작업
 세션 시작 시 `docs/handoff/` 폴더의 가장 최근 문서를 먼저 확인하세요.
-**현재 task**: silent-fail audit P0 4건 가시화 (`f717b06`) + bug-26-g/f NameError 회귀 fix (`8ceffdb`) + 2nd 시연 GREEN (room=224, narrator 3개 시각 100% 일관) — origin/main push 완료 (HEAD `8ceffdb`, 2026-05-27, 전시 D-8). **다음**: P1-2 TZ root cause fix (code-analyst 분석 중) → silent-fail P1 A/B/C 트랙 → v2 spec 본문 + 시연 영상 촬영 (날짜 TBD).
+**현재 task**: 전시 안정성 spec `docs/superpowers/specs/2026-05-27-exhibition-stability-k1-k2-k3-design.md` Phase 1 측정 인프라 구축 완료 (HEAD = Task 6 commit). 산출물: `.gstack-k2-runner.py` / `.gstack-k3-concurrency-runner.py` / `.gstack-k3-onboarding-runner.py` + `.gstack-fixtures/*.json` 3개 + `.gstack-demo.py` K1 wrapper + memory 25항목 확장. **다음**: Phase 2 baseline 측정 진입 (handoff `docs/handoff/2026-05-28-phase1-runners-ready.md` 6 step) — 사용자 결정 받아 시작.
 시연 자동화 (WSL venv v2, 2026-05-15):
 - 터미널 1: `~/.venv-maedeup-demo/bin/python3 .gstack-browser-launch.py`
 - 터미널 2: `~/.venv-maedeup-demo/bin/python3 .gstack-demo.py` (또는 `--fast`)
@@ -17,7 +17,10 @@
 6. 코덱스 P1 backlog (Option C 라운드 1~9 완료 후 추가 필요 검토, TODOS.md §10) — vote_update 좁히기·VoteCardSection 회귀 테스트·timeConfirmed mount·seed 주석·refresh state 통일
 7. 장소 추천 vote 시스템 검토 (v2 spec PR-v2.1 후보)
 참고:
-- `docs/handoff/2026-05-27-silent-fail-and-bug-26-g.md` (오늘 진행 — silent-fail audit + bug-26-g/f fix + 시연 GREEN, 2026-05-27)
+- `docs/handoff/2026-05-28-phase1-runners-ready.md` (Phase 1 완료, 2026-05-28)
+- `docs/superpowers/specs/2026-05-27-exhibition-stability-k1-k2-k3-design.md` (전시 안정성 spec)
+- `docs/superpowers/plans/2026-05-27-phase1-measurement-infra.md` (Phase 1 plan)
+- `docs/handoff/2026-05-27-silent-fail-and-bug-26-g.md` (silent-fail audit + bug-26-g/f fix + 시연 GREEN, 2026-05-27)
 - `docs/handoff/2026-05-26-main-reconciliation-result.md` (main 정리 결과, 2026-05-26)
 - `docs/handoff/2026-05-16-option-c-natural.md` (Option C 라운드 1~9 + 자연 표현 + 시나리오 정합성, 2026-05-16)
 - `docs/handoff/2026-05-15-round4-green.md` (자동 루프 5라운드 + GREEN 도달, 2026-05-15)

@@ -315,7 +315,11 @@ async def _slot_filling_all_members(state: GraphState, pref_data: dict[str, Any]
             # vote_card 발행 시점 18:00 값이 그대로 남아 새로고침 시 19:30 과 충돌하는 문제 수정.
             try:
                 async with AsyncSessionLocal() as _db:
-                    room_pk = state.get("room_id")
+                    try:
+                        room_pk = int(state.get("room_id"))
+                    except (TypeError, ValueError):
+                        logger.warning("[VOTE_OPTIONS_PATCH] room_id 변환 실패: %s", state.get("room_id"))
+                        return state
                     now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
                     recent_threshold = now_naive - timedelta(minutes=30)
                     pending_ms = (

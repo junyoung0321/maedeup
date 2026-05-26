@@ -294,7 +294,9 @@ async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
                 result["rejected_places"] = merged
             return result
     except Exception:
-        pass
+        # BUG-26-4 패턴 재발 방지: pass 로 swallow 하면 NameError 같은 코드 버그가 무음.
+        # fallback 동작은 유지하되 traceback 항상 stderr 노출.
+        logger.exception("entity extraction Gemini path failed — falling back to pattern result")
 
     # Gemini 실패 시 패턴 기반 fallback 반환
     return pattern_result

@@ -512,7 +512,9 @@ async def place_recommendation(state: GraphState) -> GraphState:
             async with AsyncSessionLocal() as db:
                 await _emit_assistant_message(state["room_id"], db, narrator, state, shared=True)
         except Exception:
-            logger.debug("place_recommendation narrator emit failed", exc_info=True)
+            # BUG-26-4 패턴 재발 방지: narrator emit 전체 try 가 NameError 묻으면
+            # place 카드만 뜨고 안내 문구 없는 회귀를 무음으로 흘려보냄.
+            logger.warning("place_recommendation narrator emit failed", exc_info=True)
 
         logger.info("[TIMING] place_recommendation: %.2fs", time.monotonic() - _t0)
         dump("node_out", state.get("run_id"), {

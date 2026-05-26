@@ -405,7 +405,9 @@ async def vote_card_creation(state: GraphState) -> GraphState:
                     except Exception:
                         logger.warning("[BUG-26-G] recommend msg id Redis save 실패", exc_info=True)
         except Exception:
-            logger.debug("vote_card narrator emit failed", exc_info=True)
+            # BUG-26-4 패턴 재발 방지: narrator emit 전체 try 가 NameError 묻으면
+            # vote_card 만 뜨고 안내 문구 없는 회귀를 무음으로 흘려보냄.
+            logger.warning("vote_card narrator emit failed", exc_info=True)
 
         logger.info("[TIMING] vote_card_creation: %.2fs", time.monotonic() - _t0)
         dump("node_out", state.get("run_id"), {

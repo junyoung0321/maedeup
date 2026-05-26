@@ -756,5 +756,6 @@ async def _detect_and_notify_intent(
                 exc_info=True,
             )
     except Exception:
-        # 의도 감지 실패는 채팅 흐름에 영향을 주지 않도록 무시
-        logger.debug("Intent detection failed for channel %s", channel, exc_info=True)
+        # 의도 감지 실패는 채팅 흐름에 영향을 주지 않도록 swallow.
+        # 다만 BUG-26-4 (NameError silent swallow) 재발 방지 위해 warning 레벨 + traceback 강제.
+        logger.warning("Intent detection failed for channel %s", channel, exc_info=True)

@@ -350,8 +350,13 @@ async def _slot_filling_all_members(state: GraphState, pref_data: dict[str, Any]
                             0,
                         )
                         new_label = f"{date_str} {start_str}~{end_str}"
-                        new_start_at = f"{date_str}T{start_str}:00"
-                        new_end_at = f"{date_str}T{end_str}:00"
+                        # P1-2: KST → UTC 변환 후 aware ISO 로 통일 (다른 slot 들과 동일 형식).
+                        # 기존 naive KST 저장이 DB layer naive UTC 의미와 충돌, confirm 시
+                        # _parse_iso_datetime 가 naive 를 UTC 로 잘못 해석할 위험 해소.
+                        _start_kst = datetime.fromisoformat(f"{date_str}T{start_str}:00").replace(tzinfo=KST)
+                        _end_kst = datetime.fromisoformat(f"{date_str}T{end_str}:00").replace(tzinfo=KST)
+                        new_start_at = _start_kst.astimezone(timezone.utc).isoformat()
+                        new_end_at = _end_kst.astimezone(timezone.utc).isoformat()
                         updated_opts = list(pending_ms.vote_options)
                         opt_copy = dict(updated_opts[best_idx])
                         opt_copy["label"] = new_label

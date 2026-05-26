@@ -83,7 +83,7 @@ async def _analyze_conversation(
         "출력 형식:\n"
         "{\n"
         '  "card": {\n'
-        '    "date": "자연어 날짜/시간 요약 또는 null (예: \"이번 주 금/토/일 모두 막힘, 다음 주 평일 후보\")",\n'
+        '    "date": "자연어 날짜/시간 요약 또는 null (예: \"이번 주 금/토/일 거부됨\")",\n'
         '    "place": "표시용 장소 또는 null",\n'
         '    "headcount": "표시용 인원 또는 null",\n'
         '    "type": "모임 유형(식사/카페/술 등) 또는 null",\n'
@@ -114,7 +114,7 @@ async def _analyze_conversation(
         "- **card에 자연어로 적은 모든 날짜 표현은 signals에 ISO로 반드시 변환해 담을 것.** card.date/notes만 채우고\n"
         "  signals.preferred_dates 또는 signals.date_hints를 비워두면 후속 슬롯 빌드가 실패함.\n"
         "  preferred_dates 각 항목은 반드시 `{\"date\": \"YYYY-MM-DD\"}` dict 형태. plain string array 금지.\n"
-        "  예: card.date='다음 주 평일이 후보' → signals.preferred_dates=[{\"date\":\"2026-05-11\"}, {\"date\":\"2026-05-12\"}, ...] (다음 주 월~금 ISO 5개).\n"
+        "  예: card.date='다음 주 평일에 대안 모색' → signals.preferred_dates=[{\"date\":\"2026-05-11\"}, {\"date\":\"2026-05-12\"}, ...] (다음 주 월~금 ISO 5개).\n"
         "  예: card.date='5/12 화요일 저녁으로 좁혀짐' → signals.date_hint='2026-05-12'.\n"
         "- 거부된 날짜는 rejected_dates에만, 가능/선호 날짜는 preferred_dates에. 서로 배타.\n"
         "[필드 의미 구분 - 반드시 따를 것]\n\n"
@@ -142,11 +142,12 @@ async def _analyze_conversation(
         "- card.date는 \"시험 끝나고 모임\" 같은 한 줄 요약 X. **거부된 날짜 사실만** 묘사.\n"
         "  좋은 예: \"이번 주 금/토/일 거부됨\"\n"
         "  좋은 예: \"5/12 화요일로 좁혀짐\"\n"
+        "  ⚠️ **card.date 에도 결론·추측 표현 금지**: \"유일한 후보\", \"~만 가능\", \"~만이 후보\",\n"
+        "    \"가장 가능성 높음\", \"다음 주가 후보\" 같은 일반화·확정 표현은 사용 금지.\n"
+        "    호스트 캘린더·시간 선호가 prompt에 주어지지 않아 부정확하기 때문. 거부 사실만 진술할 것.\n"
         "- card.notes는 **멤버별 거부/선호 사실만** 별도 bullet으로 분리:\n"
         "  - 거부 1건당 \"{멤버이름}: {날짜} {사유}\" 형태로 1 bullet\n"
-        "  - ⚠️ **합의 흐름·결론·일반화 bullet 절대 금지**.\n"
-        "    호스트 캘린더와 선호 시간대 정보가 prompt에 주어지지 않았으므로 \"유일한 후보\", \"~만 가능\",\n"
-        "    \"가장 가능성 높음\", \"다음 주가 후보\" 등 결론·추측 표현은 부정확함. 멤버별 사실만 나열할 것.\n"
+        "  - ⚠️ **합의 흐름·결론·일반화 bullet 절대 금지** (card.date와 동일 원칙).\n"
         "  - 1~3개 bullet (멤버별 거부 사실만). 너무 많으면 카드 길어짐.\n\n"
         "전체 예시 input → output (오늘=2026-05-07 가정):\n"
         "  대화:\n"
@@ -155,7 +156,7 @@ async def _analyze_conversation(
         "    민수: 9일은 본가 내려가야 해서 패스\n"
         "    예린: 10일 토요일은 좀 쉬고 싶다… 다음주 어때?\n"
         "  card 출력:\n"
-        "    date: \"이번 주 금/토/일 모두 막힘, 다음 주 평일이 후보\"\n"
+        "    date: \"이번 주 금/토/일 거부됨\"\n"
         "    place: null\n"
         "    headcount: null\n"
         "    type: \"회식\"\n"

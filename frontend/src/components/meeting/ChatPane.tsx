@@ -133,6 +133,11 @@ export default function ChatPane() {
   useEffect(() => {
     setUnavailabilityByUser?.(unavailabilityByUser);
   }, [unavailabilityByUser, setUnavailabilityByUser]);
+  // peer_unavailable_update 또는 unavailable_snapshot 수신 시 /free-slots 재요청 —
+  // Redis blocked_by_date가 count에 반영되도록.
+  useEffect(() => {
+    refreshCalendar?.();
+  }, [unavailabilityByUser, refreshCalendar]);
   useEffect(() => {
     setSendUnavailableToggle?.(sendUnavailableToggle);
     return () => setSendUnavailableToggle?.(null);

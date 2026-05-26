@@ -1,0 +1,89 @@
+[
+  {
+    "id": "k3-conc-001",
+    "name": "5명 룸 동시 vote 3건 (동일 옵션)",
+    "room_size": 5,
+    "setup": {
+      "create_meeting": true,
+      "vote_options_count": 3
+    },
+    "actions": [
+      {"type": "vote", "user_idx": 1, "option_index": 0, "delay_ms": 0},
+      {"type": "vote", "user_idx": 2, "option_index": 0, "delay_ms": 10},
+      {"type": "vote", "user_idx": 3, "option_index": 0, "delay_ms": 20}
+    ],
+    "expected": {
+      "total_vote_count": 3,
+      "option_0_vote_count": 3,
+      "race_count": 0
+    }
+  },
+  {
+    "id": "k3-conc-002",
+    "name": "5명 룸 동시 vote 3건 (서로 다른 옵션)",
+    "room_size": 5,
+    "setup": {
+      "create_meeting": true,
+      "vote_options_count": 3
+    },
+    "actions": [
+      {"type": "vote", "user_idx": 1, "option_index": 0, "delay_ms": 0},
+      {"type": "vote", "user_idx": 2, "option_index": 1, "delay_ms": 10},
+      {"type": "vote", "user_idx": 3, "option_index": 2, "delay_ms": 20}
+    ],
+    "expected": {
+      "total_vote_count": 3,
+      "race_count": 0
+    }
+  },
+  {
+    "id": "k3-conc-003",
+    "name": "2명 동시 manual pick (충돌)",
+    "room_size": 3,
+    "setup": {
+      "create_meeting": true,
+      "vote_options_count": 5
+    },
+    "actions": [
+      {"type": "manual_pick", "user_idx": 0, "slot_idx": 0, "delay_ms": 0},
+      {"type": "manual_pick", "user_idx": 1, "slot_idx": 1, "delay_ms": 50}
+    ],
+    "expected": {
+      "confirmed_slot_idx": 0,
+      "race_count": 0,
+      "note": "먼저 호출한 user 가 승리, 두 번째는 reject 또는 무시"
+    }
+  },
+  {
+    "id": "k3-conc-004",
+    "name": "10명 룸 단일 트리거 → broadcast 누락 검증",
+    "room_size": 10,
+    "setup": {
+      "trigger_intent": "meeting_schedule"
+    },
+    "actions": [
+      {"type": "chat", "user_idx": 0, "content": "다음주 점심 어때?", "delay_ms": 0}
+    ],
+    "expected": {
+      "ws_event_received_per_member": 10,
+      "broadcast_missing": 0
+    }
+  },
+  {
+    "id": "k3-conc-005",
+    "name": "5명 동시 busy_period 발산 (캘린더 unavail)",
+    "room_size": 5,
+    "setup": {
+      "create_room": true
+    },
+    "actions": [
+      {"type": "chat", "user_idx": 1, "content": "다음주 월 안 돼", "delay_ms": 0},
+      {"type": "chat", "user_idx": 2, "content": "다음주 화 패스", "delay_ms": 10},
+      {"type": "chat", "user_idx": 3, "content": "다음주 수 못 가", "delay_ms": 20}
+    ],
+    "expected": {
+      "busy_periods_count": 3,
+      "race_count": 0
+    }
+  }
+]

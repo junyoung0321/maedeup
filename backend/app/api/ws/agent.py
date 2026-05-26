@@ -219,10 +219,12 @@ async def _sync_chat_rejected_to_unavailability(
     redis_client: aioredis.Redis | None,
     room_pk: int,
     signals: dict | None,
+    speaker_user_id: int | None = None,
 ) -> None:
     """채팅 대화에서 추출한 rejected_dates/accepted_dates를 멤버별 unavailability로 동기화.
 
-    안전 조건: 비게스트 authed 멤버 + 이름 명시 + 이름 유일 매핑만. 이름 충돌 발생 시 해당 이름 skip.
+    안전 조건: 이름 명시 + 이름 유일 매핑만. 이름 충돌 발생 시 해당 이름 skip.
+    user=null 발화 시 speaker_user_id fallback 적용.
     """
     if not isinstance(signals, dict):
         return
@@ -240,37 +242,45 @@ async def _sync_chat_rejected_to_unavailability(
     names: set[str] = set()
     for entry in rejected + accepted:
         if isinstance(entry, dict) and isinstance(entry.get("user"), str):
-            name = entry["user"].strip()
+            name = entry["user"].strip().lower()
             if name:
                 names.add(name)
-    if not names:
-        return
-
-    try:
-        async with AsyncSessionLocal() as db:
-            stmt = (
-                select(User.id, User.name)
-                .join(RoomMember, RoomMember.user_id == User.id)
-                .where(RoomMember.room_id == room_pk)
-                .where(User.name.in_(names))
-                .where(User.is_guest.is_(False))
-            )
-            rows = (await db.execute(stmt)).all()
-    except Exception:
-        logger.warning("Member name lookup failed for room %s", room_pk, exc_info=True)
-        return
+    # user=null 항목만 있을 경우 speaker_user_id fallback 가능하므로 early-return 하지 않음
+    has_named = bool(names)
 
     name_to_id: dict[str, int] = {}
     collisions: set[str] = set()
-    for uid, nm in rows:
-        if nm in name_to_id and name_to_id[nm] != uid:
-            collisions.add(nm)
-        else:
-            name_to_id[nm] = uid
-    for nm in collisions:
-        name_to_id.pop(nm, None)
-        logger.info("[CHAT_UNAVAIL_SYNC] Skip name collision: %s (room=%s)", nm, room_pk)
-    if not name_to_id:
+    if has_named:
+        try:
+            async with AsyncSessionLocal() as db:
+                stmt = (
+                    select(User.id, User.name)
+                    .join(RoomMember, RoomMember.user_id == User.id)
+                    .where(RoomMember.room_id == room_pk)
+                    .where(func.lower(func.trim(User.name)).in_(names))
+                    # is_guest 필터 삭제 — 게스트도 unavailability sync 대상
+                )
+                rows = (await db.execute(stmt)).all()
+        except Exception:
+            logger.warning("Member name lookup failed for room %s", room_pk, exc_info=True)
+            return
+
+        for uid, nm in rows:
+            key = nm.strip().lower()
+            if key in name_to_id and name_to_id[key] != uid:
+                collisions.add(key)
+            else:
+                name_to_id[key] = uid
+        for key in collisions:
+            name_to_id.pop(key, None)
+            logger.info("[CHAT_UNAVAIL_SYNC] Skip name collision: %s (room=%s)", key, room_pk)
+
+    logger.info(
+        "[CHAT_UNAVAIL_SYNC] room=%s mapped=%d/%d skip_collision=%d",
+        room_pk, len(name_to_id), len(names), len(collisions),
+    )
+
+    if not name_to_id and speaker_user_id is None:
         return
 
     social_channel = f"social:{room_pk}"
@@ -282,9 +292,13 @@ async def _sync_chat_rejected_to_unavailability(
             return
         user_name = entry.get("user")
         date = entry.get("date")
-        if not isinstance(user_name, str) or not isinstance(date, str):
+        if not isinstance(date, str):
             return
-        uid = name_to_id.get(user_name.strip())
+        uid = None
+        if isinstance(user_name, str) and user_name.strip():
+            uid = name_to_id.get(user_name.strip().lower())
+        elif speaker_user_id is not None:
+            uid = speaker_user_id  # user=null 발화자 본인 거부 fallback
         if uid is None:
             return
         try:
@@ -406,7 +420,10 @@ async def _run_auto_trigger_pipeline(
                         room_pk_for_sync = None
                     if room_pk_for_sync is not None:
                         await _sync_chat_rejected_to_unavailability(
-                            redis_client, room_pk_for_sync, signals if isinstance(signals, dict) else None
+                            redis_client,
+                            room_pk_for_sync,
+                            signals if isinstance(signals, dict) else None,
+                            speaker_user_id=viewer_user_id,
                         )
                 else:
                     # 해결점 D: legacy fallback (extract_meeting_summary) 제거.

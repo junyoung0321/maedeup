@@ -309,7 +309,16 @@ async def vote_card_creation(state: GraphState) -> GraphState:
                 scheduled_at=slot_start if not hasattr(slot_start, 'tzinfo') or slot_start.tzinfo is None else slot_start.replace(tzinfo=None),
                 end_at=slot_end if not hasattr(slot_end, 'tzinfo') or slot_end.tzinfo is None else slot_end.replace(tzinfo=None),
                 vote_options=[
-                    {"slot_id": s.get("slot_id"), "label": s.get("label"), "start_at": s.get("start_at"), "end_at": s.get("end_at")}
+                    {
+                        "slot_id": s.get("slot_id"),
+                        "label": s.get("label"),
+                        "start_at": s.get("start_at"),
+                        "end_at": s.get("end_at"),
+                        # BUG-26-D: available_count/total_count DB 저장 — 새로고침 후 vote_card
+                        # 재렌더 시 카운터가 사라지는 회귀 방지.
+                        "available_count": s.get("available_count"),
+                        "total_count": s.get("total_count"),
+                    }
                     for s in vote_slots
                 ],
                 votes={},

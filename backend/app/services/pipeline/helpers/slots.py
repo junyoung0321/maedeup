@@ -169,9 +169,12 @@ def _find_free_slots(
     minimum_available: int,
     require_exact_absent_count: int | None,
     preferred_times: list[str] | None = None,
+    headcount_total: int | None = None,
 ) -> list[dict[str, Any]]:
     """참여자 가용성을 기준으로 시간대를 SLOT_MINUTES 단위로 탐색합니다."""
-    total = len(busy_by_user)
+    # BUG-26-D: total_count 분모는 전체 룸 멤버 수 우선. busy_by_user는 캘린더 동의 인원만
+    # 포함하므로 게스트 미연동 시 "1/1명 가능" 이 되는 문제를 headcount_total로 해소.
+    total = headcount_total if headcount_total else len(busy_by_user)
     free_slots: list[dict[str, Any]] = []
     fallback_slots: list[dict[str, Any]] = []
     normalized_preferred_times = _normalize_preferred_times(preferred_times)
@@ -525,6 +528,7 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
         minimum_available=len(busy_by_user),
         require_exact_absent_count=0,
         preferred_times=preferred_times,
+        headcount_total=len(members) if members else None,
     )
     full_slots = _filter_out_blocked(full_slots, blocked_dates)
     full_slots = _matching_preference_slots(full_slots)
@@ -541,6 +545,7 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
         minimum_available=max(len(busy_by_user) - 1, 1),
         require_exact_absent_count=1 if len(busy_by_user) > 1 else 0,
         preferred_times=preferred_times,
+        headcount_total=len(members) if members else None,
     )
     n_minus_one_slots = _filter_out_blocked(n_minus_one_slots, blocked_dates)
     n_minus_one_slots = _matching_preference_slots(n_minus_one_slots)
@@ -567,6 +572,7 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
         minimum_available=len(refreshed_busy_by_user),
         require_exact_absent_count=0,
         preferred_times=preferred_times,
+        headcount_total=len(members) if members else None,
     )
     extended_full_slots = _filter_out_blocked(extended_full_slots, blocked_dates)
     extended_full_slots = _matching_preference_slots(extended_full_slots)
@@ -583,6 +589,7 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
         minimum_available=max(len(refreshed_busy_by_user) - 1, 1),
         require_exact_absent_count=1 if len(refreshed_busy_by_user) > 1 else 0,
         preferred_times=preferred_times,
+        headcount_total=len(members) if members else None,
     )
     final_slots = _filter_out_blocked(final_slots, blocked_dates)
     final_slots = _matching_preference_slots(final_slots)
@@ -602,6 +609,7 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
             minimum_available=max(len(refreshed_busy_by_user) - 1, 1),
             require_exact_absent_count=1 if len(refreshed_busy_by_user) > 1 else 0,
             preferred_times=preferred_times,
+            headcount_total=len(members) if members else None,
         )
         fallback_slots = _filter_out_blocked(fallback_slots, blocked_dates)
         fallback_slots = _matching_preference_slots(fallback_slots)

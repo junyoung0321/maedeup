@@ -164,3 +164,35 @@ async def list_examples():
         {"id": ex.id, "text": ex.text, "intent": ex.intent}
         for ex in examples
     ]
+
+
+# ──────────────────────────────────────────────────────────────
+# T7: entity_extraction endpoint (Phase 3, 2026-05-30)
+# K2.3 slot robustness 측정 인프라.
+# classify API 는 intent label 만 반환, slot 정보 없음 → 별 endpoint.
+# pipeline 의 _extract_entities_from_context 직접 wrapper.
+# ──────────────────────────────────────────────────────────────
+
+
+class ExtractEntitiesRequest(BaseModel):
+    text: str
+
+
+@router.post("/extract-entities", summary="단일 발화 슬롯 추출 (K2.3 측정용)")
+async def extract_entities(req: ExtractEntitiesRequest):
+    """단일 텍스트에서 entity (date_hint, place_hint, headcount, meeting_type 등) 추출.
+
+    pipeline 의 _extract_entities_from_context 직접 호출. mock state 에
+    message_records 1건만 넣어서 context 합성.
+    """
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="text가 비어있습니다")
+
+    from app.services.pipeline.nodes.entity import _extract_entities_from_context
+
+    mock_state = {
+        "message_records": [{"role": "user", "content": req.text}],
+        "extracted_entities": {},
+    }
+    slots = await _extract_entities_from_context(mock_state)
+    return {"text": req.text, "slots": slots}

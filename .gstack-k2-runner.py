@@ -7,9 +7,9 @@ K2.1 트리거 발화율: should_trigger=true 발화 중 intent가 NOTIFIABLE
 
 K2.2 intent 정확도: POST /api/v1/intents/classify 결과 top-1 vs expected_intent.
 
-K2.3 slot robustness: backend가 단건 classify API에서 slot을 반환하지 않으므로
-  expected_slot == {} (빈 dict) 인 경우만 정확 match로 집계. 별 트랙 확인 필요.
-  현재는 baseline 수치 기록 목적으로만 출력.
+K2.3 slot robustness: POST /api/v1/intents/extract-entities 별 endpoint (T7, 2026-05-30)
+  로 슬롯 추출. 느슨 일치 (expected ⊆ observed): expected_slot 의 모든 (k,v) 가
+  observed.slots 에 존재 + 같음. expected_slot={} 면 무조건 match.
 
 사용:
   ~/.venv-maedeup-demo/bin/python3 .gstack-k2-runner.py --room-id <ROOM>
@@ -49,6 +49,43 @@ def load_token() -> str:
 def log(msg: str) -> None:
     ts = time.strftime("%H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
+
+
+# ---------------------------------------------------------------------------
+# T7 (Phase 3): K2.3 측정용 entity_extraction endpoint
+# ---------------------------------------------------------------------------
+
+async def extract_entities_one(
+    client: httpx.AsyncClient,
+    text: str,
+    timeout: float = 10.0,
+) -> dict:
+    """POST /api/v1/intents/extract-entities — 슬롯 추출. 실패 시 빈 dict."""
+    try:
+        resp = await client.post(
+            f"{API}/api/v1/intents/extract-entities",
+            json={"text": text},
+            timeout=timeout,
+        )
+        if resp.status_code == 200:
+            payload = resp.json()
+            slots_raw = payload.get("slots") or {}
+            # None value 제거 — expected_slot 과 일치 판단 단순화
+            return {k: v for k, v in slots_raw.items() if v is not None}
+    except Exception:
+        pass
+    return {}
+
+
+def _slot_matches(expected: dict, observed: dict) -> bool:
+    """K2.3 느슨 일치: expected 의 모든 (k,v) 가 observed 에 존재 + 같음.
+    expected={} 면 무조건 match (자유 입력 case)."""
+    if not expected:
+        return True
+    for k, v in expected.items():
+        if observed.get(k) != v:
+            return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -98,12 +135,12 @@ def aggregate(results: list[dict]) -> dict:
         if r["observed"]["intent"] == r["expected"].get("expected_intent")
     )
 
-    # K2.3: slot robustness — observed slot vs expected_slot dict equality
-    # classify API 는 slot 미반환이므로 observed["slot"]={} 가 기본값.
-    # expected_slot={} 인 entry 만 match 됨 — baseline 수치 기록용.
+    # K2.3: slot robustness — T7 (2026-05-30) extract-entities endpoint 사용.
+    # 느슨 일치 (expected ⊆ observed): expected_slot 의 모든 (k,v) 가 observed
+    # 에 존재 + 같음. expected_slot={} 면 무조건 match.
     correct_slot_n = sum(
         1 for r in results
-        if r["observed"]["slot"] == r["expected"].get("expected_slot", {})
+        if _slot_matches(r["expected"].get("expected_slot", {}), r["observed"].get("slot", {}))
     )
 
     return {
@@ -174,6 +211,9 @@ async def main() -> int:
                 log(f"[WARN] classify 실패 id={item['id']}: {type(exc).__name__}: {exc}")
                 observed = {"intent": None, "confidence": None, "slot": {}}
 
+            # T7: K2.3 측정 — extract-entities endpoint 별도 호출
+            observed["slot"] = await extract_entities_one(client, item["input"])
+
             results.append({"id": item["id"], "expected": item, "observed": observed})
 
             triggered_mark = (
@@ -211,7 +251,7 @@ async def main() -> int:
     print(
         f"  K2.3 slot robustness: {summary['K2.3_slot_robustness']:.1%}"
         f" ({summary['correct_slot_n']}/{summary['total']})"
-        f"  [NOTE: classify API는 slot 미반환 — expected_slot={{}} 인 항목만 match]",
+        f"  [T7: extract-entities endpoint 느슨 일치 (expected ⊆ observed)]",
         flush=True,
     )
     print("[K2.SUMMARY] === end ===\n", flush=True)

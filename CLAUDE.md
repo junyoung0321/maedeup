@@ -17,9 +17,15 @@
 6. 코덱스 P1 backlog (Option C 라운드 1~9 완료 후 추가 필요 검토, TODOS.md §10) — vote_update 좁히기·VoteCardSection 회귀 테스트·timeConfirmed mount·seed 주석·refresh state 통일
 7. 장소 추천 vote 시스템 검토 (v2 spec PR-v2.1 후보)
 참고:
+- `docs/handoff/2026-05-30-round-summary.md` (전시 round 통합 정리, 2026-05-30)
+- `docs/handoff/2026-05-30-final-result.md` (Phase 5 + ACT5 revert addendum)
+- `docs/handoff/2026-05-30-model-swap-comparison.md` (OpenAI swap)
+- `docs/handoff/2026-05-30-phase4-result.md` (Phase 4 baseline 재측정)
+- `docs/handoff/2026-05-29-baseline-result.md` (Phase 2 baseline)
 - `docs/handoff/2026-05-28-phase1-runners-ready.md` (Phase 1 완료, 2026-05-28)
 - `docs/superpowers/specs/2026-05-27-exhibition-stability-k1-k2-k3-design.md` (전시 안정성 spec)
 - `docs/superpowers/plans/2026-05-27-phase1-measurement-infra.md` (Phase 1 plan)
+- `docs/superpowers/plans/2026-05-29-phase3-fix.md` (Phase 3 plan)
 - `docs/handoff/2026-05-27-silent-fail-and-bug-26-g.md` (silent-fail audit + bug-26-g/f fix + 시연 GREEN, 2026-05-27)
 - `docs/handoff/2026-05-26-main-reconciliation-result.md` (main 정리 결과, 2026-05-26)
 - `docs/handoff/2026-05-16-option-c-natural.md` (Option C 라운드 1~9 + 자연 표현 + 시나리오 정합성, 2026-05-16)

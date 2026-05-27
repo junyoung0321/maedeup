@@ -164,6 +164,15 @@ async def _run_place_self_correction(
     return merged_places
 
 
+def _build_place_cache_key(state: dict) -> str:
+    """T5: place_search Redis cache key 생성.
+    location/meeting_type/headcount normalize 후 key string 반환."""
+    location = (state.get("place_hint") or "global").strip().lower()
+    meeting_type = (state.get("meeting_type") or "general").strip().lower()
+    headcount = state.get("headcount") or 0
+    return f"maedeup:place_cache:{location}:{meeting_type}:{headcount}"
+
+
 async def place_recommendation(state: GraphState) -> GraphState:
     _t0 = time.monotonic()
     dump("node_in", state.get("run_id"), {
@@ -217,6 +226,30 @@ async def place_recommendation(state: GraphState) -> GraphState:
                 return state
             state["place_hint"] = resolved
 
+        # T5: place_search Redis 캐싱 — 동일 (location, type, headcount) 재호출 시 즉시 응답
+        _place_cache_key = _build_place_cache_key(state)
+        _t5_cached_recommendations: list[dict] | None = None
+        try:
+            _r_t5 = aioredis.from_url(
+                settings.REDIS_URL, decode_responses=True,
+                socket_connect_timeout=1, socket_timeout=1,
+            )
+            try:
+                _cached_str = await _r_t5.get(_place_cache_key)
+                if _cached_str:
+                    _t5_cached_recommendations = json.loads(_cached_str)
+                    logger.info(
+                        "[T5_CACHE_HIT] key=%s place_count=%d",
+                        _place_cache_key,
+                        len(_t5_cached_recommendations) if isinstance(_t5_cached_recommendations, list) else 0,
+                    )
+            finally:
+                await _r_t5.aclose()
+        except (NameError, AttributeError, ImportError):
+            raise
+        except Exception:
+            logger.warning("[T5_CACHE] Redis GET 실패 (cache miss 처리)", exc_info=True)
+
         place_results = list(state.get("place_search_results", []))
         ranked_places = place_results
         disliked_foods = await _get_room_member_food_preferences(state)
@@ -240,15 +273,21 @@ async def place_recommendation(state: GraphState) -> GraphState:
         headcount = state.get("headcount") or 0
         meeting_type = state.get("meeting_type") or "모임"
 
-        # PR-V1.5 / F9: ML 비활성 메트릭 로깅 (structured log).
-        if not _ML_AVAILABLE:
-            logger.info(
-                "[FALLBACK] ml_disabled=true room_id=%s meeting_type=%s "
-                "headcount=%d — using Gemini + distance only",
-                state.get("room_id"), meeting_type, headcount,
-            )
+        if _t5_cached_recommendations is not None:
+            # T5 cache hit: ML/Gemini scoring 전체 skip, cached recommendations 사용.
+            ranked_places = list(_t5_cached_recommendations)
+            _ml_ranked = True  # 아래 elif not _ml_ranked 블록 진입 방지
+        else:
+            # T5 cache miss: 기존 ML/Gemini 흐름 진행.
+            # PR-V1.5 / F9: ML 비활성 메트릭 로깅 (structured log).
+            if not _ML_AVAILABLE:
+                logger.info(
+                    "[FALLBACK] ml_disabled=true room_id=%s meeting_type=%s "
+                    "headcount=%d — using Gemini + distance only",
+                    state.get("room_id"), meeting_type, headcount,
+                )
 
-        if _ML_AVAILABLE and state.get("place_hint"):
+        if _t5_cached_recommendations is None and _ML_AVAILABLE and state.get("place_hint"):
             try:
                 ml_results = await _ml_place_search(
                     location=state.get("place_hint"),
@@ -270,7 +309,7 @@ async def place_recommendation(state: GraphState) -> GraphState:
             except Exception as _ml_err:
                 logger.warning("[ML] ml_place_search 실패, Gemini fallback: %s", _ml_err)
 
-        if not _ml_ranked and place_results:
+        if _t5_cached_recommendations is None and not _ml_ranked and place_results:
             # 시연 latency 최적화 (2026-05-08): top 10 → top 5.
             # 측정상 place_recommendation 노드가 ~40s 단일 병목, prompt + output 토큰 절반 줄임.
             # frontend는 어차피 top 5만 노출 (line 아래 ranked_places[:5]).
@@ -409,7 +448,7 @@ async def place_recommendation(state: GraphState) -> GraphState:
                         place_copy.setdefault("gemini_score", 0.0)
                         place_copy["final_score"] = _compute_final_score(place_copy)
                         ranked_places.append(place_copy)
-        elif not _ml_ranked:
+        elif _t5_cached_recommendations is None and not _ml_ranked:
             ranked_places = []
 
         # --- OPTIMIZATION: Skip self-correction Gemini call when no disliked foods ---
@@ -469,6 +508,27 @@ async def place_recommendation(state: GraphState) -> GraphState:
                 await r.aclose()
         except Exception:
             logger.debug("place_rec cache failed", exc_info=True)
+
+        # T5: cache miss 경로 — 결과를 Redis에 SET (TTL 30min).
+        if _t5_cached_recommendations is None and ranked_places:
+            try:
+                _r_t5_set = aioredis.from_url(
+                    settings.REDIS_URL, decode_responses=True,
+                    socket_connect_timeout=1, socket_timeout=1,
+                )
+                try:
+                    await _r_t5_set.set(
+                        _place_cache_key,
+                        json.dumps(ranked_places[:5], ensure_ascii=False),
+                        ex=1800,
+                    )
+                    logger.info("[T5_CACHE_SET] key=%s ttl=1800s count=%d", _place_cache_key, len(ranked_places[:5]))
+                finally:
+                    await _r_t5_set.aclose()
+            except (NameError, AttributeError, ImportError):
+                raise
+            except Exception:
+                logger.warning("[T5_CACHE] Redis SET 실패 (graceful)", exc_info=True)
 
         # Narrator: 카드만 띄우고 끝내면 사용자가 "AI가 대답 안 했나?" 헷갈림.
         # PR-V1.5 / F7 + S18 + §6.15: narrator 분기.

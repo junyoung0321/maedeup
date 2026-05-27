@@ -211,8 +211,10 @@ async def _emit_auto_trigger_greeting(
                 ensure_ascii=False,
             ),
         )
+    except (NameError, AttributeError, ImportError):
+        raise
     except Exception:
-        logger.debug("Failed to emit auto-trigger greeting", exc_info=True)
+        logger.warning("Failed to emit auto-trigger greeting", exc_info=True)
 
 
 async def _sync_chat_rejected_to_unavailability(
@@ -865,10 +867,13 @@ async def agent_ws(
                         _msg = await _sess.get(ChatMessage, int(trigger_msg_id))
                         if _msg is not None and _msg.user_id is not None:
                             trigger_author_id = _msg.user_id
+                except (NameError, AttributeError, ImportError):
+                    raise
                 except Exception:
-                    logger.debug(
+                    logger.warning(
                         "[AUTO_TRIGGER] could not resolve trigger_message_id=%s, using None",
                         trigger_msg_id,
+                        exc_info=True,
                     )
 
             logger.info(

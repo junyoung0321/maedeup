@@ -166,3 +166,19 @@
 **우선순위 합계** (2026-05-26 추가분):
 - P1: 2건 (BUG-26-1, BUG-26-4)
 - P2: 3건 (BUG-26-2, BUG-26-3, BUG-26-5)
+
+---
+
+## Phase 2 baseline 측정 중 발견 (2026-05-27)
+
+`docs/superpowers/specs/2026-05-27-exhibition-stability-k1-k2-k3-design.md` Phase 1 측정 인프라 + K3.1 fix (`683bbbe`) 결과로 가시화.
+
+| # | 증상 | 우선순위 | 의심 코드 | 메모 |
+|---|---|---|---|---|
+| BUG-27-1 | `POST /api/v1/meetings/confirm` race — `meeting_id`/`proposal_id` 둘 다 없는 fresh INSERT 분기에서 락 없음 + DB unique constraint 없음 → 동시 2 요청 모두 201 → 중복 `MeetingSchedule` 생성 | **P1** | `backend/app/api/routes/meetings.py:418-593` (fresh INSERT 분기 `:490-502`) | code-analyst 분석 완료 (2026-05-27). 추천 fix: 옵션 B (Redis NX lock `maedeup:confirm_lock:room:{room_id}` TTL 30s, 못 잡으면 409). 후속 옵션 A (alembic partial unique index + cleanup script) backlog. `.gstack-k3-concurrency-runner.py` k3-conc-003 으로 재현 가능. baseline 측정 완료 후 fix 적용 예정. |
+| BUG-27-2 | classify API (`POST /api/v1/intents/classify`) 가 slot 미반환 → K2.3 slot robustness 항상 0% 측정. spec K2.3 SLA (>75%) 검증 불가 | P2 | `backend/app/api/routes/intents.py` classify 응답 schema, entity_extraction 별 endpoint 부재 | Phase 3 에서 entity_extraction 단독 endpoint 노출 또는 다른 slot 측정 path 검토. |
+| BUG-27-3 | mock OAuth endpoint 부재 → 신규 사용자 가입 시뮬 불가, K3.3 측정은 guest-join 으로 대체 (진짜 OAuth 흐름 검증 X) | P2 | `backend/app/api/routes/auth.py` (dev/mock endpoint 없음) | Phase 3 에서 dev-mode mock endpoint 추가 검토 (별 backlog). 전시 D-8 시점에 production-style OAuth 만 사용 가능. |
+
+**우선순위 합계** (2026-05-27 추가분):
+- P1: 1건 (BUG-27-1)
+- P2: 2건 (BUG-27-2, BUG-27-3)

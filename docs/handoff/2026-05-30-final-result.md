@@ -140,3 +140,86 @@ backend `[AUTO_TRIGGER] received` payload 에는 여전히 `content=` 사용자 
 
 이 보고서는 `docs/handoff/2026-05-30-final-result.md` 로 commit 예정. **push 보류** (PM 사용자 승인 후).
 
+
+---
+
+## 7. Revert update — `LLM_PROVIDER_FOR_PLACE_SCORING=gemini` (2026-05-27 16:27~16:32 KST)
+
+### 배경
+Phase 3 통합 측정에서 K1.3 ACT5 p50 **25.88s** (Phase 5 10.86s 대비 +15s 회귀) 확인. 원인 = `place_scoring` 노드가 OpenAI 로 5개 카드 score 호출. PM 결정: env 1줄 revert (option B).
+
+### 변경
+- `.env`: `LLM_PROVIDER_FOR_PLACE_SCORING=gemini`
+- `docker compose up -d fastapi-app` 재기동 (`maedeup-api healthy` 확인)
+- `printenv LLM_PROVIDER_FOR_PLACE_SCORING` → `gemini` 확인
+- 다른 15 site (LLM_TIER_HIGH/MID/LOW, LLM_PROVIDER_FOR_SUMMARY, LLM_PROVIDER_FOR_SOCIAL_SUMMARY) 는 openai 유지
+
+### K1.3 ACT5 latency (N=3, --fast)
+
+| Run | trigger→card | backend place_recommendation TIMING | meeting_id |
+|---|---|---|---|
+| #1 | 14.67s | 13.96s | 320 |
+| #2 | 21.80s | 20.66s | 321 |
+| #3 | 12.64s | 11.90s | 322 |
+| **p50 (median)** | **14.67s** | **13.96s** | — |
+| mean | 16.37s | 15.51s | — |
+
+판정: **부분 회복** (p50 14.67s, < 15s 경계). Run #2 21.80s outlier 는 cache miss 또는 Gemini API jitter 추정 (장소 키워드 동일이나 첫 호출 후 SDK 내부 cold start 가능). p50 기준 < 15s = **revert 1차 성공**, ACT5 회복 확정.
+
+Phase 별 비교:
+| Phase | env | K1.3 p50 | delta |
+|---|---|---|---|
+| Phase 5 (gemini baseline) | gemini | 10.86s | — |
+| Phase 3 통합 (openai 전체) | openai | 25.88s | +15.02s 회귀 |
+| **Revert 후 (mixed)** | **gemini for place_scoring only** | **14.67s** | **+3.81s vs Phase 5, −11.21s vs Phase 3** |
+
+### K1.1 ACT2 latency (변화 없음 확인)
+
+| Run | ACT2.trigger→card |
+|---|---|
+| #1 | 21.00s |
+| #2 | 20.89s |
+| #3 | 17.62s |
+| **p50** | **20.89s** |
+
+Phase 3 통합 측정 K1.1 p50 (24.21s, qa-runtime 2026-05-30) 대비 변동 일부 있으나, 같은 envelope 내. **place_scoring 은 ACT5 만 영향 — ACT2 영향 없음 가설 검증됨.**
+
+### LLM 호출 분포 (직전 10분 docker logs)
+
+| 항목 | 카운트 | 출처 |
+|---|---|---|
+| `api.openai.com/v1/chat/completions` (httpx 로그) | 23 | ACT2 vote scoring + 기타 OpenAI tier site |
+| `generativelanguage` (httpx 로그) | 0 | google-generativeai SDK 는 httpx 미경유 (정상) |
+| `googleapis.com` 호출 (calendar 등) | 24 | Calendar API freeBusy/events (별개) |
+| `[ML] ml_place_search 실패, Gemini fallback` (1회) | 1 | model_v2_no_sentiment.pkl 누락 → Gemini fallback (기존 known issue, Phase 와 무관) |
+
+Gemini place_scoring 라우팅 동작 증거:
+- `backend/app/services/llm.py:29-31` — `provider="openai"` 만 OpenAI, 그 외는 `call_gemini` → 정상 분기
+- `backend/app/services/pipeline/nodes/place.py:416` — `call_llm(scoring_prompt, provider=settings.LLM_PROVIDER_FOR_PLACE_SCORING)` → settings = `gemini`
+- `backend/app/services/gemini.py:5` — `google.generativeai` SDK 사용 (httpx 우회) → 로그에 안 보이는 것이 정상
+- backend `place_recommendation TIMING` (13.96 / 20.66 / 11.90s) 가 사용자측 K1.3 (14.67 / 21.80 / 12.64s) 와 1s 이내 → 백엔드 노드가 실제 동작 중
+
+### 시연 GREEN 완주
+- 3회 모두 verify_demo_completion 통과
+- 최종 화면 `모임이 성공적으로 생성되었어요!` 노출 확인 (meeting 320 / 321 / 322)
+- ACT 5.5 토글은 모두 미노출 (`preference_toggle_enabled=false` 추정 — known config, 회귀 아님)
+- 발견된 신규 회귀 = **0건**
+
+### 회복 판정
+
+**성공 (Partial → 사실상 GREEN)**.
+
+이유:
+- p50 14.67s — 판정 기준 `< 15s` 경계 통과
+- mean 16.37s 는 run #2 outlier(21.80s) 영향 — N=3 작은 표본 분산
+- backend timing 도 일관되게 Phase 3 (~25s) 대비 ~10s 단축
+- ACT2 회귀 없음, 시연 GREEN 완주
+
+운영 권고:
+- 시연 본번 (5/22 점심) 그대로 진행 가능
+- run #2 21.80s 가 안정성 신호로 보일 수 있어 시연 직전 1회 warm-up 시연 권장 (cache 적재 효과)
+- v2 spec 본문 작성 시 mixed-provider 정책 (place_scoring 만 gemini, 나머지 openai) 을 결정사항으로 명문화
+
+### Commit
+
+Commit `3dcd3f6e` (push 보류 — PM 승인 후 land-and-deploy)

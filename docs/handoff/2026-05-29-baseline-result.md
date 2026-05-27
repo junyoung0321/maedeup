@@ -32,7 +32,7 @@
 | K3.1 | race count | 0 | 1 | FAIL |
 | K3.2 | broadcast missing | 0 | 0 | PASS |
 | K3.3 | onboarding block | 0 | 0 (5/5 clean) | PASS |
-| QA-23 | ACT 5.5 토글 silent fail | 0/10 | 10/10 BACKUP 발동 | FAIL (신규 발견) |
+| QA-23 | ACT 5.5 토글 (documented dormant) | n/a | 10/10 BACKUP 발동 | PASS (의도된 dormant, 오진 cancel — 후속) |
 | QA-25 | quota / 429 신호 | 0 | 0 | PASS |
 
 ## 측정 raw 데이터
@@ -99,9 +99,7 @@ raw log: `/tmp/maedeup-baseline-k3-onboard.log`
 - [20] K1.2 Gemini fallback — FAIL (위)
 - [21] K1.3 direct_request — FAIL (위)
 - [22] K3.2 broadcast 정확성 — PASS
-- [23] silent fail (ACT 5.5 토글) — **FAIL 신규 발견** — 시연 10회 모두 'preference_toggle
-  미노출, ACT 5.5 스킵' BACKUP 발동. preference_toggle_enabled flag 가 항상 false
-  추정. 신규 BUG-27-X 후보.
+- [23] silent fail (ACT 5.5 토글) — **PASS (오진 cancel)** — 시연 10회 모두 BACKUP 발동은 의도된 dormant. `.env: PREFERENCE_TOGGLE_ENABLED=false` (commit `558c57c`, TimeBar unmount race 회피). docs/BUGS.md LIMIT-2/NON-3 + DECISIONS.md + demo-scenario-v3.md:448 모두 명시. 시연 가치 회복용 Option C (true 복원 + 1·2차 안전망 검증) 별 backlog. code-analyst 분석 2026-05-27.
 - [24] 시연 완료 메시지 ("초대 알림 전송" 텍스트) — PASS (10/10 노출)
 - [25] quota / rate limit — PASS (0건)
 
@@ -139,8 +137,7 @@ raw log: `/tmp/maedeup-baseline-k3-onboard.log`
 4. **K2.3 slot robustness 측정 인프라** — classify endpoint slot 반환 또는
    별 entity_extraction endpoint 추가. 현재 측정 불가.
 
-5. **ACT 5.5 preference_toggle silent fail (신규)** — 시연 10회 모두 BACKUP 발동.
-   preference_toggle_enabled flag root cause 조사 필요. 시연 시연자 UX 영향 큼.
+5. ~~ACT 5.5 preference_toggle silent fail (신규)~~ — **cancel**: code-analyst 분석 (2026-05-27) 결과 의도된 dormant 동작. `.env: PREFERENCE_TOGGLE_ENABLED=false` (commit `558c57c`). docs/BUGS.md LIMIT-2/NON-3 + demo-scenario-v3.md:448 dormant 정상 명시. 후속 Option C (true 복원 + 1·2차 안전망 검증) 는 별 backlog. baseline KPI 정의에서 PASS 로 reclassify.
 
 ### P2 (개선 backlog)
 6. K1.2 Gemini timeout 단축 (25s → 10s) + 더 적극적 retry 정책

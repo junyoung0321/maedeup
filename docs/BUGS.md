@@ -175,10 +175,12 @@
 
 | # | 증상 | 우선순위 | 의심 코드 | 메모 |
 |---|---|---|---|---|
-| BUG-27-1 | `POST /api/v1/meetings/confirm` race — `meeting_id`/`proposal_id` 둘 다 없는 fresh INSERT 분기에서 락 없음 + DB unique constraint 없음 → 동시 2 요청 모두 201 → 중복 `MeetingSchedule` 생성 | **P1** | `backend/app/api/routes/meetings.py:418-593` (fresh INSERT 분기 `:490-502`) | code-analyst 분석 완료 (2026-05-27). 추천 fix: 옵션 B (Redis NX lock `maedeup:confirm_lock:room:{room_id}` TTL 30s, 못 잡으면 409). 후속 옵션 A (alembic partial unique index + cleanup script) backlog. `.gstack-k3-concurrency-runner.py` k3-conc-003 으로 재현 가능. baseline 측정 완료 후 fix 적용 예정. |
+| BUG-27-1 | `POST /api/v1/meetings/confirm` race — `meeting_id`/`proposal_id` 둘 다 없는 fresh INSERT 분기에서 락 없음 + DB unique constraint 없음 → 동시 2 요청 모두 201 → 중복 `MeetingSchedule` 생성 | **P1** | `backend/app/api/routes/meetings.py:418-593` (fresh INSERT 분기 `:490-502`) | **해소** `be87e7b` (Redis NX lock 옵션 B 적용). 후속 옵션 A (alembic partial unique index + cleanup script) backlog. fixture delay_ms 50→5 조정 완료. |
 | BUG-27-2 | classify API (`POST /api/v1/intents/classify`) 가 slot 미반환 → K2.3 slot robustness 항상 0% 측정. spec K2.3 SLA (>75%) 검증 불가 | P2 | `backend/app/api/routes/intents.py` classify 응답 schema, entity_extraction 별 endpoint 부재 | Phase 3 에서 entity_extraction 단독 endpoint 노출 또는 다른 slot 측정 path 검토. |
 | BUG-27-3 | mock OAuth endpoint 부재 → 신규 사용자 가입 시뮬 불가, K3.3 측정은 guest-join 으로 대체 (진짜 OAuth 흐름 검증 X) | P2 | `backend/app/api/routes/auth.py` (dev/mock endpoint 없음) | Phase 3 에서 dev-mode mock endpoint 추가 검토 (별 backlog). 전시 D-8 시점에 production-style OAuth 만 사용 가능. |
+| ~~BUG-27-4 후보~~ ACT 5.5 토글 미노출 | ~~신규 P1~~ → **오진 cancel** | n/a | code-analyst 분석 (2026-05-27): `.env: PREFERENCE_TOGGLE_ENABLED=false` 명시 설정 (commit `558c57c`, TimeBar unmount race 회피 위한 의도된 dormant). docs/BUGS.md (LIMIT-2, NON-3) + DECISIONS.md + demo-scenario-v3.md:448 모두 dormant 정상 명시. baseline 보고서 컨텍스트 누락으로 오진. 시연 가치 회복 위한 Option C (`.env` true 복원 + 1·2차 안전망 회귀 검증) 별 backlog. |
 
 **우선순위 합계** (2026-05-27 추가분):
-- P1: 1건 (BUG-27-1)
+- P1: 1건 (BUG-27-1 — 해소 `be87e7b`)
 - P2: 2건 (BUG-27-2, BUG-27-3)
+- 오진 cancel: 1건 (ACT 5.5 토글, documented dormant)

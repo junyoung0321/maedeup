@@ -46,7 +46,7 @@
     },
     "actions": [
       {"type": "manual_pick", "user_idx": 0, "slot_idx": 0, "delay_ms": 0},
-      {"type": "manual_pick", "user_idx": 1, "slot_idx": 1, "delay_ms": 50}
+      {"type": "manual_pick", "user_idx": 1, "slot_idx": 1, "delay_ms": 5}
     ],
     "expected": {
       "confirmed_slot_idx": 0,

@@ -24,6 +24,7 @@ from app.models.user import User
 from app.repositories.messages import MessageReader
 from app.services import scheduling_round as sr
 from app.services.gemini import call_gemini
+from app.services.llm import call_llm_tier
 from app.services.langgraph_pipeline import KST, _analyze_conversation, run_pipeline
 from app.services.pipeline.helpers.preferences import load_requester_context
 from app.services.quick_classify import quick_classify
@@ -75,7 +76,7 @@ async def _build_conversation_summary(messages: list[ChatMessage]) -> str:
         "다음 대화에서 모임 관련 핵심 정보(결정사항, 장소, 일정, 인원)만 3문장으로 요약해줘: "
         f"{recent_text}"
     )
-    return (await call_gemini(prompt)).strip()
+    return (await call_llm_tier(prompt, tier="mid")).strip()
 
 
 async def _build_entities_from_timebar(room_id: str, db: Any, redis_client: aioredis.Redis | None) -> dict[str, Any]:

@@ -29,7 +29,7 @@ from typing import Any
 
 import holidays
 
-from app.services.gemini import call_gemini
+from app.services.llm import call_llm_tier
 from app.services.pipeline.constants import KST
 from app.services.pipeline.helpers.json_extract import _extract_loose_json_object
 
@@ -357,7 +357,7 @@ async def _parse_natural_date(text: str) -> dict[str, Any] | None:
     )
 
     try:
-        raw = await call_gemini(prompt)
+        raw = await call_llm_tier(prompt, tier="low")
     except Exception as exc:
         logger.warning("Failed to parse natural date with Gemini: %s", exc)
         return fallback_result

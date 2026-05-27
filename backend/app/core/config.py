@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     LLM_PROVIDER_FOR_ANALYZER: str = "gemini"
     LLM_PROVIDER_FOR_ENTITY: str = "gemini"
     LLM_PROVIDER_FOR_INTENT: str = "gemini"
+    # B 추가 dominant site 3개
+    LLM_PROVIDER_FOR_PLACE_SCORING: str = "gemini"
+    LLM_PROVIDER_FOR_SUMMARY: str = "gemini"
+    LLM_PROVIDER_FOR_SOCIAL_SUMMARY: str = "gemini"
+    # D 3-tier 자동 매핑. "gemini" | "openai".
+    LLM_TIER_HIGH: str = "gemini"
+    LLM_TIER_MID: str = "gemini"
+    LLM_TIER_LOW: str = "gemini"
     KAKAO_API_KEY: str = ""
     KAKAO_REST_API_KEY: str = ""
 

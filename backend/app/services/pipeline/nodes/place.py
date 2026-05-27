@@ -35,6 +35,7 @@ from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.observability.snapshot import dump
 from app.services.gemini import call_gemini
+from app.services.llm import call_llm, call_llm_tier
 from app.services.pipeline.helpers.json_extract import _extract_json_array
 from app.services.pipeline.helpers.messaging import (
     _emit_assistant_message,
@@ -130,7 +131,7 @@ async def _run_place_self_correction(
         "반드시 JSON 배열만 반환하세요."
     )
     try:
-        corrected_places = _extract_json_array(await call_gemini(prompt))
+        corrected_places = _extract_json_array(await call_llm_tier(prompt, tier="low"))
     except Exception:
         return place_list
     if not corrected_places:
@@ -411,7 +412,9 @@ async def place_recommendation(state: GraphState) -> GraphState:
                     f"장소 후보:\n{json.dumps(scoring_payload, ensure_ascii=False)}"
                 )
                 try:
-                    score_items = _extract_json_array(await call_gemini(scoring_prompt))
+                    score_items = _extract_json_array(
+                        await call_llm(scoring_prompt, provider=settings.LLM_PROVIDER_FOR_PLACE_SCORING)
+                    )
                     score_map = {
                         str(item.get("place_id")): float(item.get("score"))
                         for item in score_items

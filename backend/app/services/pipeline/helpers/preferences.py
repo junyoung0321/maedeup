@@ -33,7 +33,7 @@ from app.models.chat import ChatMessage, PaneType
 from app.models.meeting_preference import MeetingPreference
 from app.models.room import RoomMember
 from app.models.user import User
-from app.services.gemini import call_gemini
+from app.services.llm import call_llm
 from app.services.pipeline.constants import _SOCIAL_RECENT_LIMIT, _SOCIAL_SUMMARY_THRESHOLD
 from app.services.pipeline.helpers.formatting import _room_id_as_int
 from app.services.pipeline.helpers.slot_state import _normalize_preferred_times
@@ -143,7 +143,9 @@ async def _load_social_context(
                         f"{joined}"
                     )
                     try:
-                        summary = (await call_gemini(prompt) or "").strip()
+                        summary = (
+                            await call_llm(prompt, provider=settings.LLM_PROVIDER_FOR_SOCIAL_SUMMARY) or ""
+                        ).strip()
                     except Exception:
                         summary = ""
 

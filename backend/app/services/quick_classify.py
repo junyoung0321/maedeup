@@ -5,7 +5,7 @@ import logging
 import re
 from typing import Literal
 
-from app.services.gemini import call_gemini
+from app.services.llm import call_llm_tier
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ async def quick_classify(text: str) -> dict:
     )
 
     try:
-        raw = await asyncio.wait_for(call_gemini(prompt), timeout=1.5)
+        raw = await asyncio.wait_for(call_llm_tier(prompt, tier="low"), timeout=1.5)
     except Exception:
         return _result("general", 0.0, "gemini")
 

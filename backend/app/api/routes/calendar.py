@@ -517,9 +517,9 @@ async def get_free_slots(
             await _r_cache.set(
                 _cache_key,
                 _json.dumps(_result.model_dump(), ensure_ascii=False, default=str),
-                ex=300,
+                ex=30,
             )
-            logger.info("[T6_CACHE_SET] key=%s ttl=300s", _cache_key)
+            logger.info("[T6_CACHE_SET] key=%s ttl=30s", _cache_key)
         finally:
             await _r_cache.aclose()
     except (NameError, AttributeError, ImportError):

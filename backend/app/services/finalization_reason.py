@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from app.services.gemini import call_gemini
+from app.services.llm import call_llm_tier
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,7 @@ async def generate_finalization_reason(
         proposed_slot, alternate_slot, like_count, total_eligible_voters
     )
     try:
-        generated = await call_gemini(prompt)
+        generated = await call_llm_tier(prompt, tier="low")
     except Exception:
         logger.warning(
             "Gemini call unexpectedly raised for finalization reason room_id=%s",

@@ -287,6 +287,31 @@ async def guest_join_room(
     except Exception:
         logger.warning("member_joined publish failed for room=%s", room.id, exc_info=True)
 
+    # T6 cache invalidate: 신규 멤버 join 시 free_slots 캐시 삭제 (stale 방지)
+    try:
+        import redis.asyncio as _aioredis_inv
+        from app.core.config import settings as _settings_inv
+        _r_inv = _aioredis_inv.from_url(
+            _settings_inv.REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+        try:
+            _pattern = f"maedeup:free_slots:{room.id}:*"
+            _cursor = 0
+            while True:
+                _cursor, _keys = await _r_inv.scan(_cursor, match=_pattern, count=100)
+                if _keys:
+                    await _r_inv.delete(*_keys)
+                if _cursor == 0:
+                    break
+            logger.info("[T6_INVALIDATE] guest-join room=%s pattern=%s", room.id, _pattern)
+        finally:
+            await _r_inv.aclose()
+    except Exception:
+        logger.warning("T6 cache invalidate failed for room=%s (non-fatal)", room.id, exc_info=True)
+
     token = issue_jwt(
         user_id=guest.id,
         email=guest.email,

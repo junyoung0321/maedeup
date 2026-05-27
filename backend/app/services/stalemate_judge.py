@@ -10,7 +10,7 @@ import logging
 import re
 from typing import Iterable
 
-from app.services.gemini import call_gemini
+from app.services.llm import call_llm_tier
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ async def judge_stalemate(messages: list[dict]) -> dict:
 다음 JSON 형식으로만 답하세요. 다른 설명·코드블록 금지:
 {{"stalemate": true 또는 false, "intent": "meeting_schedule" 또는 "place_suggestion" 또는 "none", "reason": "한 문장으로 판정 근거"}}"""
 
-    raw = await call_gemini(prompt)
+    raw = await call_llm_tier(prompt, tier="mid")
     parsed = _parse_json_response(raw)
     if parsed is None:
         logger.debug("Stalemate judge: failed to parse response: %r", raw[:200])

@@ -28,7 +28,8 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chat import ChatMessage, PaneType
-from app.services.gemini import call_gemini
+from app.core.config import settings
+from app.services.llm import call_llm
 from app.services.pipeline.constants import (
     FRIENDLY_ERROR_MESSAGE,
     RECENT_MESSAGE_LIMIT,
@@ -76,7 +77,7 @@ async def _compress_message_history(state: GraphState) -> None:
     )
 
     try:
-        summary = (await call_gemini(prompt)).strip()
+        summary = (await call_llm(prompt, provider=settings.LLM_PROVIDER_FOR_SUMMARY)).strip()
     except Exception as exc:
         logger.exception("Failed to summarize conversation memory: %s", exc)
         summary = ""

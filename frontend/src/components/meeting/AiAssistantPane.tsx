@@ -212,11 +212,9 @@ export default function AiAssistantPane() {
     if (!autoTrigger) {
       return;
     }
-    const content =
-      typeof autoTrigger === "object" && autoTrigger && "content" in autoTrigger
-        ? (autoTrigger as { content?: string }).content
-        : null;
-    setAutoTriggerBanner(content || "대화가 길어지네요, AI가 정리해볼게요 🗓️");
+    // autoTrigger.content(사용자 발화)를 banner에 그대로 표시하던 bug fix.
+    // trigger source와 무관하게 hardcoded 안내 문구만 표시.
+    setAutoTriggerBanner("대화가 길어지네요, AI가 정리해볼게요 🗓️");
     dismissAutoTrigger();
   }, [autoTrigger, dismissAutoTrigger]);
 

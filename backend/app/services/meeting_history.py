@@ -17,7 +17,7 @@ from app.models.ai_memory import AIMemory
 from app.models.meeting import MeetingSchedule
 from app.models.room import RoomMember
 from app.models.user import User
-from app.services.gemini import call_gemini
+from app.services.llm import call_llm_tier
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,7 @@ async def search_meeting_history(
     )
 
     try:
-        response = (await call_gemini(prompt)).strip()
+        response = (await call_llm_tier(prompt, tier="mid")).strip()
         # JSON 블록 마커 제거
         if response.startswith("```"):
             response = response.split("\n", 1)[-1]

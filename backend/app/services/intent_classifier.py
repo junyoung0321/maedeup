@@ -19,7 +19,7 @@ from sqlmodel import select
 from app.db.session import AsyncSessionLocal
 from app.models.intent import IntentExample
 from app.services.embedding import get_embedding
-from app.services.gemini import call_gemini
+from app.services.llm import call_llm_tier
 
 HIGH_THRESHOLD = 0.85   # RAG로 바로 확정
 LOW_THRESHOLD = 0.60    # Gemini 폴백 구간
@@ -109,7 +109,7 @@ async def classify_intent(text_input: str) -> dict:
 반드시 다음 중 하나만 출력하세요: meeting_schedule, place_suggestion, general
 
 답변:"""
-        gemini_response = await call_gemini(prompt)
+        gemini_response = await call_llm_tier(prompt, tier="low")
         if not gemini_response or not gemini_response.strip():
             # Gemini 실패 시에도 패턴 매칭 시도
             if _contains_korean_place(text_input):

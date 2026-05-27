@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 import json
 import logging
 from typing import Any, Literal, Optional
+import uuid
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException
@@ -444,153 +445,178 @@ async def confirm_meeting(
     if member_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=403, detail="Host is not a room member")
 
-    # Finalization-proposal path: validate proposal state before DB write.
-    if body.proposal_id is not None:
-        try:
-            await sr.host_confirm(
-                redis,
+    # BUG-27-1: 같은 room 에 동시 confirm 2건 → 두 번째 즉시 409.
+    # code-analyst 분석 (2026-05-27): meeting_id/proposal_id 없는 fresh INSERT
+    # 분기에 락 없어 race 발생. Redis NX lock 으로 입구 차단.
+    confirm_lock_key = f"maedeup:confirm_lock:room:{body.room_id}"
+    lock_token = uuid.uuid4().hex
+    try:
+        acquired = await redis.set(confirm_lock_key, lock_token, nx=True, ex=30)
+    except Exception:
+        # Redis 장애 fallback: degraded 진행 (시연 환경에서 confirm 막힘이 race 1건보다 큰 risk).
+        # scheduling_round._acquire_lock 의 동일 패턴 (graceful degrade).
+        acquired = True
+        lock_token = None
+    if not acquired:
+        raise HTTPException(status_code=409, detail="concurrent_confirm_in_progress")
+
+    try:
+        # Finalization-proposal path: validate proposal state before DB write.
+        if body.proposal_id is not None:
+            try:
+                await sr.host_confirm(
+                    redis,
+                    room_id=body.room_id,
+                    proposal_id=body.proposal_id,
+                    user_id=int(current_user.sub),
+                    room_host_id=room.created_by,
+                )
+            except sr.NotFoundError:
+                raise HTTPException(status_code=404, detail="proposal_not_found")
+            except sr.SupersededError as exc:
+                raise HTTPException(status_code=409, detail=f"superseded: {exc}")
+            except sr.BelowMajorityError as exc:
+                raise HTTPException(status_code=409, detail=f"below_majority: {exc}")
+            except sr.NotHostError as exc:
+                # Should be caught by the earlier room.created_by check, but be
+                # defensive — scheduling_round is the source of truth for state.
+                raise HTTPException(status_code=403, detail=str(exc))
+
+        # DB는 naive datetime을 사용하므로 timezone 제거
+        scheduled_at = body.scheduled_at.replace(tzinfo=None) if body.scheduled_at.tzinfo else body.scheduled_at
+        end_at = body.end_at.replace(tzinfo=None) if body.end_at.tzinfo else body.end_at
+
+        if body.meeting_id is not None:
+            # 기존 pending 미팅을 confirmed로 승격
+            result = await session.execute(
+                select(MeetingSchedule).where(MeetingSchedule.id == body.meeting_id)
+            )
+            meeting = result.scalar_one_or_none()
+            if not meeting:
+                raise HTTPException(status_code=404, detail="Meeting not found")
+            if meeting.room_id != body.room_id:
+                raise HTTPException(status_code=400, detail="Meeting does not belong to this room")
+
+            meeting.status = MeetingStatus.confirmed
+            meeting.scheduled_at = scheduled_at
+            meeting.end_at = end_at
+            meeting.title = body.title
+            meeting.vote_options = body.vote_options
+            meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            session.add(meeting)
+        else:
+            meeting = MeetingSchedule(
                 room_id=body.room_id,
-                proposal_id=body.proposal_id,
-                user_id=int(current_user.sub),
-                room_host_id=room.created_by,
+                title=body.title,
+                scheduled_at=scheduled_at,
+                end_at=end_at,
+                location_name=body.location_name,
+                vote_options=body.vote_options,
+                votes={},
+                status=MeetingStatus.confirmed,
+                created_by=int(current_user.sub),
             )
-        except sr.NotFoundError:
-            raise HTTPException(status_code=404, detail="proposal_not_found")
-        except sr.SupersededError as exc:
-            raise HTTPException(status_code=409, detail=f"superseded: {exc}")
-        except sr.BelowMajorityError as exc:
-            raise HTTPException(status_code=409, detail=f"below_majority: {exc}")
-        except sr.NotHostError as exc:
-            # Should be caught by the earlier room.created_by check, but be
-            # defensive — scheduling_round is the source of truth for state.
-            raise HTTPException(status_code=403, detail=str(exc))
+            session.add(meeting)
 
-    # DB는 naive datetime을 사용하므로 timezone 제거
-    scheduled_at = body.scheduled_at.replace(tzinfo=None) if body.scheduled_at.tzinfo else body.scheduled_at
-    end_at = body.end_at.replace(tzinfo=None) if body.end_at.tzinfo else body.end_at
+        await session.commit()
+        await session.refresh(meeting)
 
-    if body.meeting_id is not None:
-        # 기존 pending 미팅을 confirmed로 승격
-        result = await session.execute(
-            select(MeetingSchedule).where(MeetingSchedule.id == body.meeting_id)
-        )
-        meeting = result.scalar_one_or_none()
-        if not meeting:
-            raise HTTPException(status_code=404, detail="Meeting not found")
-        if meeting.room_id != body.room_id:
-            raise HTTPException(status_code=400, detail="Meeting does not belong to this room")
+        # If a proposal drove this confirm, mark it as confirmed in Redis and
+        # broadcast `meeting_confirmed` on the social channel so every client
+        # transitions into the success state together.
+        if body.proposal_id is not None:
+            try:
+                await sr.mark_confirmed(
+                    redis, room_id=body.room_id, proposal_id=body.proposal_id
+                )
+                # 확정 후 availability / unavailability / date_selection 캐시 비우기 —
+                # 다음 선택이 새 제안을 만들지 않도록.
+                await sr.clear_availability(redis, room_id=body.room_id)
+                await sr.clear_unavailability(redis, room_id=body.room_id)
+                await sr.clear_date_selections(redis, room_id=body.room_id)
+                await _publish_finalization_event(
+                    redis,
+                    body.room_id,
+                    {
+                        "type": "meeting_confirmed",
+                        "room_id": body.room_id,
+                        "meeting_id": meeting.id,
+                        "proposal_id": body.proposal_id,
+                        "scheduled_at": scheduled_at.isoformat(),
+                        "end_at": end_at.isoformat(),
+                        "title": body.title,
+                    },
+                )
+            except Exception:
+                # Redis post-commit cleanup should never unwind the DB commit.
+                logger.warning(
+                    "Finalization post-confirm bookkeeping failed (proposal_id=%s, meeting_id=%s)",
+                    body.proposal_id, meeting.id, exc_info=True,
+                )
 
-        meeting.status = MeetingStatus.confirmed
-        meeting.scheduled_at = scheduled_at
-        meeting.end_at = end_at
-        meeting.title = body.title
-        meeting.vote_options = body.vote_options
-        meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        session.add(meeting)
-    else:
-        meeting = MeetingSchedule(
-            room_id=body.room_id,
-            title=body.title,
-            scheduled_at=scheduled_at,
-            end_at=end_at,
-            location_name=body.location_name,
-            vote_options=body.vote_options,
-            votes={},
-            status=MeetingStatus.confirmed,
-            created_by=int(current_user.sub),
-        )
-        session.add(meeting)
-
-    await session.commit()
-    await session.refresh(meeting)
-
-    # If a proposal drove this confirm, mark it as confirmed in Redis and
-    # broadcast `meeting_confirmed` on the social channel so every client
-    # transitions into the success state together.
-    if body.proposal_id is not None:
+        # A4-1: AI 패널에 확정 안내 박스 emit (시연 멘트 "원클릭으로 일정 확정"
+        # 직후 화면 변화 0인 어색함 해결). DB 커밋 후, GCal 등록 전.
         try:
-            await sr.mark_confirmed(
-                redis, room_id=body.room_id, proposal_id=body.proposal_id
-            )
-            # 확정 후 availability / unavailability / date_selection 캐시 비우기 —
-            # 다음 선택이 새 제안을 만들지 않도록.
-            await sr.clear_availability(redis, room_id=body.room_id)
-            await sr.clear_unavailability(redis, room_id=body.room_id)
-            await sr.clear_date_selections(redis, room_id=body.room_id)
-            await _publish_finalization_event(
+            from app.services.agent_messaging import emit_agent_message, format_korean_meeting_time
+            time_label = format_korean_meeting_time(scheduled_at)
+            await emit_agent_message(
                 redis,
                 body.room_id,
-                {
-                    "type": "meeting_confirmed",
-                    "room_id": body.room_id,
-                    "meeting_id": meeting.id,
-                    "proposal_id": body.proposal_id,
-                    "scheduled_at": scheduled_at.isoformat(),
-                    "end_at": end_at.isoformat(),
-                    "title": body.title,
-                },
+                f"✅ 일정이 확정되었어요 — {time_label}",
+            )
+            await emit_agent_message(
+                redis,
+                body.room_id,
+                "이제 어디서 만날지 정해볼까요? 장소를 추천해드릴게요.",
             )
         except Exception:
-            # Redis post-commit cleanup should never unwind the DB commit.
             logger.warning(
-                "Finalization post-confirm bookkeeping failed (proposal_id=%s, meeting_id=%s)",
-                body.proposal_id, meeting.id, exc_info=True,
+                "A4-1 confirm announcement failed (meeting_id=%s)",
+                meeting.id, exc_info=True,
             )
 
-    # A4-1: AI 패널에 확정 안내 박스 emit (시연 멘트 "원클릭으로 일정 확정"
-    # 직후 화면 변화 0인 어색함 해결). DB 커밋 후, GCal 등록 전.
-    try:
-        from app.services.agent_messaging import emit_agent_message, format_korean_meeting_time
-        time_label = format_korean_meeting_time(scheduled_at)
-        await emit_agent_message(
-            redis,
-            body.room_id,
-            f"✅ 일정이 확정되었어요 — {time_label}",
-        )
-        await emit_agent_message(
-            redis,
-            body.room_id,
-            "이제 어디서 만날지 정해볼까요? 장소를 추천해드릴게요.",
-        )
-    except Exception:
-        logger.warning(
-            "A4-1 confirm announcement failed (meeting_id=%s)",
-            meeting.id, exc_info=True,
-        )
+        # Best-effort: push the confirmed meeting onto each consenting member's
+        # Google Calendar. Failures here MUST NOT unwind the DB commit.
+        if not settings.AUTO_CALENDAR_PUSH:
+            logger.info(
+                "Google Calendar fan-out skipped (AUTO_CALENDAR_PUSH=false, meeting_id=%s)",
+                meeting.id,
+            )
+        else:
+            try:
+                members_result = await session.execute(
+                    select(User)
+                    .join(RoomMember, RoomMember.user_id == User.id)
+                    .where(RoomMember.room_id == body.room_id)
+                )
+                members = members_result.scalars().all()
+                updated_event_ids = await sync_events_for_meeting_members(
+                    meeting, members, session, event_title=room.name,
+                )
+                if updated_event_ids != (meeting.google_event_ids or {}):
+                    meeting.google_event_ids = updated_event_ids
+                    session.add(meeting)
+                    await session.commit()
+                    await session.refresh(meeting)
+            except Exception:
+                logger.warning(
+                    "Google Calendar fan-out failed (meeting_id=%s, room_id=%s)",
+                    meeting.id, body.room_id, exc_info=True,
+                )
 
-    # Best-effort: push the confirmed meeting onto each consenting member's
-    # Google Calendar. Failures here MUST NOT unwind the DB commit.
-    if not settings.AUTO_CALENDAR_PUSH:
-        logger.info(
-            "Google Calendar fan-out skipped (AUTO_CALENDAR_PUSH=false, meeting_id=%s)",
-            meeting.id,
+        return ConfirmMeetingResponse(
+            id=meeting.id,
+            **_calendar_response_fields(meeting, int(current_user.sub)),
         )
-    else:
-        try:
-            members_result = await session.execute(
-                select(User)
-                .join(RoomMember, RoomMember.user_id == User.id)
-                .where(RoomMember.room_id == body.room_id)
-            )
-            members = members_result.scalars().all()
-            updated_event_ids = await sync_events_for_meeting_members(
-                meeting, members, session, event_title=room.name,
-            )
-            if updated_event_ids != (meeting.google_event_ids or {}):
-                meeting.google_event_ids = updated_event_ids
-                session.add(meeting)
-                await session.commit()
-                await session.refresh(meeting)
-        except Exception:
-            logger.warning(
-                "Google Calendar fan-out failed (meeting_id=%s, room_id=%s)",
-                meeting.id, body.room_id, exc_info=True,
-            )
-
-    return ConfirmMeetingResponse(
-        id=meeting.id,
-        **_calendar_response_fields(meeting, int(current_user.sub)),
-    )
+    finally:
+        if lock_token is not None:
+            try:
+                current = await redis.get(confirm_lock_key)
+                current_str = current.decode() if isinstance(current, bytes) else current
+                if current_str == lock_token:
+                    await redis.delete(confirm_lock_key)
+            except Exception:
+                pass
 
 
 @router.post("/{meeting_id}/vote", response_model=VoteResponse)

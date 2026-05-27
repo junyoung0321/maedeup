@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     # true면 PAID_GEMINI_API_KEY 우선 사용. false(기본)면 free tier GEMINI_API_KEY만 사용.
     USE_PAID_GEMINI: bool = False
 
+    # Gemini model — .env 의 GEMINI_MODEL 로 swap 가능 (default = gemini-2.5-flash)
+    GEMINI_MODEL: str = "gemini-2.5-flash"
     # OpenAI GPT-4o-mini wrapper (K1-2). .env의 key 이름 그대로 (underscore 위치 주의).
     OPEN_AI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o-mini"

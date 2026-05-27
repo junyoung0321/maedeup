@@ -87,3 +87,83 @@ BUG-26-4 (cfg/timeout NameError) + bug-26-g (meeting_obj NameError) 모두 동�
 5. P1-1 spec 결정 — vote_options 전체 슬롯 라벨 정규화 여부
 6. 전시 환경 한계 brainstorm 재개 (보류 상태, 사용자 합의 후 design doc → writing-plans)
 7. 시연 영상 촬영 (날짜 TBD — handoff 2026-05-26 = 5/18 권고, qa-runtime 보고 = 5/30 권고. 사용자 확정 필요)
+
+---
+
+## Addendum — Gemini 3.1 Flash-Lite swap test (2026-05-27 17:00 KST)
+
+### 환경
+- 변경: `gemini.py:46` 하드코딩 → `settings.GEMINI_MODEL` env (PM 사전 적용)
+- config.py `GEMINI_MODEL` field (default `gemini-2.5-flash`) 추가
+- `.env`: `GEMINI_MODEL=gemini-3.1-flash-lite`
+- container: `maedeup-api` Up 1m, healthy. `printenv GEMINI_MODEL` = `gemini-3.1-flash-lite` 확인
+- SDK: `google-generativeai==0.8.3`
+
+### Model ID 유효성 = **PASS**
+- 시연 1차 첫 호출 (Gemini classify + slot extract + narrator) 모두 성공
+- backend log 12분 전체 grep: `gemini.*error|InvalidArgument|404|model.*not.*found|RESOURCE_EXHAUSTED|429` = **0건**
+- SDK 0.8.3이 `gemini-3.1-flash-lite` model ID를 정상 라우팅함
+
+### K1 시연 측정 (N=3, --fast)
+
+| run | ACT2.trigger→card (K1.1) | ACT5.trigger→card (K1.3) |
+|---|---|---|
+| run 1 | 18.82s | 3.99s |
+| run 2 | 27.00s | 3.48s |
+| run 3 | 22.92s | 3.99s |
+| **평균** | **22.91s** | **3.82s** |
+| median (p50) | 22.92s | 3.99s |
+| min/max | 18.82 / 27.00 | 3.48 / 3.99 |
+
+### K2 정확도 측정 (N=50)
+- K2.1 트리거 발화율 : **97.4%** (38/39 expected-trigger)
+- K2.2 intent 정확도 : **90.0%** (45/50)
+- K2.3 slot robustness: **40.0%** (20/50, T7 expected ⊆ observed)
+
+### bug-26-* 회귀 검증
+- 3개 시연 모두 verify_demo_completion = "모임이 성공적으로 생성되었어요" 텍스트 도달
+- `meeting_schedules` row 3건 모두 `location_name='신동궁감자탕뼈숯불구이 선릉직영점'` + `scheduled_at` 정상 — 시간/장소 슬롯 정합
+- ACT5.5 narrator 자취 0 (run 1 verify 출력) — preference_toggle off 분기는 기존 baseline과 동일
+- chat_messages role 분포 정상 (assistant 6~7, user 5/room)
+- **회귀 없음**
+
+### baseline 대비 비교
+
+| 모델 | K1.1 p50 | K1.3 p50 | K2.1 | K2.2 | K2.3 |
+|---|---|---|---|---|---|
+| gemini-2.5-flash (Phase 5 baseline) | 23.56s | 10.86s | — | 100%* | 92%* / 40% |
+| gemini-2.5-flash (revert 후) | 20.89s | 14.67s | — | ? | 40% |
+| **gemini-3.1-flash-lite (이번)** | **22.92s** | **3.99s** | **97.4%** | **90.0%** | **40.0%** |
+
+(* baseline 표에 같은 행에 K2.1/K2.2/K2.3 의미 표기 차이 있음 — 비교는 K1.1 / K1.3 / K2.3 동일 지표만 신뢰)
+
+### 평가
+
+- **K1.1 (ACT2 트리거→card)** : `22.92s` ≈ baseline `23.56s` / revert 후 `20.89s` — **거의 동률** (±1~2s). 일정 카드 path는 Gemini 호출 빈도가 낮아 모델 차이가 wall-clock에 잘 안 드러남.
+- **K1.3 (ACT5 트리거→card)** : `3.99s` vs baseline `10.86s` / revert 후 `14.67s` — **63~73% 감소**. 장소 추천 path는 single Gemini call 비중이 높아 flash-lite의 속도 우위가 직접 반영됨.
+- **K2.2 intent 정확도** : `90.0%` — baseline (revert 후 미측정) 대비는 직접 비교 어려움. 다만 50개 중 5건 오분류는 모호한 보더라인 (`ㅋㅋ 그거 아라?`, `오조오억년만에 다같이 모이는 거잖아`, `그냥 아무데나 ㄱ` 등). 시연 핵심 발화는 전부 hit.
+- **K2.3 slot robustness** : `40.0%` — revert 후 baseline `40%` 와 **정확히 동일**. extract-entities 느슨 일치 패턴이 모델 변경에 둔감하다는 의미 (T7 metric 자체의 saturation 가능성).
+- **K2.1 트리거 발화율** : `97.4%` — 매우 강력. 39 expected 중 1건만 누락.
+- **회귀** : bug-26-* 계열 모두 GREEN 유지. 시연 시각/장소 정합, narrator 시퀀스 정상.
+
+### 결론 (단일 모델 1회 테스트 기준)
+
+`gemini-3.1-flash-lite` 는 **베이스라인 대체 가능 후보**:
+- K1.3 wall-clock **대폭 단축** (장소 path)
+- K1.1 동률
+- K2.2 90% intent (시연 critical path 100% hit)
+- bug-26 회귀 0
+- model ID + SDK 0.8.3 정상 호환
+
+**권고**: 발표 시연 전 1회 더 N=5 측정 + ACT5.5 toggle 활성 분기 (F4 narrator) 별도 검증 후 본격 채택 결정. K2.2 90% 가 baseline 측정값 없어 직접 비교 불가 → 동일 50개로 gemini-2.5-flash 1회 재측정 권고.
+
+### 산출물
+- `/tmp/gemini3-1.log` (시연 run 1)
+- `/tmp/gemini3-2.log` (시연 run 2)
+- `/tmp/gemini3-3.log` (시연 run 3)
+- `/tmp/gemini3-k2.log` (K2 N=50)
+- 시연 room 323/324/325, meeting 315/316/317 — DB 정상 확정
+
+### 메모리/참고
+- `feedback-qa-auto-panel-audit` — 18항목 자동 검증 (이번 swap은 K1/K2/회귀 3축만 측정)
+- `feedback-demo-iteration-loop` — 6-step 루프 (swap test는 baseline 비교 1회로 종료)

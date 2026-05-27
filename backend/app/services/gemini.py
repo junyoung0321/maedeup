@@ -43,7 +43,7 @@ async def call_gemini(
     for attempt in range(2):  # 0=첫 호출, 1=retry
         genai.configure(api_key=settings.effective_gemini_api_key)
         model = genai.GenerativeModel(
-            "gemini-2.5-flash",
+            settings.GEMINI_MODEL,
             system_instruction=(
                 "당신은 매듭(Maedeup) AI 어시스턴트입니다. 한국인 사용자들의 모임 일정과 "
                 "장소 조율을 돕는 친근하고 전문적인 어시스턴트입니다. 항상 한국어로 "

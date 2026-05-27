@@ -2,7 +2,7 @@
 
 ## 진행 중인 작업
 세션 시작 시 `docs/handoff/` 폴더의 가장 최근 문서를 먼저 확인하세요.
-**현재 task**: 전시 안정성 spec Phase 4 baseline 재측정 완료 (HEAD `aa71581`, 2026-05-30) — 9 KPI 중 **6 PASS / 3 FAIL**. K1.3 -47% (T5 cache) / K3.1 race 0 (BUG-27-1 Redis lock) / K2.3 측정 작동 (Phase 2 0% → 40%, schema 정정 후 더 높음). T9 ACT 5.5 cancel (사용자 2026-05-30, dormant 유지). 시연 영상 촬영 완료. **다음**: K1 fix path 분석 (code-analyst, paid Gemini / GPT-4o-mini / 정확도 보강 검토) 후 Phase 5 GO/NO-GO 결정. 전시 = **2026-06-04 (수) + 2026-06-05 (목)** 2일.
+**현재 task**: 전시 안정성 round 완료 (HEAD `ccc67e6`, 2026-05-30). 16 site 모델 매핑 확정 (gpt-4o-mini 8 + gemini-3.1-flash-lite 8), **K1.3 ACT5 SLA <5s PASS** (3.99s, baseline 10.86s 대비 -73%). K2 PASS 유지 (97.4% / 90% / 40%). bug fix 3건 완료 (T6 cache option c / AI banner / C 구조 B+D, 16 site abstraction). bug-26-* 회귀 0. **다음**: 전시 진행 (2026-06-04 수 + 06-05 목). 운영 보완 — warmup 1회 + ACT2 narration 강화 + 부스 안내문. round summary `docs/handoff/2026-05-30-round-summary.md` 참고.
 시연 자동화 (WSL venv v2, 2026-05-15):
 - 터미널 1: `~/.venv-maedeup-demo/bin/python3 .gstack-browser-launch.py`
 - 터미널 2: `~/.venv-maedeup-demo/bin/python3 .gstack-demo.py` (또는 `--fast`)

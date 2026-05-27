@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import redis.asyncio as aioredis
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select
 
 from app.core.config import settings
@@ -317,13 +318,26 @@ async def _slot_filling_all_members(state: GraphState, pref_data: dict[str, Any]
             )
             # BUG-26-C: vote_options 라벨을 manual pick 시각으로 갱신.
             # vote_card 발행 시점 18:00 값이 그대로 남아 새로고침 시 19:30 과 충돌하는 문제 수정.
+            #
+            # [silent-fail-a] 외층 try 30줄+ swallow 해소 — 책임별 4구역으로 분리:
+            #   구역 A: DB 조회 + pending_ms select
+            #   구역 B: vote_options patch (label/start_at/end_at)
+            #   구역 C: Redis recommend_msg_id GET+DELETE + chat_message UPDATE (BUG-26-G)
+            #   구역 D: narrator emit + WS broadcast (BUG-26-E)
+            # NameError/AttributeError 는 명시 catch + re-raise (코드 버그 즉시 가시화).
+
+            # ------------------------------------------------------------------
+            # 구역 A: room_id 변환 + DB 조회 (MeetingSchedule pending_ms SELECT)
+            # ------------------------------------------------------------------
+            try:
+                room_pk = int(state.get("room_id"))
+            except (TypeError, ValueError):
+                logger.warning("[VOTE_OPTIONS_PATCH] room_id 변환 실패: %s", state.get("room_id"))
+                return state
+
+            pending_ms = None
             try:
                 async with AsyncSessionLocal() as _db:
-                    try:
-                        room_pk = int(state.get("room_id"))
-                    except (TypeError, ValueError):
-                        logger.warning("[VOTE_OPTIONS_PATCH] room_id 변환 실패: %s", state.get("room_id"))
-                        return state
                     now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
                     recent_threshold = now_naive - timedelta(minutes=30)
                     pending_ms = (
@@ -336,128 +350,164 @@ async def _slot_filling_all_members(state: GraphState, pref_data: dict[str, Any]
                             .limit(1)
                         )
                     ).scalar_one_or_none()
-                    if pending_ms is not None and pending_ms.vote_options:
-                        old_opts_repr = str(pending_ms.vote_options)
-                        # 가장 근접한 옵션 1개: date_str 로 시작하는 start_at 가진 옵션 우선,
-                        # 없으면 index 0 fallback.
-                        target_prefix = f"{date_str}T"
-                        best_idx = next(
-                            (
-                                i for i, o in enumerate(pending_ms.vote_options)
-                                if isinstance(o, dict) and isinstance(o.get("start_at"), str)
-                                and o["start_at"].startswith(target_prefix)
-                            ),
-                            0,
-                        )
-                        new_label = f"{date_str} {start_str}~{end_str}"
-                        # P1-2: KST → UTC 변환 후 aware ISO 로 통일 (다른 slot 들과 동일 형식).
-                        # 기존 naive KST 저장이 DB layer naive UTC 의미와 충돌, confirm 시
-                        # _parse_iso_datetime 가 naive 를 UTC 로 잘못 해석할 위험 해소.
-                        _start_kst = datetime.fromisoformat(f"{date_str}T{start_str}:00").replace(tzinfo=KST)
-                        _end_kst = datetime.fromisoformat(f"{date_str}T{end_str}:00").replace(tzinfo=KST)
-                        new_start_at = _start_kst.astimezone(timezone.utc).isoformat()
-                        new_end_at = _end_kst.astimezone(timezone.utc).isoformat()
-                        updated_opts = list(pending_ms.vote_options)
-                        opt_copy = dict(updated_opts[best_idx])
-                        opt_copy["label"] = new_label
-                        opt_copy["start_at"] = new_start_at
-                        opt_copy["end_at"] = new_end_at
-                        updated_opts[best_idx] = opt_copy
-                        pending_ms.vote_options = updated_opts
-                        _db.add(pending_ms)
-                        await _db.commit()
-                        logger.info(
-                            "[VOTE_OPTIONS_PATCH] room=%s meeting=%s before='%s' after='%s'",
-                            room_pk, pending_ms.id, old_opts_repr, str(updated_opts),
-                        )
-                        # BUG-26-G: 첫 추천 메시지 본문 update — manual pick 후 시각 동기화.
-                        # vote_card_creation 이 emit 한 "6월 8일 오후 6:00 추천드려요" 가
-                        # manual pick 후에도 history 에 남아 새 시각 (19:30 등) 과 충돌하는 문제 수정.
-                        # Redis key meeting:{id}:recommend_msg_id 에서 1회용으로 GET + DELETE.
-                        _recommend_msg_id = None
-                        try:
-                            _r_get = aioredis.from_url(
-                                settings.REDIS_URL, decode_responses=True,
-                                socket_connect_timeout=1, socket_timeout=1,
-                            )
-                            try:
-                                _redis_key_g = f"meeting:{pending_ms.id}:recommend_msg_id"
-                                _recommend_msg_id_str = await _r_get.get(_redis_key_g)
-                                if _recommend_msg_id_str:
-                                    _recommend_msg_id = int(_recommend_msg_id_str)
-                                    await _r_get.delete(_redis_key_g)
-                                    logger.debug(
-                                        "[BUG-26-G] recommend_msg_id=%s loaded from Redis (meeting=%s)",
-                                        _recommend_msg_id, pending_ms.id,
-                                    )
-                            finally:
-                                await _r_get.aclose()
-                        except Exception:
-                            logger.warning("[BUG-26-G] recommend msg id Redis load 실패", exc_info=True)
-                        if _recommend_msg_id:
-                            try:
-                                _new_content = f"캘린더 확인 결과, {date_str} {start_str}~{end_str}을(를) 추천드려요. 📅 아래에서 확인해주세요."
-                                async with AsyncSessionLocal() as _msg_db:
-                                    _msg_row = (
-                                        await _msg_db.execute(
-                                            select(ChatMessage).where(ChatMessage.id == _recommend_msg_id)
-                                        )
-                                    ).scalar_one_or_none()
-                                    if _msg_row is not None:
-                                        _msg_row.content = _new_content
-                                        _msg_db.add(_msg_row)
-                                        await _msg_db.commit()
-                                        logger.info(
-                                            "[BUG-26-G] recommend msg id=%s content updated: %s",
-                                            _recommend_msg_id, _new_content,
-                                        )
-                                        # WS broadcast: chat_message_update → frontend 실시간 반영
-                                        try:
-                                            import json as _json
-                                            _redis_g = aioredis.from_url(
-                                                settings.REDIS_URL, decode_responses=True,
-                                                socket_connect_timeout=2, socket_timeout=2,
-                                            )
-                                            try:
-                                                _channel = f"agent:{int(state['room_id'])}"
-                                                _payload = _json.dumps(
-                                                    {
-                                                        "type": "chat_message_update",
-                                                        "id": _recommend_msg_id,
-                                                        "content": _new_content,
-                                                    },
-                                                    ensure_ascii=False,
-                                                )
-                                                await _redis_g.publish(_channel, _payload)
-                                            finally:
-                                                await _redis_g.aclose()
-                                        except Exception:
-                                            logger.warning("[BUG-26-G] WS broadcast 실패 (무시)", exc_info=True)
-                                    else:
-                                        logger.debug("[BUG-26-G] recommend msg id=%s not found — skip", _recommend_msg_id)
-                            except Exception:
-                                logger.warning("[BUG-26-G] 첫 추천 메시지 update 실패 (무시)", exc_info=True)
+            except (NameError, AttributeError, ImportError):
+                raise
+            except SQLAlchemyError:
+                logger.warning("[VOTE_OPTIONS_PATCH] 구역 A DB 조회 실패", exc_info=True)
+                return state
 
-                        # BUG-26-E: vote_options 갱신 후 narrator 메시지도 동기화.
-                        # vote_card 발행 시 18:00 으로 emit 됐던 narrator 가 그대로 남아
-                        # vote_card 19:30 vs narrator 18:00 불일치 발생 → 재 emit 으로 해소.
-                        try:
-                            _redis = aioredis.from_url(
-                                settings.REDIS_URL, decode_responses=True,
-                                socket_connect_timeout=2, socket_timeout=2,
+            # ------------------------------------------------------------------
+            # 구역 B: vote_options patch (label / start_at / end_at)
+            # ------------------------------------------------------------------
+            if pending_ms is not None and pending_ms.vote_options:
+                try:
+                    old_opts_repr = str(pending_ms.vote_options)
+                    # 가장 근접한 옵션 1개: date_str 로 시작하는 start_at 가진 옵션 우선,
+                    # 없으면 index 0 fallback.
+                    target_prefix = f"{date_str}T"
+                    best_idx = next(
+                        (
+                            i for i, o in enumerate(pending_ms.vote_options)
+                            if isinstance(o, dict) and isinstance(o.get("start_at"), str)
+                            and o["start_at"].startswith(target_prefix)
+                        ),
+                        0,
+                    )
+                    new_label = f"{date_str} {start_str}~{end_str}"
+                    # P1-2: KST → UTC 변환 후 aware ISO 로 통일 (다른 slot 들과 동일 형식).
+                    # 기존 naive KST 저장이 DB layer naive UTC 의미와 충돌, confirm 시
+                    # _parse_iso_datetime 가 naive 를 UTC 로 잘못 해석할 위험 해소.
+                    _start_kst = datetime.fromisoformat(f"{date_str}T{start_str}:00").replace(tzinfo=KST)
+                    _end_kst = datetime.fromisoformat(f"{date_str}T{end_str}:00").replace(tzinfo=KST)
+                    new_start_at = _start_kst.astimezone(timezone.utc).isoformat()
+                    new_end_at = _end_kst.astimezone(timezone.utc).isoformat()
+                    updated_opts = list(pending_ms.vote_options)
+                    opt_copy = dict(updated_opts[best_idx])
+                    opt_copy["label"] = new_label
+                    opt_copy["start_at"] = new_start_at
+                    opt_copy["end_at"] = new_end_at
+                    updated_opts[best_idx] = opt_copy
+                    async with AsyncSessionLocal() as _db_b:
+                        pending_ms_b = (
+                            await _db_b.execute(
+                                select(MeetingSchedule).where(MeetingSchedule.id == pending_ms.id)
                             )
-                            try:
-                                await emit_agent_message(
-                                    _redis,
-                                    int(state["room_id"]),
-                                    f"⏰ {date_str} {start_str}~{end_str}로 조정했어요.",
+                        ).scalar_one_or_none()
+                        if pending_ms_b is not None:
+                            pending_ms_b.vote_options = updated_opts
+                            _db_b.add(pending_ms_b)
+                            await _db_b.commit()
+                    logger.info(
+                        "[VOTE_OPTIONS_PATCH] room=%s meeting=%s before='%s' after='%s'",
+                        room_pk, pending_ms.id, old_opts_repr, str(updated_opts),
+                    )
+                except (NameError, AttributeError, ImportError):
+                    raise
+                except (ValueError, SQLAlchemyError):
+                    logger.warning("[VOTE_OPTIONS_PATCH] 구역 B patch 실패", exc_info=True)
+
+                # ------------------------------------------------------------------
+                # 구역 C: Redis recommend_msg_id GET+DELETE + chat_message UPDATE (BUG-26-G)
+                # ------------------------------------------------------------------
+                # BUG-26-G: 첫 추천 메시지 본문 update — manual pick 후 시각 동기화.
+                # vote_card_creation 이 emit 한 "6월 8일 오후 6:00 추천드려요" 가
+                # manual pick 후에도 history 에 남아 새 시각 (19:30 등) 과 충돌하는 문제 수정.
+                # Redis key meeting:{id}:recommend_msg_id 에서 1회용으로 GET + DELETE.
+                _recommend_msg_id = None
+                try:
+                    _r_get = aioredis.from_url(
+                        settings.REDIS_URL, decode_responses=True,
+                        socket_connect_timeout=1, socket_timeout=1,
+                    )
+                    try:
+                        _redis_key_g = f"meeting:{pending_ms.id}:recommend_msg_id"
+                        _recommend_msg_id_str = await _r_get.get(_redis_key_g)
+                        if _recommend_msg_id_str:
+                            _recommend_msg_id = int(_recommend_msg_id_str)
+                            await _r_get.delete(_redis_key_g)
+                            logger.debug(
+                                "[BUG-26-G] recommend_msg_id=%s loaded from Redis (meeting=%s)",
+                                _recommend_msg_id, pending_ms.id,
+                            )
+                    finally:
+                        await _r_get.aclose()
+                except (NameError, AttributeError, ImportError):
+                    raise
+                except Exception:
+                    logger.warning("[BUG-26-G] recommend msg id Redis load 실패", exc_info=True)
+
+                if _recommend_msg_id:
+                    try:
+                        _new_content = f"캘린더 확인 결과, {date_str} {start_str}~{end_str}을(를) 추천드려요. 📅 아래에서 확인해주세요."
+                        async with AsyncSessionLocal() as _msg_db:
+                            _msg_row = (
+                                await _msg_db.execute(
+                                    select(ChatMessage).where(ChatMessage.id == _recommend_msg_id)
                                 )
-                            finally:
-                                await _redis.aclose()
-                        except Exception:
-                            logger.warning("[BUG-26-E] narrator emit 실패", exc_info=True)
-            except Exception as _patch_err:
-                logger.warning("[VOTE_OPTIONS_PATCH] 실패 (무시): %s", _patch_err)
+                            ).scalar_one_or_none()
+                            if _msg_row is not None:
+                                _msg_row.content = _new_content
+                                _msg_db.add(_msg_row)
+                                await _msg_db.commit()
+                                logger.info(
+                                    "[BUG-26-G] recommend msg id=%s content updated: %s",
+                                    _recommend_msg_id, _new_content,
+                                )
+                                # WS broadcast: chat_message_update → frontend 실시간 반영
+                                try:
+                                    import json as _json
+                                    _redis_g = aioredis.from_url(
+                                        settings.REDIS_URL, decode_responses=True,
+                                        socket_connect_timeout=2, socket_timeout=2,
+                                    )
+                                    try:
+                                        _channel = f"agent:{int(state['room_id'])}"
+                                        _payload = _json.dumps(
+                                            {
+                                                "type": "chat_message_update",
+                                                "id": _recommend_msg_id,
+                                                "content": _new_content,
+                                            },
+                                            ensure_ascii=False,
+                                        )
+                                        await _redis_g.publish(_channel, _payload)
+                                    finally:
+                                        await _redis_g.aclose()
+                                except (NameError, AttributeError, ImportError):
+                                    raise
+                                except Exception:
+                                    logger.warning("[BUG-26-G] WS broadcast 실패 (무시)", exc_info=True)
+                            else:
+                                logger.debug("[BUG-26-G] recommend msg id=%s not found — skip", _recommend_msg_id)
+                    except (NameError, AttributeError, ImportError):
+                        raise
+                    except Exception:
+                        logger.warning("[BUG-26-G] 첫 추천 메시지 update 실패 (무시)", exc_info=True)
+
+                # ------------------------------------------------------------------
+                # 구역 D: narrator emit + WS broadcast (BUG-26-E)
+                # ------------------------------------------------------------------
+                # BUG-26-E: vote_options 갱신 후 narrator 메시지도 동기화.
+                # vote_card 발행 시 18:00 으로 emit 됐던 narrator 가 그대로 남아
+                # vote_card 19:30 vs narrator 18:00 불일치 발생 → 재 emit 으로 해소.
+                try:
+                    _redis = aioredis.from_url(
+                        settings.REDIS_URL, decode_responses=True,
+                        socket_connect_timeout=2, socket_timeout=2,
+                    )
+                    try:
+                        await emit_agent_message(
+                            _redis,
+                            int(state["room_id"]),
+                            f"⏰ {date_str} {start_str}~{end_str}로 조정했어요.",
+                        )
+                    finally:
+                        await _redis.aclose()
+                except (NameError, AttributeError, ImportError):
+                    raise
+                except Exception:
+                    logger.warning("[BUG-26-E] narrator emit 실패", exc_info=True)
+
             return state
 
     best_location = pref_data.get("best_location")

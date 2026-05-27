@@ -33,6 +33,8 @@ async def call_gemini(
     quick_classify는 자체 1.5s wait_for 사용 — 호환.
     Fix 6 (2026-05-26): timeout 15s→25s 상향 + TimeoutError/ResourceExhausted/
       GoogleAPICallError 발생 시 1회 retry. 두 번째도 실패면 기존 fallback (return "").
+    Fix 7 REVERTED (2026-05-30): timeout 25s→10s 시도 → 실측에서 정상 응답이 10s
+      초과 (시연 2회 19회 timeout 발생). 25s 원복. 단축은 Gemini 응답 환경 개선 후 재시도.
     """
     if not settings.effective_gemini_api_key:
         return ""

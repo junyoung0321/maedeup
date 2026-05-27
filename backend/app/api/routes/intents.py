@@ -190,8 +190,12 @@ async def extract_entities(req: ExtractEntitiesRequest):
 
     from app.services.pipeline.nodes.entity import _extract_entities_from_context
 
+    # _serialize_context() 가 보는 키: recent_messages / social_recent / social_summary
+    # / conversation_summary / meeting_history_context. recent_messages 는 list[str]
+    # 형식 (state.py:41) — _message_to_text 의 "role: content" 패턴 따라야 함.
     mock_state = {
         "message_records": [{"role": "user", "content": req.text}],
+        "recent_messages": [f"user: {req.text}"],
         "extracted_entities": {},
     }
     slots = await _extract_entities_from_context(mock_state)

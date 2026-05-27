@@ -115,7 +115,10 @@ async def _get_user_busy_periods(
         access_token = await get_google_access_token(user, db)
     except GoogleCalendarAuthError:
         return []
+    except (NameError, AttributeError, ImportError):
+        raise
     except Exception:
+        logger.warning("_get_user_busy_periods: token 획득 실패", exc_info=True)
         return []
 
     try:
@@ -158,7 +161,10 @@ async def _get_user_busy_periods(
             end = datetime.fromisoformat(end_raw.replace("Z", "+00:00"))
             result.append({"start": start, "end": end})
         return result
+    except (NameError, AttributeError, ImportError):
+        raise
     except Exception:
+        logger.warning("_get_user_busy_periods: freeBusy 응답 처리 실패", exc_info=True)
         return []
 
 
@@ -482,8 +488,10 @@ async def get_free_slots(state: GraphState) -> list[dict[str, Any]]:
                             user_dates[str(uid)] = d
             finally:
                 await r.aclose()
+        except (NameError, AttributeError, ImportError):
+            raise
         except Exception:
-            logger.debug("Failed to read member selections from Redis", exc_info=True)
+            logger.warning("find_free_slots_from_state: Redis 멤버 날짜 선택 읽기 실패", exc_info=True)
 
     if not date_hint and not user_dates:
         state["no_date_selection"] = True

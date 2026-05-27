@@ -489,6 +489,26 @@ async def social_ws(
                             "Finalization aggregation failed after unavailable_toggle room=%s",
                             room_id, exc_info=True,
                         )
+
+                # T6: unavailable_toggle 후 free-slots cache invalidate (해당 room 전체)
+                try:
+                    _r_inv = aioredis.from_url(
+                        settings.REDIS_URL, decode_responses=True,
+                        socket_connect_timeout=1, socket_timeout=1,
+                    )
+                    try:
+                        async for _inv_key in _r_inv.scan_iter(
+                            match=f"maedeup:free_slots:{room_pk}:*"
+                        ):
+                            await _r_inv.delete(_inv_key)
+                        logger.info("[T6_CACHE_INVALIDATE] room=%s pattern delete", room_pk)
+                    finally:
+                        await _r_inv.aclose()
+                except (NameError, AttributeError, ImportError):
+                    raise
+                except Exception:
+                    logger.warning("[T6_CACHE] invalidate 실패 (graceful) room=%s", room_pk, exc_info=True)
+
                 continue
 
             # ── 날짜 선택 공유 이벤트: Redis 영속화 + broadcast ────────────

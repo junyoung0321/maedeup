@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import json as _json
 import logging
 import httpx
 
@@ -332,6 +333,11 @@ def _compute_free_slots(
 # ── 엔드포인트 ────────────────────────────────────────────
 
 
+def _build_free_slots_cache_key(room_id: int, start_date: str, end_date: str) -> str:
+    """T6: free-slots Redis cache key. (room_id, start_date, end_date) 튜플 기반."""
+    return f"maedeup:free_slots:{room_id}:{start_date}:{end_date}"
+
+
 @router.get("/free-slots", response_model=FreeSlotsResponse)
 async def get_free_slots(
     response: Response,
@@ -372,6 +378,33 @@ async def get_free_slots(
         room_pk = int(room_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="유효하지 않은 채팅방 ID입니다.") from exc
+
+    # T6: free-slots cache — detail_date 쿼리 포함 여부에 따라 캐시 key 분기
+    _cache_key = _build_free_slots_cache_key(
+        room_pk,
+        start_date.isoformat(),
+        (time_max - timedelta(seconds=1)).date().isoformat(),
+    )
+    if detail_date:
+        _cache_key = f"{_cache_key}:detail={detail_date}"
+
+    # cache GET
+    try:
+        _r_cache = aioredis.from_url(
+            settings.REDIS_URL, decode_responses=True,
+            socket_connect_timeout=1, socket_timeout=1,
+        )
+        try:
+            _cached_str = await _r_cache.get(_cache_key)
+            if _cached_str:
+                logger.info("[T6_CACHE_HIT] key=%s", _cache_key)
+                return _json.loads(_cached_str)
+        finally:
+            await _r_cache.aclose()
+    except (NameError, AttributeError, ImportError):
+        raise
+    except Exception:
+        logger.warning("[T6_CACHE] Redis GET 실패 (cache miss 처리)", exc_info=True)
 
     membership_result = await session.execute(
         select(RoomMember).where(
@@ -472,7 +505,29 @@ async def get_free_slots(
             if display_name not in member_busy_periods:
                 member_busy_periods[display_name] = []
 
-    return FreeSlotsResponse(free_slots=free_slots, dates=dates, member_busy_periods=member_busy_periods)
+    _result = FreeSlotsResponse(free_slots=free_slots, dates=dates, member_busy_periods=member_busy_periods)
+
+    # T6: cache SET (TTL 300s)
+    try:
+        _r_cache = aioredis.from_url(
+            settings.REDIS_URL, decode_responses=True,
+            socket_connect_timeout=1, socket_timeout=1,
+        )
+        try:
+            await _r_cache.set(
+                _cache_key,
+                _json.dumps(_result.model_dump(), ensure_ascii=False, default=str),
+                ex=300,
+            )
+            logger.info("[T6_CACHE_SET] key=%s ttl=300s", _cache_key)
+        finally:
+            await _r_cache.aclose()
+    except (NameError, AttributeError, ImportError):
+        raise
+    except Exception:
+        logger.warning("[T6_CACHE] Redis SET 실패 (graceful)", exc_info=True)
+
+    return _result
 
 
 @router.get("/my-events", response_model=MyCalendarResponse)

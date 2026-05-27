@@ -22,7 +22,8 @@ import re
 import time
 
 from app.observability.snapshot import dump
-from app.services.gemini import call_gemini
+from app.core.config import settings
+from app.services.llm import call_llm
 from app.services.intent_classifier import classify_intent
 from app.services.meeting_history import get_recent_meeting_records
 from app.services.pipeline.helpers.dates import _detect_multi_date_options
@@ -183,7 +184,7 @@ async def general_response(state: GraphState) -> GraphState:
             "- 너는 비서가 아니라 똑똑한 친구처럼 행동해.\n\n"
             f"대화 맥락:\n{context or '(empty)'}"
         )
-        reply = (await call_gemini(prompt)).strip()
+        reply = (await call_llm(prompt, provider=settings.LLM_PROVIDER_FOR_INTENT)).strip()
         if not reply:
             reply = "안녕! 지금까지 나온 얘기 이어서 같이 정리해볼게요 😊"
         await _emit_assistant_message(state["room_id"], state["db"], reply, state)

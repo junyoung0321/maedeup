@@ -28,8 +28,9 @@ import time
 from datetime import datetime
 from typing import Any
 
+from app.core.config import settings
 from app.observability.snapshot import dump
-from app.services.gemini import call_gemini
+from app.services.llm import call_llm
 from app.services.pipeline.constants import KST
 from app.services.pipeline.helpers.dates import (
     _expand_date_hint,
@@ -268,7 +269,7 @@ async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
         "모르면 null로 반환하세요."
     )
     try:
-        result = _extract_json_object(await call_gemini(prompt))
+        result = _extract_json_object(await call_llm(prompt, provider=settings.LLM_PROVIDER_FOR_ENTITY))
         if result:
             # Merge date_hints from pattern_result if Gemini didn't return them
             if not result.get("date_hints") and pattern_result.get("date_hints"):

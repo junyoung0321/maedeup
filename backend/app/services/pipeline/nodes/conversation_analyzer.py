@@ -32,7 +32,7 @@ from app.core.config import settings
 from app.models.chat import ChatMessage, PaneType
 from app.models.room import RoomMember
 from app.models.user import User
-from app.services.gemini import call_gemini
+from app.services.llm import call_llm
 from app.services.pipeline.helpers.formatting import _user_calendar_key
 from app.services.pipeline.helpers.json_extract import _extract_json_object
 from app.services.pipeline.helpers.slots import (
@@ -216,7 +216,7 @@ async def _analyze_conversation(
         f"대화:\n{conversation}"
     )
 
-    raw = await call_gemini(prompt)
+    raw = await call_llm(prompt, provider=settings.LLM_PROVIDER_FOR_ANALYZER)
     if not raw:
         return None
 

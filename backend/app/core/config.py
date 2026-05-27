@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     PAID_GEMINI_API_KEY: str = ""
     # true면 PAID_GEMINI_API_KEY 우선 사용. false(기본)면 free tier GEMINI_API_KEY만 사용.
     USE_PAID_GEMINI: bool = False
+
+    # OpenAI GPT-4o-mini wrapper (K1-2). .env의 key 이름 그대로 (underscore 위치 주의).
+    OPEN_AI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4o-mini"
+    # dominant cost site별 LLM 선택 toggle. "gemini" | "openai". 기본 = "gemini" (기존 동작 유지).
+    LLM_PROVIDER_FOR_ANALYZER: str = "gemini"
+    LLM_PROVIDER_FOR_ENTITY: str = "gemini"
+    LLM_PROVIDER_FOR_INTENT: str = "gemini"
     KAKAO_API_KEY: str = ""
     KAKAO_REST_API_KEY: str = ""
 

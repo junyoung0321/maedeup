@@ -409,6 +409,7 @@ async def _run_auto_trigger_pipeline(
                     room_id,
                     session,
                     datetime.now(KST).strftime("%Y-%m-%d"),
+                    redis_client=redis_client,
                 )
                 if analysis is not None:
                     card = analysis.get("card")

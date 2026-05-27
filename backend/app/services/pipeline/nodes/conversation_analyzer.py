@@ -20,9 +20,10 @@ Phase 4 분할 (2026-05-13). 로직 변경 없음 — 순수 이동.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -41,11 +42,18 @@ from app.services.pipeline.helpers.slots import (
 
 logger = logging.getLogger(__name__)
 
+_CONV_CACHE_TTL = 300  # 5분
+
+
+def _build_conv_cache_key(room_id: str, last_message_id: int) -> str:
+    return f"maedeup:conv_cache:{room_id}:{last_message_id}"
+
 
 async def _analyze_conversation(
     room_id: str,
     db: AsyncSession,
     today_kst: str,
+    redis_client: Optional[Any] = None,
 ) -> dict[str, Any] | None:
     """최근 소셜 채팅에서 카드 표시 정보와 파이프라인 신호를 한 번에 추출합니다."""
     try:
@@ -64,6 +72,21 @@ async def _analyze_conversation(
 
     if not recent_messages:
         return None
+
+    # Redis 캐싱: last_message_id 기반으로 cache hit 시 Gemini 호출 skip.
+    last_msg_id: int = recent_messages[-1].id
+    cache_key = _build_conv_cache_key(room_id, last_msg_id)
+    if redis_client is not None:
+        try:
+            cached_raw = await redis_client.get(cache_key)
+            if cached_raw is not None:
+                cached = json.loads(cached_raw)
+                logger.info("[conv_cache] HIT room=%s last_msg=%d", room_id, last_msg_id)
+                return cached
+        except (TypeError, ValueError, AttributeError, NameError) as exc:
+            raise
+        except Exception:
+            logger.warning("[conv_cache] GET failed room=%s, falling through", room_id, exc_info=True)
 
     conversation = "\n".join(
         f"{msg.sender or msg.role}: {msg.content.strip()}"
@@ -207,7 +230,7 @@ async def _analyze_conversation(
     if not isinstance(card, dict) or not isinstance(signals, dict):
         return None
 
-    return {
+    conv_result: dict[str, Any] = {
         "card": {
             "date": card.get("date"),
             "place": card.get("place"),
@@ -217,6 +240,18 @@ async def _analyze_conversation(
         },
         "signals": signals,
     }
+
+    # Redis 캐싱: 결과를 SET (TTL 300s). Redis 실패는 graceful fallback (로그만).
+    if redis_client is not None:
+        try:
+            await redis_client.set(cache_key, json.dumps(conv_result, ensure_ascii=False), ex=_CONV_CACHE_TTL)
+            logger.info("[conv_cache] SET room=%s last_msg=%d ttl=%ds", room_id, last_msg_id, _CONV_CACHE_TTL)
+        except (TypeError, ValueError, AttributeError, NameError) as exc:
+            raise
+        except Exception:
+            logger.warning("[conv_cache] SET failed room=%s", room_id, exc_info=True)
+
+    return conv_result
 
 
 async def suggest_alternative_slots(

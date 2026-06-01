@@ -41,9 +41,11 @@ from app.services.pipeline.helpers.dates import (
 )
 from app.services.pipeline.helpers.json_extract import _extract_json_object
 from app.services.pipeline.helpers.messaging import (
+    _emit_assistant_message,
     _handle_node_exception,
     _has_node_error,
 )
+from app.db.session import AsyncSessionLocal
 from app.services.pipeline.helpers.places import (
     _OTHER_ENTITY_SIGNAL_PATTERN,
     _PLACE_INTENT_PATTERN,
@@ -455,6 +457,8 @@ async def entity_extraction(state: GraphState) -> GraphState:
                 _ctx_dc = _serialize_context(state) or ""
                 if _ctx_dc.strip() and _DATE_SIGNAL_RE.search(_ctx_dc):
                     from app.services.pipeline.helpers.date_classify import (
+                        REFLECT_BACK_PREFIX,
+                        build_reflect_back,
                         classify_availability,
                         to_rejected_dates,
                     )
@@ -472,6 +476,20 @@ async def entity_extraction(state: GraphState) -> GraphState:
                         len(_av.get("rejected") or []), len(_av.get("preferred") or []),
                         len(_av.get("available") or []),
                     )
+                    # Phase ② reflect-back: 비자명 해석(거부 2개+)을 사용자에게 보여 교정 기회 제공.
+                    # 잔여 추출 오류(eval F1 0.62 → ~38% 오차)가 조용히 반영되는 대신 가시화.
+                    # 최근 메시지에 같은 reflect-back이 있으면 dedupe(재트리거 스팸 방지).
+                    _rb = build_reflect_back(_av.get("rejected") or set(), _av.get("preferred") or set())
+                    if _rb:
+                        _recent = state.get("message_records", [])[-6:]
+                        _dup = any(
+                            isinstance(m, dict) and str(m.get("content", "")).startswith(REFLECT_BACK_PREFIX)
+                            for m in _recent
+                        )
+                        if not _dup:
+                            async with AsyncSessionLocal() as _db_rb:
+                                await _emit_assistant_message(state["room_id"], _db_rb, _rb, state, shared=True)
+                            logger.info("[REFLECT_BACK] emitted: %s", _rb[:80])
             except Exception:
                 logger.warning("[DATE_CLASSIFY] (pre-extracted) override skipped", exc_info=True)
 

@@ -204,3 +204,35 @@ def to_rejected_dates(rejected: set, users: list | None = None) -> list[dict[str
     """rejected ISO set → 기존 rejected_dates 포맷 [{date, user, reason}]."""
     u = (users or [None])[0] if users else None
     return [{"date": d, "user": u, "reason": None} for d in sorted(rejected)]
+
+
+# reflect-back 메시지 머리말 — 중복 발행 dedupe 마커로도 사용.
+REFLECT_BACK_PREFIX = "📅 일정을 이렇게 이해했어요"
+
+
+def _fmt_md(iso: str) -> str:
+    try:
+        d = datetime.strptime(iso, "%Y-%m-%d")
+        return f"{d.month}/{d.day}({_WD[d.weekday()]})"
+    except ValueError:
+        return iso
+
+
+def build_reflect_back(rejected: set, preferred: set | None = None, *, max_show: int = 8) -> str | None:
+    """추출한 가용성 해석을 사람이 읽을 한 줄 확인 메시지로. 사소하면(거부<2) None.
+
+    잔여 추출 오류를 '조용히 반영'하는 대신 사용자에게 보여 교정 기회를 준다(reflect-back).
+    """
+    rejected = sorted(rejected or [])
+    preferred = sorted(preferred or [])
+    if len(rejected) < 2:
+        return None  # 단일 거부 등 사소한 해석은 확인 생략(노이즈 방지)
+    parts = [REFLECT_BACK_PREFIX]
+    shown = rejected[:max_show]
+    more = len(rejected) - len(shown)
+    rej_str = "·".join(_fmt_md(d) for d in shown) + (f" 외 {more}일" if more > 0 else "")
+    parts.append(f" — 어려운 날: {rej_str}")
+    if preferred:
+        parts.append(f" / 가능: {'·'.join(_fmt_md(d) for d in preferred[:max_show])}")
+    parts.append(". 제가 잘못 봤으면 편하게 알려주세요!")
+    return "".join(parts)

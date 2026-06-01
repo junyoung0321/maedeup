@@ -1,0 +1,254 @@
+{
+ "confirmed": [
+  {
+   "id": "#02",
+   "file": "backend/app/core/rate_limit.py",
+   "chosenOption": "옵션 (A)+(B) 채택 — round3-items.json #02 patchDescription의 권장안 그대로. rate_limit.py에 WS 전용 신규 헬퍼 check_ws_llm_budget(Redis INCR+EXPIRE, fail-open)을 additive로 추가하고, agent.py:1101 quick_classify 직전에 와이어링한다. 기존 check_rate_limit(Request 기반)은 WS 컨텍스트에서 Request 객체가 없어 재사용 불가하므로 신규 헬퍼가 필요(시그니처 변경 없음, 순수 추가). 한도 초과 시 user_channel로만 narrator를 emit하고 continue → 파이프라인 skip. 데모 안전 근거: 이 경로는 'AI 패널(AI에게 input)' 메시지에서만 진입하며, 데모에서 이 경로를 타는 건 HOST가 ACT5에서 보내는 '강남 한식 추천해줘' 단 1건(.gstack-demo.py:929). 게스트의 ACT2 채팅은 WS social 채널(send_chat, .gstack-demo.py:198)로 가서 social.py가 처리 → 이 가드를 절대 통과하지 않음. 따라서 host당 30/분 한도는 데모 호출량(~1건)을 30배 초과. limit은 (room_id, user_id) 단위라 멀티 유저도 서로 독립.",
+   "thresholdOrPolicy": "limit=30/window=60s, 키=wsllm:{room_id}:{user_id} (방·유저별 독립). 데모 안전 근거: (1) 이 경로 진입은 AI 패널 메시지 한정이며 데모는 host가 ACT5에서 1건만 전송 → 1 ≤ 30 (30배 헤드룸). (2) 게스트(3~4명)는 social 채널로 가서 이 가드 미통과 → guest budget 소비 0. (3) 사람이 1분에 AI 패널에 30회 이상 직접 타이핑/전송하는 건 정상 사용 범위 밖 → 정상 사용자도 안전. (4) Redis 예외/미연결 시 fail-open(True) 필수 — agent.py r=None 경로 + 헬퍼 try/except 둘 다 보장. round3-items.json #02 권고치(분당>=30)와 일치. 일일 한도(200)는 fixed-window 60s 카운터 범위 밖이라 본 패치 미포함(전시 후 별도 일일 키 추가 권장).",
+   "edits": [
+    {
+     "targetFile": "backend/app/core/rate_limit.py",
+     "mode": "new-helper",
+     "locateAnchor": "    finally:\n        if redis_client is not None:\n            await redis_client.aclose()",
+     "newCode": "\n\nasync def check_ws_llm_budget(\n    redis_client: \"aioredis.Redis | None\",\n    room_id: str,\n    user_id: int,\n    *,\n    limit: int = 30,\n    window: int = 60,\n) -> bool:\n    \"\"\"WS LLM 진입부 전용 per-(room, user) budget (Redis INCR+EXPIRE).\n\n    Request 객체가 없는 WebSocket 컨텍스트에서 check_rate_limit 대신 사용.\n    반환: True=허용(파이프라인 진행), False=한도 초과(skip).\n    Redis 미연결/예외 시 항상 True (fail-open) — 전시 happy path 보호.\n\n    동작: 키 wsllm:{room_id}:{user_id} 를 INCR. 첫 호출(반환 1)일 때만\n    EXPIRE(window) 설정해 sliding이 아닌 fixed-window 카운터로 동작.\n    count > limit 이면 False.\n    \"\"\"\n    if redis_client is None:\n        return True\n    key = f\"wsllm:{room_id}:{user_id}\"\n    try:\n        count = await redis_client.incr(key)\n        if count == 1:\n            await redis_client.expire(key, window)\n        if count > limit:\n            logger.info(\n                \"WS LLM budget exceeded room=%s user=%s count=%s limit=%s\",\n                room_id, user_id, count, limit,\n            )\n            return False\n        return True\n    except Exception:\n        # Redis 장애 → fail-open (rate limiting 건너뜀)\n        logger.debug(\"WS LLM budget check skipped (Redis unavailable)\")\n        return True",
+     "note": "check_rate_limit 함수 정의 바로 아래(파일 끝)에 추가. aioredis는 파일 상단에서 이미 import됨(line 6). logger도 이미 정의됨(line 11). 시그니처 추가만, 기존 함수 무변경."
+    },
+    {
+     "targetFile": "backend/app/api/ws/agent.py",
+     "mode": "insert-after",
+     "locateAnchor": "                qc = await quick_classify(content)",
+     "newCode": "",
+     "note": "insert-after를 쓰지 않고 아래 replace 항목으로 가드를 quick_classify 앞에 삽입한다. (이 항목은 무시 — replace 항목 사용)"
+    },
+    {
+     "targetFile": "backend/app/api/ws/agent.py",
+     "mode": "replace",
+     "locateAnchor": "                qc = await quick_classify(content)",
+     "newCode": "                if not await check_ws_llm_budget(r, room_id, user_id_check):\n                    await _emit_auto_trigger_greeting(\n                        r,\n                        room_id,\n                        user_channel,\n                        \"요청이 너무 많아요. 잠시 후 다시 시도해 주세요.\",\n                    )\n                    continue\n\n                qc = await quick_classify(content)",
+     "note": "가드를 quick_classify 직전에 삽입. r(line746, None 가능)·room_id·user_id_check(line714 int)·user_channel(line732)·_emit_auto_trigger_greeting(line178) 모두 이 스코프에 존재 확인. narrator는 user_channel로만 emit해 발신자에게만 보이고 shared_channel은 오염 안 됨. continue로 파이프라인 skip. rate_limit.py import는 메인 스레드가 from app.core.rate_limit import check_ws_llm_budget 를 agent.py 상단 import 블록에 추가해야 함(아래 import 항목 참조)."
+    },
+    {
+     "targetFile": "backend/app/api/ws/agent.py",
+     "mode": "insert-after",
+     "locateAnchor": "from app.core.config import settings",
+     "newCode": "from app.core.rate_limit import check_ws_llm_budget",
+     "note": "check_ws_llm_budget import 추가. anchor 'from app.core.config import settings'가 agent.py 상단 import 블록에 유일하게 존재하는지 메인 스레드가 grep으로 확인 후 적용 — 만약 해당 import 라인이 다르면 기존 from app.core.* import 라인 중 하나 뒤에 삽입."
+    }
+   ],
+   "demoActor": "host (room.created_by, 평소 Chrome 인증 사용자). 데모에서 agent.py:1101 quick_classify 경로를 타는 주체는 HOST 한 명뿐 — ACT5에서 AI 패널('AI에게' input)에 '강남 한식 추천해줘' 1건 전송(.gstack-demo.py:929, fill_input 'AI에게' + Enter). ACT5.5의 refresh는 REST 엔드포인트(POST .../recommendations/refresh)라 이 WS 가드와 무관. 게스트(수현·민수·예린)는 ACT2 채팅을 WS social 채널(send_chat → /ws/social, .gstack-demo.py:198)로 보내 social.py가 처리 → 이 agent WS 가드를 통과하지 않음. 따라서 게스트는 budget 키를 소비조차 안 함.",
+   "demoReasoning": "budget 키는 wsllm:{room_id}:{user_id}로 (방, 유저) 단위. 데모 host의 ACT5 호출은 방당 1건 → count=1 ≤ 30 → True(허용)로 통과, narrator emit/continue 분기 진입 안 함. 한도 30/분은 데모 호출량(~1건)의 30배 헤드룸. Redis 장애 시 r=None(agent.py:754) → 헬퍼가 즉시 True 반환(fail-open)해 happy path 불변. narrator는 user_channel로만 가서 다른 참가자 화면 오염 없음. 시그니처/기존 호출부 무변경이라 ACT0.5~5.5 전 구간 회귀 없음.",
+   "otherCallers": "grep 결과: check_rate_limit는 정의부(rate_limit.py:18) 외 호출 0건 = dead code(테스트 포함 0건). 신규 check_ws_llm_budget는 신규 이름이라 기존 코드/테스트와 충돌 없음. scheduling_round.py:207의 _check_room_rate_limit / line333 호출은 별개 로컬 함수(rate_limit.py와 무관). data/crawler/utils.py의 rate_limit 매치도 크롤러 무관 코드. agent.py:1101 quick_classify(content)는 파일 내 유일(grep 1건) → replace 앵커 안전. user_channel은 agent.py:732에서 정의되어 1101 스코프에서 사용 가능(이미 line1035에서 동일 queue_key 패턴으로 user_id_check 사용 중). _emit_auto_trigger_greeting는 이미 같은 핸들러(line1111, general 분기)에서 호출 중이라 검증된 헬퍼.",
+   "verdict": {
+    "id": "02",
+    "applySafe": true,
+    "breaksDemo": false,
+    "breaksReason": "",
+    "permissionCorrect": true,
+    "thresholdClearsDemo": true,
+    "anchorsUnique": true,
+    "signatureChange": false,
+    "confidence": 0.9,
+    "improvedNote": "검증 결과 적용 안전(applySafe=true). 근거: (1) anchor 유일성 — grep으로 `qc = await quick_classify(content)`(agent.py:1101, 1건), `from app.core.config import settings`(agent.py:18, 1건), rate_limit.py `finally:`(63) + `if redis_client is not None:`(64) 3줄 블록 모두 유일 확인. (2) 데모 통과 — ACT5 host 발화 '강남 한식 추천해줘'는 _PLACE_RE에 매치(cuisine '한식' + '추천')되어 place(0.9)로 분류, line 1101 경로 진입 → budget INCR=1 ≤ 30(30배 헤드룸). 게스트(수현·민수·예린)는 send_chat이 /ws/social(social.py)로 가므로 이 agent WS 가드 미통과, budget 소비 0. ACT5.5 refresh는 REST라 무관. (3) 스코프 변수 — r(746, None 가능)·room_id·user_id_check(714)·user_channel(732)·_emit_auto_trigger_greeting(178) 모두 line 1101 enclosing 함수 스코프에 존재. (4) fail-open 이중 보장 — agent.py r=None + 헬퍼 try/except. (5) 시그니처 변경 없음 — 신규 헬퍼만 추가, 기존 check_rate_limit 무변경.\n\n단, 수정 권고 2가지:\n[중요 수정] 제안의 안전 근거 중 'narrator를 user_channel로만 emit해 발신자에게만 보이고 shared_channel 오염 안 됨'은 부정확함. _emit_auto_trigger_greeting(agent.py:185~214)은 채널 인자와 무관하게 ChatMessage를 visibility=Visibility.shared.value(193), user_id=None으로 DB 영속화함. 즉 user_channel로 publish해도 DB에는 shared로 저장되어, 다른 멤버 새로고침/재접속 시 MessageReader.load_agent_context로 전원에게 노출됨. 다만 이 분기는 count>30일 때만 실행되고 데모는 ≤1회라 데모 중엔 절대 실행 안 됨 → 데모 안전성에는 영향 없음(harmless). 그래도 제안의 rate-limit 메시지를 발신자 전용으로 만들려면, 별도 private 영속 헬퍼가 필요하거나(시그니처 추가) DB 영속 없이 _publish_agent_message(r, user_channel, json.dumps({...visibility:'private', user_id:user_id_check...}))로 직접 publish하는 편이 의도에 부합. 전시 안전만 보면 현 제안 그대로도 무방.\n\n[edits 배열 정리] edits[1] (mode=insert-after, locateAnchor='qc = await quick_classify(content)', newCode='') 항목은 newCode가 빈 문자열이고 note에 '무시'라고 적혀 있어 적용 시 혼선/무의미한 변경 위험 → 메인 스레드 적용 전 이 항목을 제거하고 edits[2](replace)만 사용할 것. import 항목(edits[3])은 anchor 'from app.core.config import settings' 유일 확인됨, 그대로 적용 가능."
+   }
+  },
+  {
+   "id": "#07",
+   "file": "backend/app/api/routes/meetings.py",
+   "chosenOption": "옵션 A host-only 가드. 멤버십 403 raise(line 446) 직후 room.created_by != sub면 403 host_only 추가. room은 line 431~434에서 이미 로드. 데모는 host(지민)가 확정하므로 안전.",
+   "edits": [
+    {
+     "targetFile": "backend/app/api/routes/meetings.py",
+     "mode": "insert-after",
+     "locateAnchor": "        raise HTTPException(status_code=403, detail=\"Host is not a room member\")",
+     "newCode": "    if room.created_by != int(current_user.sub):\n        raise HTTPException(status_code=403, detail=\"host_only\")"
+    }
+   ],
+   "verdict": {
+    "id": "07",
+    "applySafe": true,
+    "breaksDemo": false,
+    "breaksReason": "전시 데모(.gstack-demo.py + demo-scenario-v3.md)에서 /meetings/confirm 을 호출하는 주체는 항상 호스트(지민)다. 방은 지민이 UI로 생성하므로 Room.created_by=지민 user_id(rooms.py:119 created_by=creator_id). confirm 버튼(ScheduleRecommendationCard.handleConfirm→meetings.py:199, InfoPane.handleTimeConfirm→:175, B-8 fallback \"○월 ○일로 확정\")은 모두 지민 브라우저 세션(host_token)에서 발생 → current_user.sub=지민=room.created_by → 가드 통과. 게스트(수현·민수·예린)는 데모에서 /vote(.gstack-demo.py:240)와 WS time_selection 만 호출하고 /meetings/confirm 은 절대 호출하지 않음. 따라서 host-only 가드는 데모 happy path를 깨지 않음.",
+    "permissionCorrect": true,
+    "thresholdClearsDemo": true,
+    "anchorsUnique": true,
+    "signatureChange": false,
+    "confidence": 0.83,
+    "improvedNote": "패치 자체는 데모-안전(host-only, additive, 시그니처 무변경). 단 별개 caller 1건 주의 — .gstack-k3-concurrency-runner.py run_scenario_003(:359~387)은 /meetings/confirm 을 게스트 토큰(get_token user_idx!=0 → guests[gi][\"token\"], :362)으로도 호출해 동시 confirm race(선착순 1건)를 검증한다. 이 가드 적용 후 게스트 confirm 은 409(concurrent_confirm_in_progress) 대신 403(host_only)로 바뀌어 K3 race 테스트의 관측 status code 가 달라진다(전시 데모 아님, 별도 stress harness라 데모는 무관). K3 테스트를 유지하려면 그 시나리오에서 user_idx 를 0(host)으로 두 번 쓰거나, 게스트 confirm 기대값을 403 으로 갱신 필요. 또한 가드 삽입 위치 검증: anchor(line 446)는 'if member is None' 블록의 마지막 raise(8칸 들여쓰기). newCode 4칸 들여쓰기로 함수 본문 레벨에 들어가 멤버십 체크 통과 후 실행됨 — room(line 434 로드)·current_user(param) 모두 in-scope, int(current_user.sub) 는 line 441 기존 패턴과 일치하여 정확."
+   }
+  },
+  {
+   "id": "#24",
+   "file": "backend/app/api/routes/meetings.py",
+   "chosenOption": "권한 옵션 A(호스트 전용) + 부수 안전옵션(cancelled 모임 차단)을 모두 적용. round3-items.json #24가 제시한 두 패치를 결합한다. (1) 핵심: patch_meeting_place는 멤버십만 검증하고 host/created_by 검증이 없어, 게스트 포함 누구나 확정 장소를 바꾸고 전원 캘린더 fan-out을 유발한다(P2). 멤버십 403 직후 Room을 로드해 `room.created_by != current_user.sub → 403 host_only` 가드를 추가한다. cancel_meeting(라인 1019)·schedule-confirm이 이미 created_by 기준 방장 전용이므로 권한 모델이 일관화된다. (2) 부수 additive: meeting 로드 직후 `meeting.status == cancelled → 409 meeting_cancelled` 가드를 추가 — vote_meeting(라인 651)·confirm_meeting(라인 501)이 이미 가진 cancelled 가드를 place에도 맞춘다. 데모는 pending→confirmed 상태의 모임에만 place를 확정하므로 happy path 불변. 옵션 B(현행 유지/wontfix)는 권한 모델 불일치를 남기므로 기각. cancelled 가드는 finding 본질(권한)은 아니지만 무료 사용 감사 라운드의 상태가드 일관성 원칙에 부합하고 happy path를 깨지 않아 함께 적용.</chosenOption>\n<parameter name=\"demoActor\">host (room.created_by, 지민). 데모는 호스트 Chrome 세션 1개에서만 구동(.gstack-demo.py:611 host_token=localStorage auth_token). ACT5에서 호스트가 \"강남 한식 추천해줘\" 입력 후 Playwright로 \"이 장소로 확정\" 클릭(.gstack-demo.py:1037~1051) → 프론트 PlaceDetailPane.tsx:105 / PlaceRecommendationCard.tsx:155 / VoteCardSection.tsx:236 가 `PATCH /api/v1/meetings/{id}/place`를 호스트 JWT로 호출. 게스트(수현·민수·예린)는 ACT3에서 vote / WS time_selection만 수행하고 /place는 절대 호출하지 않음(.gstack-demo.py:813~859). 타는 코드 경로: patch_meeting_place 멤버십 검증 → (신규)cancelled 가드 → (신규)host 가드 통과(호스트이므로) → location 갱신 → GCal fan-out.",
+   "thresholdOrPolicy": "",
+   "edits": [
+    {
+     "targetFile": "backend/app/api/routes/meetings.py",
+     "mode": "insert-after",
+     "locateAnchor": "    meeting = result.scalar_one_or_none()\n    if not meeting:\n        raise HTTPException(status_code=404, detail=\"Meeting not found\")\n\n    membership_result = await session.execute(",
+     "newCode": "",
+     "note": "앵커 식별용 — 실제 삽입은 아래 두 edit가 수행. 이 항목은 사용하지 않음(중복 방지)."
+    },
+    {
+     "targetFile": "backend/app/api/routes/meetings.py",
+     "mode": "replace",
+     "locateAnchor": "    result = await session.execute(\n        select(MeetingSchedule).where(MeetingSchedule.id == meeting_id)\n    )\n    meeting = result.scalar_one_or_none()\n    if not meeting:\n        raise HTTPException(status_code=404, detail=\"Meeting not found\")\n\n    membership_result = await session.execute(\n        select(RoomMember).where(\n            RoomMember.room_id == meeting.room_id,\n            RoomMember.user_id == int(current_user.sub),\n        )\n    )\n    if membership_result.scalar_one_or_none() is None:\n        raise HTTPException(status_code=403, detail=\"Forbidden\")",
+     "newCode": "    result = await session.execute(\n        select(MeetingSchedule).where(MeetingSchedule.id == meeting_id)\n    )\n    meeting = result.scalar_one_or_none()\n    if not meeting:\n        raise HTTPException(status_code=404, detail=\"Meeting not found\")\n\n    # 취소된 모임은 장소를 바꿀 수 없음 — vote_meeting(voting_closed)/confirm_meeting\n    # (cannot_confirm_cancelled_meeting)과 동일한 상태가드. happy path(pending/confirmed)\n    # 는 불변. (free-use audit round3 #24, additive)\n    if meeting.status == MeetingStatus.cancelled:\n        raise HTTPException(status_code=409, detail=\"meeting_cancelled\")\n\n    membership_result = await session.execute(\n        select(RoomMember).where(\n            RoomMember.room_id == meeting.room_id,\n            RoomMember.user_id == int(current_user.sub),\n        )\n    )\n    if membership_result.scalar_one_or_none() is None:\n        raise HTTPException(status_code=403, detail=\"Forbidden\")\n\n    # 확정 장소 변경 + 전원 캘린더 fan-out은 방장(room.created_by)만 가능.\n    # cancel_meeting(created_by 기준)·schedule-confirm과 권한 모델 일관화.\n    # 데모는 호스트가 ACT5에서 장소 확정을 수행하므로 happy path 불변\n    # (free-use audit round3 #24).\n    room_row = await session.execute(\n        select(Room).where(Room.id == meeting.room_id)\n    )\n    room_for_auth = room_row.scalar_one_or_none()\n    if room_for_auth is None:\n        raise HTTPException(status_code=404, detail=\"Room not found\")\n    if room_for_auth.created_by != int(current_user.sub):\n        raise HTTPException(status_code=403, detail=\"host_only\")",
+     "note": "핵심 패치: cancelled 상태가드(409) + host-only 권한 가드(403)를 멤버십 검증 직후에 추가. Room을 인증용으로 앞당겨 로드. 라인 909~912의 GCal용 Room 재로드는 그대로 유지(중복 select지만 무해, GCal 블록 미수정으로 anchor 충돌 회피). MeetingStatus·Room·RoomMember 모두 파일 상단에서 이미 import됨(라인 20·22)."
+    }
+   ],
+   "demoReasoning": "데모의 /place 확정 행위자는 호스트(room.created_by) 한 명뿐이므로 host-only 가드(403)는 호스트 호출에서 통과한다(room.created_by == int(current_user.sub) → True). 게스트는 /place를 호출하지 않으므로 게스트가 막혀도 데모 흐름과 무관. cancelled 가드는 데모가 항상 pending→confirmed 상태의 모임에 place를 확정하므로(ACT3 확정 → ACT4 partial → ACT5 place) 절대 발동하지 않는다. 두 가드 모두 happy path를 통과시키고 비정상 경로만 차단하므로 demoStillPasses=true. confirm_meeting의 host 가드(#07)와 달리 여기선 '멤버 누구나 변경'이 의도된 설계라는 주석도 없어(라인 852~859는 순수 멤버십 검증) 호스트 전용 강화가 권한 모델 일관성 측면에서 자연스럽다.",
+   "otherCallers": "grep 결과 backend 내부 호출자 0건: patch_meeting_place는 라우트 데코레이터로만 진입(meetings.py:834). 백엔드 다른 모듈이 직접 호출하지 않음. 테스트: backend/**/test_*.py 에 /place·patch_meeting_place 매칭 0건(가드로 깨질 pytest 없음). 프론트 호출부 3곳 — PlaceDetailPane.tsx:105, PlaceRecommendationCard.tsx:155, VoteCardSection.tsx:236 — 모두 현재 사용자(데모=호스트) JWT로 apiFetch. 데모에서 이들은 호스트 세션에서만 호출되므로 host 가드에 안 걸림. 일반 사용 시 비호스트 멤버가 이 UI로 place를 바꾸면 403을 받게 되나 이는 finding이 지적한 의도된 강화(권한 정책). _spawn_personal_data_extraction은 별개 함수로 영향 없음. 함수 시그니처·response_model(PlacePatchResponse) 불변이라 호출부 깨짐 없음.",
+   "verdict": {
+    "id": "24",
+    "applySafe": true,
+    "breaksDemo": false,
+    "breaksReason": "",
+    "permissionCorrect": true,
+    "thresholdClearsDemo": true,
+    "anchorsUnique": true,
+    "signatureChange": false,
+    "confidence": 0.86,
+    "improvedNote": "edit #1을 제거하고 edit #2만 적용할 것. edit #1은 newCode=\"\"인 의도적 no-op(note: \"사용하지 않음\")으로, insert-after 모드에 빈 문자열이라 실제로는 아무것도 삽입하지 않지만 dead edit 항목이라 혼선을 준다. 메인 스레드가 edit #1을 먼저 적용하려다 mode/빈 newCode 처리에서 실패하거나 무시할 위험이 있으므로 edits 배열에서 첫 항목을 삭제하고 두 번째(핵심) edit만 남길 것.\n\n검증 결과(데모 안전 근거):\n- room.created_by = 호스트(지민): 데모는 단일 호스트 Chrome 세션(.gstack-demo.py:611 host_token=localStorage)에서 \"모임 생성\" 플로팅바로 방을 만들고(rooms.py:113·119 creator_id=current_user.sub→room.created_by), ACT5 \"이 장소로 확정\"도 동일 호스트 페이지에서 호스트 JWT로 클릭(.gstack-demo.py:1037~1051)한다. 따라서 신규 host_only 가드를 호스트가 통과.\n- 게스트(수현·민수·예린)는 /place를 절대 호출하지 않음: 게스트는 send_chat(WS), vote_as_user(/vote), send_time_selection_via_ws(WS time_selection)만 수행(.gstack-demo.py:185~209,233~,848). /place 단일 호출은 ACT5 호스트 경로뿐 → 가드가 정상 사용자 통과 + 비호스트 차단(P2 IDOR fix) 정확.\n- cancelled 가드(409)는 happy path 불변: 데모 모임 status는 confirm 시 confirmed, ACT5 place 시점도 confirmed/pending → cancelled 아님. confirm_meeting(meetings.py:501)·schedule-confirm과 상태가드 일관.\n- 시그니처/호출부 안전: patch_meeting_place 시그니처 불변, 새 헬퍼 없음, 새 select(Room) 인라인 추가만. 라인 909~912 GCal용 Room 재로드와 충돌 없음(별도 변수 room_for_auth). 다른 내부 호출자·테스트에서 guest가 /place 성공을 기대하는 케이스 없음(backend/tests 확인).\n- import 확인: Room·RoomMember(line22), MeetingStatus(line20) 모두 존재.\n\n미세 권한 모델 주의(데모엔 무해): 제안은 room.created_by 기준인데 cancel_meeting(meetings.py:1019)은 meeting.created_by 기준이다. 데모에선 둘 다 호스트로 일치하므로 안전하나, 권한 모델 완전 일관화를 원하면 meeting.created_by 기준 통일도 검토 가치 있음(현 제안 room.created_by도 host 정의로 방어적으로 타당)."
+   }
+  },
+  {
+   "id": "#45",
+   "file": "backend/app/api/routes/meetings.py",
+   "chosenOption": "옵션 B (stale 교차검증) — round3 patchDescription의 옵션 B를 채택. 게스트를 자격에서 제외하지 않고(데모 투표자가 게스트라 제외하면 데모가 깨짐), votes dict의 키 중 '현재 RoomMember user_id 집합에 없는 stale 항목만' 제거한다. total_voters도 동일한 현재 멤버 집합 크기로 산정하여, 게스트 재가입(#10/#57)으로 RoomMember가 부풀거나 votes에 떠난 멤버의 user_id가 남아 num_voted>=total_voters가 조기/영영 어긋나는 것을 차단한다. 옵션 A(게스트 제외)는 데모 투표자(게스트 3명)를 0표로 만들어 ACT3 vote_count·갈등조율이 깨지므로 기각. 옵션 C(현행 유지)는 finding 미해결이라 기각. additive: 1인1표·overwrite·응답 스키마 모두 불변, 현재 멤버 집합을 한 번 로드해 stale 제거 + total_voters 산정에 재사용(중복 쿼리 1건 제거 부수효과).",
+   "thresholdOrPolicy": "",
+   "edits": [
+    {
+     "targetFile": "backend/app/api/routes/meetings.py",
+     "mode": "new-helper",
+     "locateAnchor": "class VoteRequest(BaseModel):\n    option_index: int",
+     "newCode": "async def _current_member_ids(session: AsyncSession, room_id: int) -> set[str]:\n    \"\"\"현재 RoomMember user_id 집합을 문자열 키로 반환 (votes dict 키와 매칭용).\n\n    #45 (free-use round3): votes dict는 user_id(str) 키이고 total_voters는 RoomMember\n    전수로 계산되는데, 게스트가 토큰 분실 후 재가입하면 새 user_id로 RoomMember가\n    늘어나 (a) total_voters가 부풀고 (b) 떠난 멤버의 stale user_id가 votes에 남는다.\n    그 결과 num_voted >= total_voters 갈등조율 게이트가 조기/영영 어긋난다.\n    이 헬퍼가 반환하는 '현재 멤버' 집합으로 votes에서 stale 키를 거르고 total_voters를\n    동일 기준으로 산정해 정합성을 맞춘다. 게스트는 RoomMember이므로 그대로 포함된다\n    (데모 투표자=게스트 → 자격 유지). DB 예외는 호출부에서 처리.\n    \"\"\"\n    member_rows = await session.execute(\n        select(RoomMember.user_id).where(RoomMember.room_id == room_id)\n    )\n    return {str(uid) for (uid,) in member_rows.all()}\n",
+     "note": "votes dict 키(str(user_id))와 직접 교집합 비교가 가능하도록 str 집합으로 반환. 게스트도 RoomMember라 포함됨 — 자격 제외 아님."
+    },
+    {
+     "targetFile": "backend/app/api/routes/meetings.py",
+     "mode": "replace",
+     "locateAnchor": "    votes = dict(meeting.votes or {})\n    votes[str(current_user.sub)] = body.option_index\n    meeting.votes = votes\n    meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)\n    session.add(meeting)\n    await session.commit()\n    await session.refresh(meeting)\n\n    aggregated_votes: dict[str, int] = {}\n    for option_index in votes.values():\n        key = str(option_index)\n        aggregated_votes[key] = aggregated_votes.get(key, 0) + 1\n\n    member_result = await session.execute(\n        select(RoomMember).where(RoomMember.room_id == meeting.room_id)\n    )\n    total_voters = len(member_result.scalars().all())",
+     "newCode": "    votes = dict(meeting.votes or {})\n    votes[str(current_user.sub)] = body.option_index\n\n    # #45 (free-use round3): 현재 RoomMember 집합으로 votes 교차검증.\n    # 게스트 재가입/떠난 멤버로 인한 stale user_id 키만 제거 — 게스트 자격은 유지\n    # (게스트도 RoomMember이므로 current_member_ids에 포함). Redis가 아닌 DB 기준이라\n    # fail-open 불필요하나, 멤버 조회 실패 시 기존 동작(전수 카운트)으로 안전하게 폴백.\n    try:\n        current_member_ids = await _current_member_ids(session, meeting.room_id)\n    except Exception:\n        logger.warning(\n            \"current member load failed for vote dedup meeting_id=%s — falling back to raw votes\",\n            meeting.id, exc_info=True,\n        )\n        current_member_ids = None\n    if current_member_ids is not None:\n        # 본인(방금 투표) user_id는 멤버십 검증을 통과했으므로 항상 유효.\n        votes = {\n            uid: oidx for uid, oidx in votes.items()\n            if uid in current_member_ids or uid == str(current_user.sub)\n        }\n\n    meeting.votes = votes\n    meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)\n    session.add(meeting)\n    await session.commit()\n    await session.refresh(meeting)\n\n    aggregated_votes: dict[str, int] = {}\n    for option_index in votes.values():\n        key = str(option_index)\n        aggregated_votes[key] = aggregated_votes.get(key, 0) + 1\n\n    # total_voters를 stale 제거에 사용한 '현재 멤버' 집합 크기로 산정 — votes 교집합과\n    # 동일 기준이라 num_voted >= total_voters 갈등조율 게이트가 정합. 멤버 로드 실패 시\n    # 기존처럼 RoomMember 전수로 폴백.\n    if current_member_ids is not None:\n        total_voters = len(current_member_ids)\n    else:\n        member_result = await session.execute(\n            select(RoomMember).where(RoomMember.room_id == meeting.room_id)\n        )\n        total_voters = len(member_result.scalars().all())",
+     "note": "additive: 1인1표·overwrite·VoteResponse 스키마 모두 불변. 본인 user_id는 멤버십 검증을 이미 통과(라인 640~647)했으므로 명시적으로 보존해 race 윈도우에서도 본인 표 누락 방지. DB 실패 시 기존 동작 폴백."
+    }
+   ],
+   "demoActor": "guest (수현·민수·예린) — POST /api/v1/meetings/{id}/vote (.gstack-demo.py vote_as_user, 라인 233~255). 타는 코드 경로: vote_meeting (meetings.py:626~775), 멤버십 검증(640~647) → status 가드(651~652) → votes overwrite(658~660) → [신규] _current_member_ids stale 필터 → aggregate → total_voters 산정. 호스트는 vote 경로가 아닌 POST /meetings/confirm(confirm_meeting)으로 확정.",
+   "demoReasoning": "데모 투표자는 게스트 3명(수현·민수·예린)으로, 모두 ACT1(.gstack-demo.py:686~695 join_guest)에서 생성된 현재 RoomMember다. ACT3 step3.5(.gstack-demo.py:855~861)에서 vote_as_user로 각자 option_index=0 투표 → 이들의 str(user_id)는 _current_member_ids 집합에 모두 포함되므로 stale 필터에서 제거되지 않는다(no-op). 단일 데모 런 안에서 같은 게스트가 다른 이름으로 재가입하는 경로가 없어 total_voters 부풀림도 발생하지 않으므로 total_voters=len(current_member_ids)=실제 멤버 수로 기존과 동일. 호스트 확정은 별도 confirm 경로(POST /meetings/confirm, host)라 vote 경로 미사용. 따라서 ACT3 vote_count·갈등조율·확정 happy path 전부 불변. K3 동시성 러너(.gstack-k3-concurrency-runner.py:120~134)도 현재 멤버 토큰으로만 투표하고 응답(votes·total_voters) 스키마가 그대로라 영향 없음.",
+   "otherCallers": "grep로 /vote 엔드포인트 호출부 전수 확인: (1) frontend VoteCardSection.tsx:142 → result.total_voters(number) 읽음(150) — 스키마 불변이라 OK, (2) ScheduleRecommendationCard.tsx:128 voteUpdate.total_voters(number) — WS payload total_voters 키 그대로라 OK, (3) useAgentWebSocket.ts:66·217 vote_update 타입가드 total_voters number 체크 — 불변, (4) .gstack-demo.py:240 vote_as_user — 응답 무시(r.read()만), OK, (5) .gstack-k3-concurrency-runner.py:124 vote() → resp.json() 반환, 현재 멤버 토큰만 사용 — OK. finalization.py의 /{proposal_id}/vote는 별도 엔드포인트(다른 함수)라 무관. _current_member_ids는 신규 헬퍼라 기존 호출부 0. VoteResponse·vote_update WS payload 필드(meeting_id/votes/total_voters/selected_option_index/user_votes) 모두 유지되어 깨지는 호출부·테스트 없음.",
+   "verdict": {
+    "id": "45",
+    "applySafe": true,
+    "breaksDemo": false,
+    "breaksReason": "",
+    "permissionCorrect": true,
+    "thresholdClearsDemo": true,
+    "anchorsUnique": true,
+    "signatureChange": false,
+    "confidence": 0.9,
+    "improvedNote": "`or uid == str(current_user.sub)` 절은 사실상 redundant — 호출자는 라인 640~647 멤버십 검증을 이미 통과해 current_member_ids에 항상 포함됨. 다만 멤버십이 검증과 로드 사이에 취소되는 이론적 race에 대한 무해한 방어belt이므로 유지해도 무방. 데모/정상 동작에 영향 없음."
+   }
+  },
+  {
+   "id": "#51",
+   "file": "backend/app/api/routes/meetings.py",
+   "chosenOption": "옵션 A (위장 차단 / 발화자 멤버십 서버 교차검증). 현재 refresh_recommendations는 권한을 is_requester(viewer == body.requester_user_id, 클라이언트 입력 신뢰) OR is_owner(viewer_membership.role.lower()=='owner')로만 판정하고(라인 1170~1172), 그 직후 load_requester_context(session, body.requester_user_id)로 클라가 보낸 임의 user_id의 선호 컨텍스트를 끌어와 run_pipeline에 주입하고 방 전체에 broadcast한다(라인 1179, 1251, 1303~1319). 즉 requester_user_id가 '실제로 이 방 멤버인지'에 대한 검증이 0건이다. 옵션 A는 권한 통과 직후 requester_user_id가 해당 room의 RoomMember인지 1회 select로 교차검증하는 순수 additive 가드다. 정상 본인 토글(viewer==requester==본인 멤버)·방장이 실제 멤버를 위해 토글하는 경우 모두 통과하므로 데모/테스트를 깨지 않으면서, 비멤버 user_id 위장(타인 선호 컨텍스트 탈취·방 카드 갈아끼우기)을 차단한다. 옵션 B(is_owner를 room.created_by로 일관화)는 Room을 새로 select해야 하고 데모에서는 호스트가 role='owner'이자 created_by라 동작 동일이라 보안 이득이 거의 없어 채택 안 함(주석으로만 언급). 옵션 C(게스트 speaker 토글 정책 명시)는 product-decision이라 보류. 시그니처·기존 분기 불변, raise 추가만 하는 가드라 데모 happy path 보존.",
+   "thresholdOrPolicy": "",
+   "edits": [
+    {
+     "targetFile": "backend/app/api/routes/meetings.py",
+     "mode": "insert-after",
+     "locateAnchor": "    # ── 3) 권한 검증 (Q13=B): viewer == requester OR viewer가 방장\n    is_requester = viewer_user_id == body.requester_user_id\n    is_owner = (viewer_membership.role or \"\").lower() == \"owner\"\n    if not (is_requester or is_owner):\n        raise HTTPException(\n            status_code=403,\n            detail=\"permission_denied: requester or room owner only\",\n        )",
+     "newCode": "\n    # ── 3b) 발화자(requester) 멤버십 서버 교차검증 (finding #51, 옵션 A).\n    # 권한은 통과했어도 body.requester_user_id 는 여전히 클라이언트가 임의로\n    # 넣을 수 있는 값이다. 아래 load_requester_context(라인 ~1179)가 이 id 로\n    # 임의 유저의 선호(home_base/food_preferences)를 끌어와 run_pipeline 에\n    # 주입하고 방 전체에 broadcast 하므로, requester 가 '실제 이 방의 멤버'인지\n    # 반드시 서버에서 확인해 비멤버 위장(타인 선호 탈취·카드 갈아끼우기)을 차단.\n    # 정상 본인 토글(viewer==requester) 및 방장이 실제 멤버를 위해 토글하는\n    # 경우는 requester 가 항상 RoomMember 이므로 그대로 통과 — 데모 happy path 불변.\n    # (옵션 B: is_owner 를 room.created_by 기준으로 일관화하는 건 별도 Room\n    #  select 가 필요하고 데모 영향이 없어 보류 — 본 가드가 보안 경계.)\n    requester_membership_row = await session.execute(\n        select(RoomMember).where(\n            RoomMember.room_id == room_id,\n            RoomMember.user_id == body.requester_user_id,\n        )\n    )\n    if requester_membership_row.scalar_one_or_none() is None:\n        raise HTTPException(\n            status_code=403,\n            detail=\"permission_denied: requester is not a room member\",\n        )",
+     "note": "권한 블록(라인 1176) 직후, load_requester_context(라인 1179)가 unvalidated id를 소비하기 전에 삽입. select·RoomMember·room_id 모두 함수 스코프에 이미 존재(라인 1156 room_id, import는 라인 11 select / 라인 22 RoomMember)."
+    }
+   ],
+   "demoActor": "host (room.created_by, 평소 Chrome 로그인 인증 사용자). ACT 5.5에서 PlaceRecommendationCard '내 선호' 토글을 Playwright로 호스트 page에서 클릭 → POST /meetings/{id}/recommendations/refresh, body.requester_user_id = currentUserId(= 호스트 본인 id). 타는 경로: refresh_recommendations() 권한블록(is_requester=True) → 신규 3b) requester 멤버십 교차검증(호스트는 RoomMember이라 통과) → load_requester_context → run_pipeline(partial_mode=place_only) → 방 broadcast. 게스트(수현/민수/예린)는 ACT 5.5 토글을 호출하지 않음(none).",
+   "demoReasoning": ".gstack-demo.py ACT 5.5(라인 947~977)는 호스트 page(CDP로 연결된 Chrome, 라인 611 host_token = localStorage auth_token)에서 click_preference_toggle(page, '내 선호')를 호출한다. 프론트 PlaceRecommendationCard.tsx:94는 requester_user_id: currentUserId(=호스트 본인)를 보낸다. 따라서 viewer_user_id == body.requester_user_id == 호스트 id 이고, 호스트는 방 생성자라 RoomMember(room_id, host, role='owner')로 존재한다(ACT1 방 생성 시 owner 멤버 자동 등록). 신규 3b) 가드는 'requester_user_id가 이 방의 RoomMember인가'만 확인하므로 호스트는 통과. 게스트는 ACT 5.5에서 refresh를 절대 호출하지 않으므로(send_chat/vote_as_user/time_selection만 사용) 게스트 차단 여부와 무관하게 데모 GREEN 유지. 통합테스트(test_refresh_route.py)도 requester=4(실제 RoomMember)·owner=1 케이스 모두 멤버라 200 유지, non-member(3)는 viewer 멤버십에서 이미 403이라 신규 가드와 충돌 없음.",
+   "otherCallers": "grep 확인: 이 엔드포인트(POST /meetings/{id}/recommendations/refresh)를 부르는 곳은 (1) 프론트 PlaceRecommendationCard.tsx:89(requester_user_id: currentUserId)와 ScheduleRecommendationCard.tsx:155(requester_user_id: currentUserId) — 둘 다 토글 클릭자 본인 id를 보냄(본인은 항상 그 방 멤버이므로 신규 가드 통과), (2) .gstack-demo.py는 프론트 토글을 UI 클릭으로 트리거(직접 HTTP 호출 아님), (3) 통합테스트 backend/tests/integration/test_refresh_route.py — test_refresh_speaker_succeeds(req=4 멤버)·test_refresh_owner_can_toggle_for_member(req=4 멤버)·test_refresh_idempotency_cache_hit(req=4)·test_refresh_daily_rate_limit_429(req=4)·test_refresh_toggle_disabled_*(req=2 멤버)·test_refresh_c3_*(req=4) 모두 requester가 seeded RoomMember라 신규 가드 통과; test_refresh_non_member_returns_403(viewer=3)·test_refresh_meeting_not_found(meeting=9999)는 신규 가드 도달 전(viewer 멤버십/meeting 404)에서 이미 거부 → 회귀 0. refresh_recommendations 함수는 라우터 데코레이터로만 노출되어 다른 파이썬 호출부 없음.",
+   "verdict": {
+    "id": "51",
+    "applySafe": true,
+    "breaksDemo": false,
+    "breaksReason": "",
+    "permissionCorrect": true,
+    "thresholdClearsDemo": true,
+    "anchorsUnique": true,
+    "signatureChange": false,
+    "confidence": 0.93,
+    "improvedNote": ""
+   }
+  }
+ ],
+ "rejected": [
+  {
+   "id": "#10",
+   "applySafe": true,
+   "breaksDemo": false,
+   "breaksReason": "",
+   "improvedNote": "시그니처는 factually 변경됨(`request: Request` 파라미터 추가)이나 non-breaking: 파라미터 순서 유효(non-default request가 default session 앞), FastAPI가 Request를 타입 기반 자동 주입, 11개 호출부(.gstack-demo.py:187 + .gstack-act3-verify.py + .gstack-multi-sim.py + .gstack-k3-concurrency-runner.py + showcase1/2 + frontend GuestJoinGate.tsx + 기타)는 전부 HTTP JSON 바디로만 호출 → Python 함수 직접 호출 없음, 깨지지 않음.\n\n[데모 안전 확인] docs/handoff/demo-scenario-v3.md + .gstack-demo.py 대조 완료. ACT1 join_guest()(라인 686~695)가 수현·민수·예린 3명을 순차 POST /rooms/{id}/guest-join(라인 187, 동일 localhost IP). 3명 모두 서로 다른 이름 → dedup early-return(rooms.py:215~232) 미적용 → synthetic_email(234) 이후 cap 체크 진입, count 0→1→2 모두 <20 통과. RL 3회 <10/분 통과. 호스트(지민)는 브라우저 인증 사용자라 이 EP 미사용. 권한 로직 정확(정상 게스트 통과, cap/RL은 데모 수치 넉넉히 초과). Redis 장애 시 _check_guest_join_rate_limit는 True(fail-open), cap 체크는 except로 통과 → happy path 보존.\n\n[앵커 5개 전부 grep 유일 확인] router 정의(1건), 'from fastapi import HTTPException'(라인17, 1건), guest_join_room 시그니처 4줄 블록(라인177~181, @router.post 포함 1건), name 검증+room 조회 블록(1건), synthetic_email 라인(1건). 신규 헬퍼/상수명(_check_guest_join_rate_limit, GUEST_JOIN_MAX_PER_ROOM, GUEST_JOIN_RL_LIMIT, GUEST_JOIN_RL_WINDOW) 레포 전체 0건 → 충돌 없음. 사용 의존성(logger 라인42, User.is_guest 인덱스, settings.REDIS_URL, select/sa_func/User/RoomMember top import, redis.asyncio aclose 기존 사용 284/311/843) 모두 가용. 키 네임스페이스 guestjoin:rl: 는 기존 ratelimit:{path}:{user_id}(rate_limit.py:33), finalization_proposal:ratelimit:{room_id}(scheduling_round.py:170)와 비충돌.\n\n[NON-BLOCKING 회귀 우려 — 데모 무관] .gstack-k3-concurrency-runner.py(라인266/353/426/514)가 .gstack-fixtures/k3-concurrency-scenarios.json의 room_size 5+5+3+10+5 → 게스트 4+4+2+9+4 = 한 프로세스에서 23회 guest-join을 localhost 단일 IP로 연속 호출. RL=10회/분/IP 적용 시 동일 60s window 내 11번째부터 429 → K3 측정 runner 자체가 깨질 수 있음. 단 (a) 전시 데모 GREEN path가 아님(.gstack-demo.py만이 데모), (b) 시연 후 정리 절차에서 FLUSHDB로 카운터 초기화. 그래도 K3 회귀 재실행 시 false RED 가능. 권고: localhost/127.0.0.1을 RL 면제하거나 GUEST_JOIN_RL_LIMIT을 분당 30+ 로 상향(_client_ip in ('127.0.0.1','localhost','::1') → return True). 이는 데모 applySafe에 영향 없음(데모 3건 <10) 이라 적용 자체는 안전하나, K3 runner와의 정합을 위해 면제 추가 권장.",
+   "edits": [
+    {
+     "targetFile": "backend/app/api/routes/rooms.py",
+     "mode": "new-helper",
+     "locateAnchor": "router = APIRouter(prefix=\"/rooms\", tags=[\"rooms\"])",
+     "newCode": "GUEST_JOIN_MAX_PER_ROOM = 20  # 방당 활성 게스트(is_guest) 상한 — 데모 3명 << 20\nGUEST_JOIN_RL_LIMIT = 10       # IP당 분당 join 상한 — 데모 동일IP 3회 << 10\nGUEST_JOIN_RL_WINDOW = 60      # rate-limit window (초)\n\n\nasync def _check_guest_join_rate_limit(client_ip: str) -> bool:\n    \"\"\"IP당 guest-join rate-limit. Redis INCR+EXPIRE.\n\n    반환:\n      True  = 통과 (한도 이내 또는 Redis 미가용 → fail-open)\n      False = 차단 (한도 초과)\n    Redis 예외·연결 실패 시 항상 True (fail-open) — 시연 happy path 보존.\n    \"\"\"\n    if not client_ip:\n        return True\n    r = None\n    try:\n        import redis.asyncio as _aioredis_rl\n        from app.core.config import settings as _settings_rl\n        r = _aioredis_rl.from_url(\n            _settings_rl.REDIS_URL,\n            decode_responses=True,\n            socket_connect_timeout=0.5,\n            socket_timeout=0.5,\n        )\n        key = f\"guestjoin:rl:{client_ip}\"\n        count = await r.incr(key)\n        if count == 1:\n            await r.expire(key, GUEST_JOIN_RL_WINDOW)\n        return count <= GUEST_JOIN_RL_LIMIT\n    except Exception:\n        logger.debug(\"guest-join rate-limit skipped (Redis unavailable)\")\n        return True  # fail-open\n    finally:\n        if r is not None:\n            try:\n                await r.aclose()\n            except Exception:\n                pass",
+     "note": "router 정의 직후에 상수 + rate-limit 헬퍼 추가. Redis 미가용 시 fail-open. wsllm/ratelimit 과 키 네임스페이스(guestjoin:rl:) 분리."
+    },
+    {
+     "targetFile": "backend/app/api/routes/rooms.py",
+     "mode": "replace",
+     "locateAnchor": "@router.post(\"/{room_id}/guest-join\", response_model=GuestJoinResponse)\nasync def guest_join_room(\n    room_id: int,\n    body: GuestJoinRequest,\n    session: AsyncSession = Depends(get_session),\n):",
+     "newCode": "@router.post(\"/{room_id}/guest-join\", response_model=GuestJoinResponse)\nasync def guest_join_room(\n    room_id: int,\n    body: GuestJoinRequest,\n    request: Request,\n    session: AsyncSession = Depends(get_session),\n):",
+     "note": "FastAPI Request 주입용 파라미터 추가. Request는 타입 기반 자동 주입이라 path/body/호출 시그니처 불변 — 기존 호출부·자동화 스크립트 영향 없음. 'from fastapi import HTTPException' 옆에 Request import 필요(아래 별도 edit)."
+    },
+    {
+     "targetFile": "backend/app/api/routes/rooms.py",
+     "mode": "replace",
+     "locateAnchor": "from fastapi import HTTPException",
+     "newCode": "from fastapi import HTTPException, Request",
+     "note": "Request import 추가. (라인 4의 'from fastapi import APIRouter, Depends' 와 별개로 라인 17에 HTTPException 단독 import가 있어 거기에 Request 병기.)"
+    },
+    {
+     "targetFile": "backend/app/api/routes/rooms.py",
+     "mode": "replace",
+     "locateAnchor": "    name = (body.display_name or \"\").strip()\n    if not name:\n        raise HTTPException(status_code=400, detail=\"이름을 입력해주세요.\")\n    if len(name) > 32:\n        raise HTTPException(status_code=400, detail=\"이름은 32자 이하로 입력해주세요.\")\n\n    room = await session.get(Room, room_id)\n    if room is None:\n        raise HTTPException(status_code=404, detail=\"존재하지 않는 방입니다.\")",
+     "newCode": "    name = (body.display_name or \"\").strip()\n    if not name:\n        raise HTTPException(status_code=400, detail=\"이름을 입력해주세요.\")\n    if len(name) > 32:\n        raise HTTPException(status_code=400, detail=\"이름은 32자 이하로 입력해주세요.\")\n\n    # #10: IP당 guest-join rate-limit (Redis, fail-open). 데모 3회 << 10/분.\n    _client_ip = request.client.host if request.client else \"\"\n    if not await _check_guest_join_rate_limit(_client_ip):\n        raise HTTPException(\n            status_code=429,\n            detail=\"게스트 참여 요청이 너무 많아요. 잠시 후 다시 시도해주세요.\",\n        )\n\n    room = await session.get(Room, room_id)\n    if room is None:\n        raise HTTPException(status_code=404, detail=\"존재하지 않는 방입니다.\")",
+     "note": "name 검증 후·room 조회 전에 rate-limit 가드. dedup·신규생성 모두에 앞서지만 데모 3회는 한도 아래. Redis 장애 시 fail-open이라 통과."
+    },
+    {
+     "targetFile": "backend/app/api/routes/rooms.py",
+     "mode": "insert-after",
+     "locateAnchor": "    synthetic_email = f\"guest-{uuid.uuid4().hex[:12]}@maedeup.local\"",
+     "newCode": "    # #10: 방당 활성 게스트(is_guest) 상한 — dedup(동일 이름 재사용) 통과 후 신규\n    # 게스트 INSERT 직전에만 검사. 데모 게스트 3명 << GUEST_JOIN_MAX_PER_ROOM(20).\n    # 같은 이름 재가입은 위 dedup early-return으로 여기 도달 안 함 → cap 미증가.\n    # COUNT 쿼리 자체가 실패해도 happy path 보존 위해 except로 통과.\n    try:\n        _guest_count_result = await session.execute(\n            select(sa_func.count())\n            .select_from(RoomMember)\n            .join(User, User.id == RoomMember.user_id)\n            .where(RoomMember.room_id == room.id)\n            .where(User.is_guest.is_(True))\n        )\n        _active_guest_count = int(_guest_count_result.scalar() or 0)\n        if _active_guest_count >= GUEST_JOIN_MAX_PER_ROOM:\n            raise HTTPException(\n                status_code=409,\n                detail=\"이 방의 게스트 인원이 가득 찼어요.\",\n            )\n    except HTTPException:\n        raise\n    except Exception:\n        logger.debug(\"guest-join cap check skipped (DB error, fail-open)\")",
+     "note": "synthetic_email 생성 직후(= dedup early-return을 이미 통과한 신규 게스트 경로)에 cap 검사. dedup이 먼저라 재가입은 cap에 안 닿음. HTTPException은 re-raise, 그 외 예외는 fail-open."
+    }
+   ],
+   "chosenOption": "옵션 (2)+(3) 조합 — IP당 rate-limit + 방당 활성 게스트 상한. 옵션(1)(서명 invite 토큰)은 거부: .gstack-demo.py:187·.gstack-act3-verify.py:145·.gstack-multi-sim.py:27·.gstack-k3-concurrency-runner.py:66·.gstack-showcase1/2.py·frontend/GuestJoinGate.tsx:32 가 전부 토큰 없이 호출하므로 데모/프론트 전부 깨짐. (2)+(3)는 additive 가드라 호출 시그니처·바디 불변. dedup 가드(라인 207~232, 같은 방·같은 이름 게스트 재사용)가 cap 체크보다 먼저 실행되도록 배치 → 데모의 예린/수현/민수 재가입(토큰 분실 재시도 포함)은 cap·rate-limit에 영향 안 줌. cap=20(활성 게스트/방), rate=10회/분/IP 둘 다 데모 3명을 넉넉히 초과. Redis 예외/미가용 시 fail-open(통과)이라 시연 중 Redis 장애여도 happy path 보존. 시그니처 변경 없이 Request를 FastAPI가 주입하도록 파라미터 추가는 기본값 있는 Optional이라 기존 호출부(테스트 포함)에 영향 없음 — FastAPI는 Request 타입을 자동 주입하고 body/path는 그대로.</chosenOption>\n<parameter name=\"signatureChange\">false"
+  },
+  {
+   "id": "#57",
+   "applySafe": false,
+   "breaksDemo": false,
+   "breaksReason": "데모는 깨지 않는다. 데모 게스트는 수현·민수·예린 고정 이름 3명, 각 1회 join (.gstack-demo.py:686-695). 새 게스트 생성 직전 기존 게스트 수는 최대 2 < 20 → 409 never fires. 호스트/이메일 초대 멤버는 User.is_guest.is_(True) 필터로 카운트 제외(user.py:48 is_guest 존재 확인). 임계 20 vs 데모 3 = 약 6.6x 헤드룸. 단, applySafe=false 사유는 데모 파손이 아니라 적용 가능성: 두 번째 edit이 mode=insert-after 인데 newCode 본문에 'shippable 코드가 아닌' 메타 주석 2줄(# ↑는 anchor용 ...)이 포함되어 있고, note가 메인 스레드에게 '이 블록을 synthetic_email 라인 앞으로 이동' + '첫 두 주석줄 제거'를 명시 지시한다. 즉 Edit 도구로 그대로 붙이면 (a) 의미 없는 메타 주석이 소스에 박히고 (b) 의도한 위치가 아닌 line 235(synthetic_email 직후)에 삽입된다. 기능상으로는 235에 들어가도 guest=User(...) 추가/flush 이전이라 카운트가 '기존 게스트 수'로 정확해 데모는 안 깨지지만, '메인 스레드가 Edit으로 바로 적용 가능하게 정확히'라는 요구를 위반하므로 그대로 적용 불가. 또한 finding #57의 근본(social.py:75 member_count=len(_members) 전수 + :102 explicit_count<member_count 영구 참)을 cap은 'bound'만 할 뿐, cap 이하의 유령 게스트 1명만 있어도 합의는 여전히 영구 차단 — 부분 완화에 그친다.",
+   "improvedNote": "두 edit을 합쳐 단일 insert-before 의미의 패치로 재작성하면 안전하게 적용 가능. 구체적으로: 두 번째 edit을 mode=insert-after 유지하되 anchor를 'room = await session.get(Room, room_id)\\n    if room is None:\\n        raise HTTPException(status_code=404, detail=\"존재하지 않는 방입니다.\")' 같은 동일-이름 재사용 가드보다 앞이 아니라, 동일-이름 가드 return 이후이자 synthetic_email 생성 이전이 보장되는 라인에 두어야 한다. 가장 깔끔한 방법은 anchor를 'existing = existing_q.scalars().first()' 블록 종료 직후의 고유 라인(예: 'synthetic_email = ...' 라인을 anchor로 하되 mode=insert-BEFORE)로 바꾸고 newCode에서 메타 주석 2줄(# ↑는 anchor용 ..., # 실제 삽입은 ...)을 완전히 제거하는 것. 즉 (1) 첫 edit(MAX_GUESTS_PER_ROOM 상수, router 선언 직후)은 그대로 OK, (2) 둘째 edit은 'insert-before synthetic_email' + 순수 가드 코드(주석 메타 제거)로 재작성하면 Edit 도구로 바로 적용 가능하고 데모/권한/임계 모두 안전. 추가로 finding #57의 완전 해결을 원하면 cap만으로 부족하므로, social.py member_count 산정도 explicit_count와 동일하게 '현 멤버 중 게스트 포함 실제 참여 가능 집합'으로 좁히거나 _is_explicit 미충족 유령 게스트를 분모에서 제외하는 별도 처방 필요(단 그건 social.py 변경이라 본 #57 범위 밖, 별 finding으로 분리 권고).",
+   "edits": [
+    {
+     "targetFile": "backend/app/api/routes/rooms.py",
+     "mode": "new-helper",
+     "locateAnchor": "router = APIRouter(prefix=\"/rooms\", tags=[\"rooms\"])",
+     "newCode": "# finding #57: 다른 이름 반복 guest-join 으로 RoomMember(게스트)가 무한 부풀어\n# _maybe_emit_proposal의 explicit_count < member_count(social.py:102)가 영구 참이 되어\n# 합의(schedule_consensus_ready)가 영구 차단되는 사고를 생성 측에서 차단하기 위한 상한.\n# - 데모(.gstack-demo.py:686~695)는 고정 이름 게스트 3명(수현·민수·예린)만 1회씩 join → 3 << 20.\n# - K3 동시성 runner도 unique suffix 이름으로 방당 소수만 join → 한도 미달.\n# - 동일 display_name 재사용 가드(가드 통과 시 기존 user 토큰 재발급, return)는 이 cap보다\n#   앞에서 동작하므로 토큰 분실 후 같은 이름 재가입은 cap에 걸리지 않는다.\nMAX_GUESTS_PER_ROOM = 20",
+     "note": "라우터 선언 직후 모듈 상수로 cap 정의. 시그니처 변경 없음."
+    },
+    {
+     "targetFile": "backend/app/api/routes/rooms.py",
+     "mode": "insert-after",
+     "locateAnchor": "    synthetic_email = f\"guest-{uuid.uuid4().hex[:12]}@maedeup.local\"",
+     "newCode": "    # ↑는 anchor용 — 아래 가드를 이 라인 '앞'(synthetic_email 생성 전)에 두기 위해\n    # 실제 삽입은 insert-after 이후 코드 흐름상 새 User 생성 직전에 위치한다.\n    # finding #57: 새 게스트 생성 직전, 이 방의 현재 게스트(is_guest=True) 멤버 수가\n    # 상한을 넘으면 409. 동일-이름 재사용 가드는 위에서 이미 return 했으므로\n    # 이 지점은 '새로운 이름의 새 게스트'를 만들려는 경로뿐이다.\n    guest_count_result = await session.execute(\n        select(sa_func.count())\n        .select_from(RoomMember)\n        .join(User, User.id == RoomMember.user_id)\n        .where(RoomMember.room_id == room.id)\n        .where(User.is_guest.is_(True))\n    )\n    guest_count = int(guest_count_result.scalar() or 0)\n    if guest_count >= MAX_GUESTS_PER_ROOM:\n        logger.warning(\n            \"guest_join_room: room=%s guest cap reached (%s>=%s) — rejecting new guest name=%r\",\n            room.id, guest_count, MAX_GUESTS_PER_ROOM, name,\n        )\n        raise HTTPException(\n            status_code=409,\n            detail=\"게스트 정원이 가득 찼어요. 방장에게 문의해주세요.\",\n        )",
+     "note": "중요: 메인 스레드는 이 블록을 'synthetic_email = ...' 라인 바로 앞(즉 라인 234 이전)으로 이동해 배치해야 한다. insert-after 앵커는 유일 매칭을 위해 synthetic_email 라인을 썼으나, 가드는 새 User/RoomMember 생성 이전에 평가되어야 하므로 정렬상 같은 함수 내 동일 위치(트랜잭션상 flush 이전)다. 가독성을 위해 첫 두 주석줄(↑는 anchor용...)은 적용 시 제거 권장."
+    }
+   ],
+   "chosenOption": "옵션 C 계열의 '생성 측 상한(per-room guest cap)'을 채택. finding #57의 핵심(다른 이름 반복 guest-join → member_count 영구 부풀림 → _maybe_emit_proposal에서 explicit_count < member_count가 영구 참 → 합의 차단)을 생성 측에서 막는다. 라운드2 #50은 social.py의 explicit_count를 '현 멤버 교집합'으로 좁혔지만, member_count = len(_members)(social.py:75)는 여전히 RoomMember 전수라 시간선택을 안 하는 유령 게스트가 1명이라도 있으면 explicit_count < member_count가 영구 유지된다. 따라서 부풀림 자체를 생성 시점에 상한으로 차단하는 것이 #57의 정확한 처방. 옵션 A(device fingerprint 강제 재사용)는 클라이언트 협조 필요·게스트 흐름 변경이라 데모 위험; 옵션 B(reaper)는 백그라운드 인프라 추가라 전시 D-2에 과함. 옵션 C가 가장 additive(새 가드 1개)이고 데모 happy path 불변이라 안전. 단, social.py나 vote 산정 정책은 건드리지 않고 '게스트 생성 자체'만 막아 라운드2 #50과 충돌 없음. 카운트는 is_guest=True 멤버만 세어 호스트/초대멤버는 상한에 영향 없게 한다(정밀). 동일 display_name 재사용 가드(라인 207~232)는 이 cap보다 앞에서 return 하므로, 토큰 분실 후 같은 이름 재가입은 cap에 걸리지 않고 그대로 통과(기존 데모 안전장치 보존). 새 게스트(다른 이름) 생성 경로에만 cap 적용."
+  }
+ ]
+}

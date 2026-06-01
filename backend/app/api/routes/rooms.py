@@ -231,6 +231,29 @@ async def guest_join_room(
             token=token,
         )
 
+    # free-use audit round3 #10/#57: 방당 게스트 수 상한.
+    # 인증 없는 guest-join으로 (a) 무한 게스트 생성, (b) 다른 이름 반복 join에 의한
+    # member_count 부풀림(→ _maybe_emit_proposal explicit_count<member_count 영구 참
+    # → 합의 영구 차단)을 차단한다. 같은 이름 재가입은 위 분기에서 기존 user를 재사용하므로
+    # 상한과 무관. 데모 게스트 3명 << 20 → happy path 불변(약 6.6x 헤드룸).
+    _GUEST_CAP = 20
+    guest_count_q = await session.execute(
+        select(sa_func.count())
+        .select_from(RoomMember)
+        .join(User, RoomMember.user_id == User.id)
+        .where(RoomMember.room_id == room.id)
+        .where(User.is_guest.is_(True))
+    )
+    if (guest_count_q.scalar_one() or 0) >= _GUEST_CAP:
+        logger.warning(
+            "guest_join_room: room=%s guest cap reached (>=%s) — rejecting new guest %r",
+            room.id, _GUEST_CAP, name,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail="이 방의 게스트 수가 한도에 도달했어요. 잠시 후 다시 시도해주세요.",
+        )
+
     synthetic_email = f"guest-{uuid.uuid4().hex[:12]}@maedeup.local"
     guest = User(
         email=synthetic_email,

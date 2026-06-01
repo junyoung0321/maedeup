@@ -157,6 +157,23 @@ def _calendar_response_fields(meeting: MeetingSchedule, user_id: int) -> dict:
     }
 
 
+async def _current_member_ids(session: AsyncSession, room_id: int) -> set[str]:
+    """현재 RoomMember user_id 집합을 문자열 키로 반환 (votes dict 키와 매칭용).
+
+    #45 (free-use round3): votes dict는 user_id(str) 키이고 total_voters는 RoomMember
+    전수로 계산되는데, 게스트가 토큰 분실 후 재가입하면 새 user_id로 RoomMember가
+    늘어나 (a) total_voters가 부풀고 (b) 떠난 멤버의 stale user_id가 votes에 남는다.
+    그 결과 num_voted >= total_voters 갈등조율 게이트가 조기/영영 어긋난다. 이 헬퍼가
+    반환하는 '현재 멤버' 집합으로 votes에서 stale 키를 거르고 total_voters를 동일
+    기준으로 산정해 정합성을 맞춘다. 게스트도 RoomMember이므로 그대로 포함된다
+    (데모 투표자=게스트 → 자격 유지). DB 예외는 호출부에서 처리.
+    """
+    member_rows = await session.execute(
+        select(RoomMember.user_id).where(RoomMember.room_id == room_id)
+    )
+    return {str(uid) for (uid,) in member_rows.all()}
+
+
 class VoteRequest(BaseModel):
     option_index: int
 
@@ -435,7 +452,10 @@ async def confirm_meeting(
     if room is None:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    # 멤버라면 누구나 확정 가능.
+    # 확정은 방장(room.created_by)만 가능 — proposal_id 경로는 sr.host_confirm가
+    # 이미 host를 검증하지만, meeting_id 승격·fresh INSERT 경로엔 검증이 없어
+    # 비호스트 멤버가 확정·전원 캘린더 등록이 가능했다(free-use audit round3 #07).
+    # 멤버십을 먼저 확인한 뒤 host 여부로 강화. 데모는 방장이 확정하므로 happy path 불변.
     member_result = await session.execute(
         select(RoomMember).where(
             RoomMember.user_id == int(current_user.sub),
@@ -444,6 +464,8 @@ async def confirm_meeting(
     )
     if member_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=403, detail="Host is not a room member")
+    if room.created_by != int(current_user.sub):
+        raise HTTPException(status_code=403, detail="host_only")
 
     # BUG-27-1: 같은 room 에 동시 confirm 2건 → 두 번째 즉시 409.
     # code-analyst 분석 (2026-05-27): meeting_id/proposal_id 없는 fresh INSERT
@@ -657,6 +679,26 @@ async def vote_meeting(
 
     votes = dict(meeting.votes or {})
     votes[str(current_user.sub)] = body.option_index
+
+    # #45 (free-use round3): 현재 RoomMember 집합으로 votes 교차검증.
+    # 게스트 재가입/떠난 멤버로 인한 stale user_id 키만 제거 — 게스트 자격은 유지
+    # (게스트도 RoomMember이므로 current_member_ids에 포함). 멤버 조회 실패 시
+    # 기존 동작(전수 카운트)으로 안전하게 폴백.
+    try:
+        current_member_ids = await _current_member_ids(session, meeting.room_id)
+    except Exception:
+        logger.warning(
+            "current member load failed for vote dedup meeting_id=%s — falling back to raw votes",
+            meeting.id, exc_info=True,
+        )
+        current_member_ids = None
+    if current_member_ids is not None:
+        # 본인(방금 투표) user_id는 멤버십 검증을 통과했으므로 항상 유효.
+        votes = {
+            uid: oidx for uid, oidx in votes.items()
+            if uid in current_member_ids or uid == str(current_user.sub)
+        }
+
     meeting.votes = votes
     meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.add(meeting)
@@ -668,10 +710,15 @@ async def vote_meeting(
         key = str(option_index)
         aggregated_votes[key] = aggregated_votes.get(key, 0) + 1
 
-    member_result = await session.execute(
-        select(RoomMember).where(RoomMember.room_id == meeting.room_id)
-    )
-    total_voters = len(member_result.scalars().all())
+    # total_voters를 stale 제거에 쓴 '현재 멤버' 집합 크기로 산정 — votes 교집합과 동일
+    # 기준이라 num_voted >= total_voters 갈등조율 게이트가 정합. 로드 실패 시 전수 폴백.
+    if current_member_ids is not None:
+        total_voters = len(current_member_ids)
+    else:
+        member_result = await session.execute(
+            select(RoomMember).where(RoomMember.room_id == meeting.room_id)
+        )
+        total_voters = len(member_result.scalars().all())
 
     payload = {
         "type": "vote_update",
@@ -849,6 +896,11 @@ async def patch_meeting_place(
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
 
+    # 취소된 모임은 장소를 바꿀 수 없음 — vote_meeting(voting_closed)/confirm_meeting
+    # (cannot_confirm_cancelled_meeting)과 동일한 상태가드 (free-use audit round3 #24, additive).
+    if meeting.status == MeetingStatus.cancelled:
+        raise HTTPException(status_code=409, detail="meeting_cancelled")
+
     membership_result = await session.execute(
         select(RoomMember).where(
             RoomMember.room_id == meeting.room_id,
@@ -857,6 +909,18 @@ async def patch_meeting_place(
     )
     if membership_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=403, detail="Forbidden")
+
+    # 확정 장소 변경 + 전원 캘린더 fan-out은 방장(room.created_by)만 — cancel_meeting·
+    # schedule-confirm과 권한 모델 일관화. 데모는 호스트가 ACT5에서 장소를 확정하므로
+    # happy path 불변 (free-use audit round3 #24).
+    room_row = await session.execute(
+        select(Room).where(Room.id == meeting.room_id)
+    )
+    room_for_auth = room_row.scalar_one_or_none()
+    if room_for_auth is None:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if room_for_auth.created_by != int(current_user.sub):
+        raise HTTPException(status_code=403, detail="host_only")
 
     meeting.location_name = body.name.strip() if body.name and body.name.strip() else place
     meeting.location_address = body.address.strip() if body.address and body.address.strip() else None
@@ -1173,6 +1237,25 @@ async def refresh_recommendations(
         raise HTTPException(
             status_code=403,
             detail="permission_denied: requester or room owner only",
+        )
+
+    # ── 3b) 발화자(requester) 멤버십 서버 교차검증 (free-use audit round3 #51).
+    # 권한은 통과했어도 body.requester_user_id 는 클라이언트가 임의로 넣는 값이다.
+    # 아래 load_requester_context 가 이 id 로 임의 유저의 선호(home_base/food)를 끌어와
+    # run_pipeline 에 주입하고 방 전체에 broadcast 하므로, requester 가 '실제 이 방의
+    # 멤버'인지 서버에서 확인해 비멤버 위장(타인 선호 탈취·카드 갈아끼우기)을 차단한다.
+    # 정상 본인 토글(viewer==requester)·방장 대리 토글은 requester가 항상 RoomMember라
+    # 그대로 통과 → 데모 happy path 불변.
+    requester_membership_row = await session.execute(
+        select(RoomMember).where(
+            RoomMember.room_id == room_id,
+            RoomMember.user_id == body.requester_user_id,
+        )
+    )
+    if requester_membership_row.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=403,
+            detail="permission_denied: requester is not a room member",
         )
 
     # ── 4) 발화자 본인 정보 lookup → state plumbing

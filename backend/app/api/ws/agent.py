@@ -16,6 +16,7 @@ from sqlmodel import select
 
 from app.api.ws.manager import manager
 from app.core.config import settings
+from app.core.rate_limit import check_ws_llm_budget
 from app.core.security import verify_token
 from app.db.session import AsyncSessionLocal
 from app.models.chat import ChatMessage, PaneType, Visibility
@@ -1097,6 +1098,18 @@ async def agent_ws(
                         "message_count_since_last_trigger": 0,
                         "default_place_hint": slot_context.get("default_place_hint") or "서울 강남",
                     })
+
+                # free-use audit round3 #02: WS LLM 진입부 per-(room,user) budget.
+                # 한도 초과 시 발신자에게만 안내하고 파이프라인 skip. Redis 장애 fail-open.
+                # 데모(host ACT5 1건 ≤ 30/분)는 항상 통과.
+                if not await check_ws_llm_budget(r, room_id, user_id_check):
+                    await _emit_auto_trigger_greeting(
+                        r,
+                        room_id,
+                        user_channel,
+                        "요청이 너무 많아요. 잠시 후 다시 시도해 주세요.",
+                    )
+                    continue
 
                 qc = await quick_classify(content)
                 if qc["kind"] == "general":

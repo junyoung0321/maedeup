@@ -388,6 +388,17 @@ async def get_free_slots(
     if detail_date:
         _cache_key = f"{_cache_key}:detail={detail_date}"
 
+    # 보안: 멤버십 검증을 캐시 조회보다 먼저 수행 — 비멤버가 캐시 HIT 만으로
+    # 타 방의 멤버 이름·가용시간을 읽는 IDOR 를 차단 (free-use audit 2026-06-01).
+    membership_result = await session.execute(
+        select(RoomMember).where(
+            RoomMember.room_id == room_pk,
+            RoomMember.user_id == int(_current_user.sub),
+        )
+    )
+    if membership_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
     # cache GET
     try:
         _r_cache = aioredis.from_url(
@@ -405,15 +416,6 @@ async def get_free_slots(
         raise
     except Exception:
         logger.warning("[T6_CACHE] Redis GET 실패 (cache miss 처리)", exc_info=True)
-
-    membership_result = await session.execute(
-        select(RoomMember).where(
-            RoomMember.room_id == room_pk,
-            RoomMember.user_id == int(_current_user.sub),
-        )
-    )
-    if membership_result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=403, detail="Forbidden")
 
     member_result = await session.execute(
         select(User)

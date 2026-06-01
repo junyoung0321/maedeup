@@ -171,7 +171,12 @@ def _build_place_cache_key(state: dict) -> str:
     location = (state.get("place_hint") or "global").strip().lower()
     meeting_type = (state.get("meeting_type") or "general").strip().lower()
     headcount = state.get("headcount") or 0
-    return f"maedeup:place_cache:{location}:{meeting_type}:{headcount}"
+    # detected_cuisines 를 키에 포함 — 같은 지역·타입이라도 음식 종류(한식/일식 등)가
+    # 다르면 캐시가 충돌해 엉뚱한 추천을 반환하던 버그 차단. 키를 구체화할 뿐이라
+    # 무회귀(최악의 경우 cache miss 1회) (free-use audit 2026-06-01).
+    cuisines = state.get("detected_cuisines") or []
+    cuisine_key = ",".join(sorted(str(c).strip().lower() for c in cuisines if c)) or "any"
+    return f"maedeup:place_cache:{location}:{meeting_type}:{headcount}:{cuisine_key}"
 
 
 async def place_recommendation(state: GraphState) -> GraphState:

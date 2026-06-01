@@ -30,6 +30,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.observability.snapshot import dump
+from app.services.kakao_maps import KakaoApiError
 from app.services.llm import call_llm
 from app.services.pipeline.constants import KST
 from app.services.pipeline.helpers.dates import (
@@ -55,6 +56,25 @@ from app.services.pipeline.helpers.slot_state import _update_slot_state
 from app.services.pipeline.state import GraphState, _serialize_context
 
 logger = logging.getLogger(__name__)
+
+
+async def _safe_resolve_place_coord(
+    state: GraphState, keyword: str | None
+) -> dict[str, str] | None:
+    """_resolve_place_coord 의 KakaoApiError 안전 래퍼.
+
+    지오코딩(search_address)이 Kakao 장애(timeout/5xx)로 KakaoApiError 를 던지면
+    entity_extraction 노드 전체가 죽으면서 F7 "장소 검색 서비스 일시 불가" narrator 를
+    우회했다. function_call._safe_search_place 와 동일하게 swallow + kakao_api_error
+    플래그를 박아 place_recommendation 노드가 F7 분기를 타게 한다.
+    (free-use audit 2026-06-01)
+    """
+    try:
+        return await _resolve_place_coord(keyword)
+    except KakaoApiError as exc:
+        logger.warning("[KAKAO_API_ERROR] resolve_place_coord: %s", exc)
+        state["kakao_api_error"] = True
+        return None
 
 
 def _pattern_extract_entities(context: str) -> dict[str, Any]:
@@ -89,9 +109,23 @@ def _pattern_extract_entities(context: str) -> dict[str, Any]:
         all_date_hints.extend(weekday_matches)
 
     # M월 D일 패턴 (여러 개 추출)
+    # 항상 올해로 묶으면 연말에 "1월 5일" 같은 입력이 과거 날짜가 돼 downstream 에서
+    # 전량 필터돼 무응답이 된다 → 과거면 내년으로 롤. 또 "13월"·"2월 30일" 같은
+    # 비유효 날짜는 invalid ISO("2026-13-40")로 새던 것을 datetime 검증으로 skip.
+    # (free-use audit 2026-06-01, dates._fallback_parse_natural_date 와 동일 규칙)
     md_matches = re.finditer(r'(\d{1,2})월\s*(\d{1,2})일', context)
     for m in md_matches:
-        all_date_hints.append(f"{now_kst.year}-{int(m.group(1)):02d}-{int(m.group(2)):02d}")
+        _mo, _dy = int(m.group(1)), int(m.group(2))
+        try:
+            _cand = datetime(now_kst.year, _mo, _dy, tzinfo=KST)
+        except ValueError:
+            continue
+        if _cand.date() < now_kst.date():
+            try:
+                _cand = datetime(now_kst.year + 1, _mo, _dy, tzinfo=KST)
+            except ValueError:
+                continue
+        all_date_hints.append(_cand.strftime("%Y-%m-%d"))
 
     # D일 패턴 (월 없이, M월D일 매칭이 없을 때만)
     if not all_date_hints:
@@ -450,7 +484,7 @@ async def entity_extraction(state: GraphState) -> GraphState:
                     existing_rp.append({"place": p.strip(), "user": it.get("user"), "reason": it.get("reason")})
                 state["rejected_places"] = existing_rp
 
-            place_coord = await _resolve_place_coord(state.get("place_hint"))
+            place_coord = await _safe_resolve_place_coord(state, state.get("place_hint"))
             if place_coord:
                 state["place_coord"] = place_coord
             state["is_location_first"] = (
@@ -501,7 +535,7 @@ async def entity_extraction(state: GraphState) -> GraphState:
                 }
                 state["extracted_entities"] = extracted
                 _update_slot_state(state, extracted)
-                place_coord = await _resolve_place_coord(place_kw)
+                place_coord = await _safe_resolve_place_coord(state, place_kw)
                 if place_coord:
                     state["place_coord"] = place_coord
                 state["is_location_first"] = True
@@ -537,7 +571,7 @@ async def entity_extraction(state: GraphState) -> GraphState:
             }
             state["extracted_entities"] = extracted
             _update_slot_state(state, extracted)
-            place_coord = await _resolve_place_coord(state["place_hint"])
+            place_coord = await _safe_resolve_place_coord(state, state["place_hint"])
             if place_coord:
                 state["place_coord"] = place_coord
             state["is_location_first"] = True
@@ -695,9 +729,12 @@ async def entity_extraction(state: GraphState) -> GraphState:
                         state["place_hint"] = extracted_place
                         state["extracted_entities"]["place_hint"] = extracted_place
                     else:
-                        # 패턴 매칭 실패 시 메시지 전체를 힌트로 사용
-                        state["place_hint"] = user_text
-                        state["extracted_entities"]["place_hint"] = user_text
+                        # 패턴 매칭 실패 시 메시지 일부를 힌트로 사용. 전체(최대 2000자)를
+                        # 그대로 Kakao 쿼리·LLM 프롬프트·narrator 에 넣으면 검색 무력화 +
+                        # 프롬프트 인젝션·비용 폭증 위험 → 길이 캡 (free-use audit 2026-06-01).
+                        _hint = user_text[:50].strip()
+                        state["place_hint"] = _hint
+                        state["extracted_entities"]["place_hint"] = _hint
                     break
 
         # meeting_schedule intent에서도 place_hint가 없으면 한국 지명 추출 시도
@@ -710,7 +747,7 @@ async def entity_extraction(state: GraphState) -> GraphState:
                         state["extracted_entities"]["place_hint"] = extracted_place
                     break
 
-        place_coord = await _resolve_place_coord(state.get("place_hint"))
+        place_coord = await _safe_resolve_place_coord(state, state.get("place_hint"))
         if place_coord:
             state["place_coord"] = place_coord
         # intent가 명시적 meeting_schedule이면 장소가 있어도 location-first로 강등 금지.

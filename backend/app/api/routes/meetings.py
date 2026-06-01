@@ -496,6 +496,10 @@ async def confirm_meeting(
                 raise HTTPException(status_code=404, detail="Meeting not found")
             if meeting.room_id != body.room_id:
                 raise HTTPException(status_code=400, detail="Meeting does not belong to this room")
+            # 취소된 모임은 confirm 으로 부활시킬 수 없음 (free-use audit 2026-06-01).
+            # 정상 흐름은 pending→confirmed; confirmed 재확정(시간 변경 등)은 허용.
+            if meeting.status == MeetingStatus.cancelled:
+                raise HTTPException(status_code=409, detail="cannot_confirm_cancelled_meeting")
 
             meeting.status = MeetingStatus.confirmed
             meeting.scheduled_at = scheduled_at
@@ -641,6 +645,11 @@ async def vote_meeting(
     )
     if member_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=403, detail="Forbidden")
+
+    # 확정/취소된 모임에는 투표를 받지 않음 — 확정 후 추가 투표로 집계가 뒤집히거나
+    # 갈등조율이 재발동하는 것을 차단 (free-use audit 2026-06-01).
+    if meeting.status in (MeetingStatus.confirmed, MeetingStatus.cancelled):
+        raise HTTPException(status_code=409, detail="voting_closed")
 
     vote_options = meeting.vote_options or []
     if body.option_index < 0 or body.option_index >= len(vote_options):

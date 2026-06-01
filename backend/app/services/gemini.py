@@ -91,7 +91,14 @@ async def call_gemini(
         if response is None:
             return ""
 
-        text = getattr(response, "text", None)
+        # Gemini .text 프로퍼티는 safety 차단/빈 candidate 시 ValueError 를 던진다.
+        # getattr 의 default 는 AttributeError 만 잡으므로 ValueError 가 그대로 전파돼
+        # 노드 전체가 죽었다 → try 로 감싸 candidates 폴백으로 흘려보낸다
+        # (free-use audit 2026-06-01).
+        try:
+            text = response.text
+        except (ValueError, AttributeError):
+            text = None
         if isinstance(text, str) and text.strip():
             return text
 

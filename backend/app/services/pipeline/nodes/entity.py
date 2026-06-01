@@ -57,6 +57,14 @@ from app.services.pipeline.state import GraphState, _serialize_context
 
 logger = logging.getLogger(__name__)
 
+# finding #43 (2026-06-02): fast-skip(short cmd)이 헤드카운트 명사를 무시하는 사각지대 보완.
+# slot.py _PEOPLE_NOUN_RE 사본(import 회피로 결합도 최소화). 동기화 시 양쪽 같이 수정.
+_SHORTCMD_PEOPLE_NOUN_RE = re.compile(
+    r"친구들|친구|사람들|사람|멤버|동료|동기|선배|후배|"
+    r"우리|저희|모두|다같이|같이|함께|일행"
+)
+_SHORTCMD_HEADCOUNT_RE = re.compile(r"[한두세네다섯여섯일곱여덟아홉열]\s*명|셋이|넷이|둘이|혼자")
+
 
 async def _safe_resolve_place_coord(
     state: GraphState, keyword: str | None
@@ -598,6 +606,9 @@ async def entity_extraction(state: GraphState) -> GraphState:
             and not re.search(r"(월|일|시|분|주말|평일|내일|모레|오늘|다음주|이번주)", latest_msg)
             and not re.search(r"(맛집|카페|식당|근처|역|동\s)", latest_msg)
             and re.search(r"(추천|정리|제안|뽑아|추려)", latest_msg)
+            # finding #43: 사람·인원 명사가 있으면 fast-skip 제외 → Gemini 추출로 headcount 보존
+            and not _SHORTCMD_PEOPLE_NOUN_RE.search(latest_msg)
+            and not _SHORTCMD_HEADCOUNT_RE.search(latest_msg)
         )
         if is_short_cmd:
             logger.info("[ENTITY] fast-skip: short recommendation command, skipping Gemini extraction")
@@ -658,10 +669,17 @@ async def entity_extraction(state: GraphState) -> GraphState:
         elif isinstance(raw_date_hint, str) and raw_date_hint.strip() and not _is_iso_date_hint(raw_date_hint):
             parsed_natural_date = await _parse_natural_date(raw_date_hint)
             if parsed_natural_date:
-                extracted["date_hint"] = parsed_natural_date.get("date")
-                extracted["parsed_time_hint"] = parsed_natural_date.get("time")
-                extracted["date_is_flexible"] = parsed_natural_date.get("is_flexible", False)
-                extracted["date_hint_source_text"] = raw_date_hint
+                _pd = parsed_natural_date.get("date")
+                # finding #09: 단일 경로 past 필터 — multi-date 경로(위 line 646)와 동일 규칙.
+                # 과거 날짜는 drop → 하류 slot_filling이 선호데이터/확장으로 graceful 진행.
+                if _is_iso_date_hint(_pd) and _pd < datetime.now(KST).date().isoformat():
+                    logger.info("[OPT] single date_hint dropped past date %s", _pd)
+                    extracted["date_hint"] = None
+                else:
+                    extracted["date_hint"] = _pd
+                    extracted["parsed_time_hint"] = parsed_natural_date.get("time")
+                    extracted["date_is_flexible"] = parsed_natural_date.get("is_flexible", False)
+                    extracted["date_hint_source_text"] = raw_date_hint
         state["extracted_entities"] = extracted
         _update_slot_state(state, extracted)
 

@@ -71,9 +71,12 @@ async def _maybe_emit_proposal(
         member_row = await session.execute(
             select(RoomMember).where(RoomMember.room_id == room_pk)
         )
-        member_count = len(member_row.scalars().all())
+        _members = member_row.scalars().all()
+        member_count = len(_members)
+        member_user_ids = {m.user_id for m in _members}
 
-    if member_count <= 0:
+    # finding #27: 솔로 방(1명)에서 혼자 시간 선택 시 '전원 합의' 오발화 차단.
+    if member_count < 2:
         return
 
     availability = await sr.load_room_availability(redis_client, room_id=room_pk)
@@ -89,7 +92,13 @@ async def _maybe_emit_proposal(
                 return True
         return False
 
-    explicit_count = sum(1 for entries in availability.values() if _is_explicit(entries))
+    # finding #50: 현재 멤버 집합에 속한 availability만 카운트 — 탈퇴/스테일 user_id 잔재 제외.
+    # load_room_availability 키는 int(scheduling_round.py:543) → member_user_ids(int)와 직접 비교.
+    explicit_count = sum(
+        1
+        for uid, entries in availability.items()
+        if uid in member_user_ids and _is_explicit(entries)
+    )
     if explicit_count < member_count:
         return
 
@@ -649,6 +658,16 @@ async def _detect_and_notify_intent(
         # ── 결론 감지: 명시적 합의 패턴 → 즉시 정리 카드 ────────────────
         if _is_conclusion(content) and result["intent"] in _NOTIFIABLE_INTENTS:
             await r.delete(counter_key)
+            # finding #52: 같은 conclusion 메시지 재평가 시 ai_auto_trigger 중복 발행 차단.
+            # 첫 발행만 NX 통과 → 데모(최초 conclusion) 불변, 중복만 억제.
+            if trigger_message_id is not None:
+                _idem_key = f"social_conclusion_idem:{room_id}:{trigger_message_id}"
+                if not await r.set(_idem_key, "1", nx=True, ex=120):
+                    logger.debug(
+                        "conclusion duplicate suppressed room=%s msg=%s",
+                        room_id, trigger_message_id,
+                    )
+                    return
             try:
                 await r.publish(
                     agent_channel,

@@ -201,6 +201,32 @@ def _fallback_parse_natural_date(text: str, now_kst: datetime) -> dict[str, Any]
             target_date = this_week_monday + timedelta(days=weekday)
             if target_date.date() < now_kst.date():
                 target_date += timedelta(days=7)
+    # finding #33: 카테고리성 모호 표현 결정적 처리 (Gemini 장애 시에도 안정).
+    # '이번주말'은 위 line 180에서 먼저 잡히므로 여기는 단독 '주말'만 도달.
+    elif "주말" in compact:
+        target_date = _next_weekday(now_kst, 5, include_current_week=True)  # 다가오는 토요일
+        result["is_flexible"] = True
+    elif "평일" in compact:
+        target_date = now_kst + timedelta(days=1)
+        while target_date.weekday() >= 5:
+            target_date += timedelta(days=1)
+        result["is_flexible"] = True
+    elif "다음달" in compact or "담달" in compact:
+        _y = now_kst.year + (1 if now_kst.month == 12 else 0)
+        _m = 1 if now_kst.month == 12 else now_kst.month + 1
+        target_date = now_kst.replace(
+            year=_y, month=_m, day=1, hour=0, minute=0, second=0, microsecond=0
+        )
+        result["is_flexible"] = True
+    elif "월말" in compact:
+        if now_kst.month == 12:
+            _first_next = now_kst.replace(year=now_kst.year + 1, month=1, day=1)
+        else:
+            _first_next = now_kst.replace(month=now_kst.month + 1, day=1)
+        target_date = (_first_next - timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        result["is_flexible"] = True
     else:
         # 요일만 있으면 (예: "목요일", "금요일") → 다음 해당 요일로
         weekday = _weekday_from_korean(normalized)

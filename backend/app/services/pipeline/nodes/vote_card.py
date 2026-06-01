@@ -270,6 +270,13 @@ async def vote_card_creation(state: GraphState) -> GraphState:
             if weekday_only:
                 vote_slots = weekday_only
 
+        # finding #48: 거부/평일 필터 후 후보가 0개면 빈 time_options 카드·빈 pending 모임 차단.
+        # 단일슬롯 skip(line 251)과 동일한 status·무음 종료 → 라우터 END 정합.
+        if not vote_slots:
+            state["status"] = "vote_card_skipped"
+            logger.info("[VOTE_CARD] skipped (all candidates filtered out)")
+            return state
+
         # Fix 11 (2026-05-14): slot_ranker로 모임 유형 기반 재정렬.
         # 식사면 12~13/18~20시, 카페면 14~15시 등 시간대 점수화.
         # multi_date_vote는 날짜별 카드라 시간 순위 무의미 → skip.

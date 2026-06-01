@@ -140,9 +140,13 @@ async def classify_intent(text_input: str) -> dict:
             elif _contains_schedule_keyword(text_input):
                 intent = "meeting_schedule"
 
+        # non-general 의도를 Gemini가 확정하면 RAG 경계 유사도(0.60~0.69)에 묶여
+        # _route_after_intent(confidence<0.7) 게이트에서 폐기되던 사각 해소.
+        # general은 그대로 raw 유사도 유지 → general 분류 동작 불변. (free-use #14)
+        conf = max(top_similarity, 0.7) if intent != "general" else top_similarity
         return {
             "intent": intent,
-            "confidence": round(top_similarity, 4),
+            "confidence": round(conf, 4),
             "method": "gemini" if intent != "general" else "pattern",
         }
 

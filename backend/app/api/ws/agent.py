@@ -1,7 +1,7 @@
 import asyncio
 import copy
 from contextlib import suppress
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 import time
@@ -346,6 +346,38 @@ async def _sync_chat_rejected_to_unavailability(
         )
 
 
+async def _has_active_confirmed_meeting(room_id: str) -> bool:
+    """#41: room에 활성(미래) confirmed MeetingSchedule이 존재하는지 검사.
+
+    재트리거 억제 게이트 — status==confirmed AND scheduled_at>=now(naive UTC).
+    DB/파싱 실패 시 False(fail-open) — 억제는 보수적으로만 발동(데모 안전).
+    """
+    from app.models.meeting import MeetingSchedule, MeetingStatus
+
+    try:
+        room_pk = int(room_id)
+    except (TypeError, ValueError):
+        return False
+    try:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        async with AsyncSessionLocal() as session:
+            found = (
+                await session.execute(
+                    select(MeetingSchedule.id)
+                    .where(
+                        MeetingSchedule.room_id == room_pk,
+                        MeetingSchedule.status == MeetingStatus.confirmed,
+                        MeetingSchedule.scheduled_at >= now,
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        return found is not None
+    except Exception:
+        logger.warning("[AUTO_TRIGGER] confirmed-meeting probe failed room=%s", room_id, exc_info=True)
+        return False
+
+
 async def _run_auto_trigger_pipeline(
     room_id: str,
     trigger_content: str,
@@ -371,6 +403,24 @@ async def _run_auto_trigger_pipeline(
         redis_client = None
 
     try:
+        # #41 — F 재트리거 억제: 같은 room에 이미 활성 confirmed 모임이 있으면
+        # 자동 트리거(stalemate/all_members_selected)는 파이프라인 억제 + 안내만.
+        # direct_request(ACT5 사용자 명시 요청)는 이 함수를 타지 않으므로 영향 없음.
+        # 데모는 매번 새 방 → 시작 시 confirmed 없음 → 억제 미발동(불변).
+        if trigger_reason in {"stalemate_judged", "all_members_selected"}:
+            if await _has_active_confirmed_meeting(room_id):
+                logger.info(
+                    "[AUTO_TRIGGER] suppressed: active confirmed meeting exists room=%s reason=%s",
+                    room_id, trigger_reason,
+                )
+                await _emit_auto_trigger_greeting(
+                    redis_client,
+                    room_id,
+                    shared_channel,
+                    "이미 확정된 모임이 있어요. 새로 잡고 싶으면 말씀해 주세요 🙂",
+                )
+                return
+
         # 해결점 B: trigger_reason별 분석중 메시지 즉시 발행 (LLM 분석 전)
         # — 5~15초 LLM 대기 동안 사용자에게 "AI가 일하는 중"임을 알림.
         # all_members_selected는 TimeBar 합의 구간을 동적으로 박아 시연 임팩트 ↑.

@@ -268,8 +268,7 @@ async def test_get_room_proposal_includes_my_vote(client, redis_client):
 
 
 async def test_confirm_rejects_non_member(client, redis_client):
-    """룸 멤버가 아닌 외부 유저는 confirm 차단.
-    멤버라면 누구나 확정 가능하도록 host-only 제한이 해제됐으므로 비-멤버만 검증."""
+    """룸 멤버가 아닌 외부 유저는 confirm 차단 (멤버십 검증이 먼저)."""
     _set_current_user(3)   # outsider — not a room member
     resp = await client.post(
         "/api/v1/meetings/confirm",
@@ -284,8 +283,11 @@ async def test_confirm_rejects_non_member(client, redis_client):
     assert "member" in resp.json()["detail"].lower()
 
 
-async def test_confirm_succeeds_for_member(client, redis_client):
-    """host가 아닌 룸 멤버도 confirm 가능."""
+async def test_confirm_rejects_non_host_member(client, redis_client):
+    """host가 아닌 룸 멤버는 confirm 차단 (free-use audit round3 #07: host-only).
+
+    proposal 없는 confirm 경로(meeting_id 승격/fresh INSERT)에 호스트 검증이 없어
+    비호스트 멤버가 확정·전원 캘린더 등록이 가능했던 것을 host-only로 강화."""
     _set_current_user(2)   # member, not host
     resp = await client.post(
         "/api/v1/meetings/confirm",
@@ -296,7 +298,8 @@ async def test_confirm_succeeds_for_member(client, redis_client):
             "end_at": "2026-05-02T17:00:00",
         },
     )
-    assert resp.status_code in (200, 201), resp.text
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["detail"] == "host_only"
 
 
 async def test_confirm_succeeds_for_host_without_proposal(client, redis_client):

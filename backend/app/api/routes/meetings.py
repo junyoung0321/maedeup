@@ -485,6 +485,16 @@ async def confirm_meeting(
     try:
         # Finalization-proposal path: validate proposal state before DB write.
         if body.proposal_id is not None:
+            # #19 (free-use round4): 확정 시점의 현재 RoomMember 수를 재조회해
+            # 과반을 재계산한다. proposal 생성 시점 고정값(total_eligible_voters)
+            # 대신 최신 멤버 수 기준 — 중간 join/leave가 있으면 과반 기준이 갱신됨.
+            # 게스트도 RoomMember이므로 그대로 포함. 데모는 중간 변동 없어 동일값.
+            _eligible_rows = await session.execute(
+                select(RoomMember.user_id).where(
+                    RoomMember.room_id == body.room_id
+                )
+            )
+            _current_eligible = len(_eligible_rows.scalars().all())
             try:
                 await sr.host_confirm(
                     redis,
@@ -492,6 +502,7 @@ async def confirm_meeting(
                     proposal_id=body.proposal_id,
                     user_id=int(current_user.sub),
                     room_host_id=room.created_by,
+                    eligible_override=_current_eligible,
                 )
             except sr.NotFoundError:
                 raise HTTPException(status_code=404, detail="proposal_not_found")
@@ -710,6 +721,16 @@ async def vote_meeting(
         key = str(option_index)
         aggregated_votes[key] = aggregated_votes.get(key, 0) + 1
 
+    # #31 (free-use round4): 동점(최다 득표 옵션 ≥2) 감지.
+    # best_count 를 공유하는 옵션이 여럿이면 자동 단일 선택을 막고 호스트가 고르도록
+    # 안내한다(아래 conflict_resolution 분기 가드 + vote_update additive 필드).
+    # 데모: 게스트 3명 전원 option_index=0 → aggregated={"0":3} → 단일 best → tie=False.
+    _best_count = max(aggregated_votes.values()) if aggregated_votes else 0
+    _tied_option_indices = sorted(
+        int(k) for k, c in aggregated_votes.items() if c == _best_count and _best_count > 0
+    )
+    _is_tie = len(_tied_option_indices) >= 2
+
     # total_voters를 stale 제거에 쓴 '현재 멤버' 집합 크기로 산정 — votes 교집합과 동일
     # 기준이라 num_voted >= total_voters 갈등조율 게이트가 정합. 로드 실패 시 전수 폴백.
     if current_member_ids is not None:
@@ -726,6 +747,10 @@ async def vote_meeting(
         "votes": aggregated_votes,
         "total_voters": total_voters,
         "user_votes": votes,
+        # #31 additive: 동점이면 프론트가 별도 이벤트 없이도 인지 가능.
+        # 데모는 단일 best → tie=False, tied_option_indices=[단일 인덱스].
+        "tie": _is_tie,
+        "tied_option_indices": _tied_option_indices,
     }
     redis_client = aioredis.from_url(
         settings.REDIS_URL,
@@ -751,8 +776,49 @@ async def vote_meeting(
             best_count = aggregated_votes[best_option]
             unanimity_rate = best_count / total_voters
 
-            if unanimity_rate < 1.0:
-                # 만장일치가 아님 → 갈등 조율 시도
+            if unanimity_rate < 1.0 and _is_tie:
+                # #31: 동점 → 자동 단일 선택 금지. 호스트에게 '동점' 안내만 발행하고
+                # alternative-slot 자동 조율 분기는 건너뛴다(호스트가 직접 선택).
+                # 데모는 단일 best 라 _is_tie=False → 이 분기 미진입 → happy path 불변.
+                try:
+                    tied_details = [
+                        {
+                            "option_index": _idx,
+                            "detail": vote_options[_idx] if 0 <= _idx < len(vote_options) else {},
+                            "vote_count": _best_count,
+                        }
+                        for _idx in _tied_option_indices
+                    ]
+                    tie_payload = {
+                        "type": "vote_tie",
+                        "meeting_id": meeting.id,
+                        "tied_options": tied_details,
+                        "vote_count": _best_count,
+                        "total_voters": total_voters,
+                        "message": (
+                            f"{len(_tied_option_indices)}개 시간이 {_best_count}표로 동점이에요. "
+                            "방장님이 직접 골라주세요."
+                        ),
+                    }
+                    try:
+                        await redis_client.publish(
+                            f"agent:{meeting.room_id}",
+                            json.dumps(tie_payload, ensure_ascii=False),
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Redis publish failed for vote tie meeting_id=%s",
+                            meeting.id,
+                            exc_info=True,
+                        )
+                except Exception:
+                    logger.warning(
+                        "Vote tie notice failed for meeting_id=%s",
+                        meeting.id,
+                        exc_info=True,
+                    )
+            elif unanimity_rate < 1.0:
+                # 만장일치가 아님(단일 최다 득표) → 기존 갈등 조율 시도 (분기 불변)
                 try:
                     best_option_idx = int(best_option)
                     best_option_detail = vote_options[best_option_idx] if best_option_idx < len(vote_options) else {}

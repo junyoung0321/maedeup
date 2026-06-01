@@ -1,0 +1,189 @@
+{
+ "confirmed": [
+  {
+   "id": "#11+#20",
+   "decisionImplemented": "호스트(room.created_by)가 leave_room 할 때 활성 모임을 cancel하지 않고, 남은 멤버 중 가장 오래된(joined_at 오름차순, 동률 시 id 오름차순) 멤버에게 소유권을 자동 이양한다. Room.created_by를 새 호스트로 갱신하고 해당 RoomMember.role=owner로 승격. 유효 호스트가 존재하므로 모임 고아화를 막는다. 남은 멤버가 없으면(other_members_count==0) 기존 '호스트 단독' else 분기(본인 캘린더만 정리)로 그대로 흐른다. created_by가 갱신되므로 schedule_confirm·meetings confirm/place/cancel/refresh 등 created_by 게이트 엔드포인트가 자동으로 새 호스트를 인식 → #20(고아 모임 권한 공백) 동반 해소.",
+   "stillNeeded": true,
+   "edits": [
+    {
+     "targetFile": "backend/app/api/routes/rooms.py",
+     "mode": "replace",
+     "locateAnchor": "    if is_host and other_members_count > 0:\n        # 호스트가 다른 멤버 두고 나감 → 활성 모임 전체 cancel.\n        triggered_cancellation = True\n        active_result = await session.execute(\n            select(MeetingSchedule).where(\n                MeetingSchedule.room_id == room_id,\n                MeetingSchedule.status != MeetingStatus.cancelled,\n            )\n        )\n        active_meetings = active_result.scalars().all()\n\n        room_members_result = await session.execute(\n            select(User)\n            .join(RoomMember, RoomMember.user_id == User.id)\n            .where(RoomMember.room_id == room_id)\n        )\n        room_member_users = room_members_result.scalars().all()\n\n        for meeting in active_meetings:\n            meeting.status = MeetingStatus.cancelled\n            meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)\n            session.add(meeting)\n            cancelled_meeting_ids.append(meeting.id)\n\n        await session.commit()\n\n        for meeting in active_meetings:\n            await session.refresh(meeting)\n            try:\n                await _publish_finalization_event(\n                    redis,\n                    room_id,\n                    {\n                        \"type\": \"meeting_cancelled\",\n                        \"room_id\": room_id,\n                        \"meeting_id\": meeting.id,\n                    },\n                )\n            except Exception:\n                logger.warning(\n                    \"Failed to broadcast meeting_cancelled on host leave (meeting_id=%s)\",\n                    meeting.id, exc_info=True,\n                )\n            try:\n                remaining = await delete_events_for_meeting_members(\n                    meeting, room_member_users, session\n                )\n                if remaining != (meeting.google_event_ids or {}):\n                    meeting.google_event_ids = remaining\n                    session.add(meeting)\n                    await session.commit()\n                    await session.refresh(meeting)\n            except Exception:\n                logger.warning(\n                    \"Calendar fan-out delete failed on host leave (meeting_id=%s)\",\n                    meeting.id, exc_info=True,\n                )\n    else:",
+     "newCode": "    if is_host and other_members_count > 0:\n        # free-use audit round4 #11+#20: 호스트가 다른 멤버를 두고 나감.\n        # 기존엔 활성 모임을 전부 cancel했으나 → 남은 멤버 입장에서 모임이 고아화되고\n        # created_by가 떠난 user에 고정돼 schedule-confirm/place/cancel 권한이 영구 공백(#20).\n        # 대신 남은 멤버 중 가장 먼저 가입한 멤버에게 소유권을 자동 이양한다:\n        #   - Room.created_by = 새 호스트 user_id\n        #   - 새 호스트 RoomMember.role = owner 승격\n        # 활성 모임은 유지(유효 호스트가 생겼으므로 cancel 불필요).\n        # 데모: 호스트는 leave하지 않으므로 이 분기 자체가 happy path에서 미실행.\n        new_host_result = await session.execute(\n            select(RoomMember)\n            .where(\n                RoomMember.room_id == room_id,\n                RoomMember.user_id != user_id,\n            )\n            .order_by(RoomMember.joined_at.asc(), RoomMember.id.asc())\n            .limit(1)\n        )\n        new_host_member = new_host_result.scalar_one_or_none()\n        if new_host_member is not None:\n            room.created_by = new_host_member.user_id\n            new_host_member.role = MemberRole.owner\n            session.add(room)\n            session.add(new_host_member)\n            await session.commit()\n            triggered_cancellation = True  # 이양 발생 신호 (모임 cancel은 안 함)\n            logger.info(\n                \"leave_room: host=%s left room=%s → ownership transferred to user=%s (oldest member)\",\n                user_id, room_id, new_host_member.user_id,\n            )\n            try:\n                await _publish_finalization_event(\n                    redis,\n                    room_id,\n                    {\n                        \"type\": \"host_transferred\",\n                        \"room_id\": room_id,\n                        \"new_host_user_id\": new_host_member.user_id,\n                        \"previous_host_user_id\": user_id,\n                    },\n                )\n            except Exception:\n                logger.warning(\n                    \"Failed to broadcast host_transferred (room_id=%s, new_host=%s)\",\n                    room_id, new_host_member.user_id, exc_info=True,\n                )\n    else:",
+     "note": "기존 cancellation 분기를 소유권 이양으로 교체. triggered_cancellation 플래그는 응답 모델 호환을 위해 보존하되 의미가 '이양 발생'으로 바뀜 — 호출부가 이 bool을 cancel 여부로 해석하면 안 됨(현재 호출부 없음 확인). 더 명확히 하려면 LeaveRoomResponse에 host_transferred:bool/new_host_user_id 필드를 additive로 추가 권장(frontendDeferred 참고)."
+    }
+   ],
+   "frontendDeferred": "(1) host_transferred WS 이벤트 수신 → 남은 클라이언트가 room을 재조회(GET /rooms/{id})하거나 created_by를 갱신해 새 호스트 화면에 host-only 컨트롤('시간대 변경'/'이 시간으로 확정'/장소 확정 등)을 리렌더하는 프론트 핸들러. 현재 백엔드는 created_by를 즉시 갱신하므로 새로고침/재조회 시 자연 반영되지만, 실시간 리렌더는 프론트 동반 필요. (2) LeaveRoomResponse에 host_transferred:bool, new_host_user_id:int|None additive 필드를 노출하면 프론트가 명시적으로 처리 가능 — backend 핵심(이양 로직) 적용 후 응답 모델 확장은 별도 동반 작업으로 분리.",
+   "demoReasoning": "패치 분기는 호스트가 leave할 때만 실행되는데, 데모는 호스트가 leave하지 않으므로 미실행. 데모 출력 불변.",
+   "verdict": {
+    "id": "#11+#20",
+    "applySafe": true,
+    "breaksDemo": false,
+    "breaksReason": "",
+    "implementsDecision": true,
+    "anchorsUnique": true,
+    "signatureChange": false,
+    "confidence": 0.9,
+    "improvedNote": "검증 결과 안전·적용 가능. 결정 방향 정확 구현(joined_at asc, id asc tiebreak로 최선임 멤버 선출 → room.created_by 이양 + RoomMember.role=owner 승격, 모임 cancel 안 함, other_members_count==0이면 기존 else로 흐름). 데모 불변: .gstack-demo.py에 leave/created_by/owner/transfer grep 0건 — 호스트 지민은 leave 안 하므로 이 분기(is_host and other_members_count>0) 자체가 happy path 미실행. #31(동점 안내)은 본 패치 무관 — 데모 게스트 vote는 전원 option_index=0(.gstack-demo.py:858-859)으로 동점 아님이나 이 edit은 leave_room 전용이라 vote 결과 불변.\n\nanchor 유일성: 'if is_host and other_members_count > 0:' grep 1건(rooms.py:648). 전체 멀티라인 anchor 블록이 현재 코드 648~705줄과 정확히 일치(말미 '    else:' 포함). Edit 바로 적용 가능.\n\n시그니처/임포트 OK: leave_room 시그니처·LeaveRoomResponse 불변, 새 헬퍼 없음. MemberRole 이미 import(line 32). 참조 모델 필드 전부 존재(RoomMember.role/joined_at/id, MemberRole.owner, Room.created_by). room 객체는 session-attached(line 620)라 session.add(room)+mutation 정상.\n\n남은 경미 이슈(비차단, frontendDeferred로 분리 권장):\n1) triggered_cancellation 의미 flip — 이양 시 True지만 cancelled_meeting_ids는 빈 리스트로 남아 응답 필드명 triggered_meeting_cancellation과 의미 불일치. 단 frontend LeaveRoomButton.tsx는 해당 bool을 타입 선언만 하고 handleLeave에서 응답 body를 전혀 읽지 않음(router.push만) → UI 미파손. note가 이미 이 점을 명시하고 additive host_transferred/new_host_user_id 필드를 frontendDeferred로 권고 — 백엔드 핵심만 적용 시 안전.\n2) leave 모달 경고문 '호스트인 경우 모임 자체가 취소'는 이제 stale copy(이양으로 변경됨) — frontendDeferred 카피 수정 대상, 런타임/데모 미파손.\n3) host_transferred WS 이벤트 실시간 리렌더는 프론트 동반 필요(frontendDeferred에 정확히 분리됨). 백엔드는 created_by 즉시 갱신하므로 재조회/새로고침 시 자연 반영."
+   }
+  },
+  {
+   "id": "#31",
+   "decisionImplemented": "vote_meeting의 갈등조율 분기에서 최다 득표(best_count)를 가진 옵션이 2개 이상이면(동점) 기존 단일 best_option 자동 선택(conflict_resolution alternative-slot 발행) 분기를 타지 않고, 호스트에게 '동점' 안내 WS 이벤트(type=vote_tie)를 발행해 호스트가 직접 고르도록 한다. 동점이 아닐 때만 기존 best_option 자동 분기 유지. 추가로 vote_update payload에 additive `tie`(bool) + `tied_option_indices`(list[int]) 필드를 실어 호스트 UI가 별도 이벤트 없이도 동점을 인지할 수 있게 한다(실제 동점 안내/재투표 가드 완화 UI는 frontendDeferred).",
+   "stillNeeded": true,
+   "edits": [
+    {
+     "targetFile": "backend/app/api/routes/meetings.py",
+     "mode": "insert-after",
+     "locateAnchor": "    aggregated_votes: dict[str, int] = {}\n    for option_index in votes.values():\n        key = str(option_index)\n        aggregated_votes[key] = aggregated_votes.get(key, 0) + 1",
+     "newCode": "\n    # #31 (free-use round4): 동점(최다 득표 옵션 ≥2) 감지.\n    # best_count 를 공유하는 옵션이 여럿이면 자동 단일 선택을 막고 호스트가 고르도록\n    # 안내한다(아래 conflict_resolution 분기 가드 + vote_update additive 필드).\n    # 데모: 게스트 3명 전원 option_index=0 → aggregated={\"0\":3} → 단일 best → tie=False\n    # 이라 happy path 불변. aggregated 가 비어 있으면(이론상) tie 없음.\n    _best_count = max(aggregated_votes.values()) if aggregated_votes else 0\n    _tied_option_indices = sorted(\n        int(k) for k, c in aggregated_votes.items() if c == _best_count and _best_count > 0\n    )\n    _is_tie = len(_tied_option_indices) >= 2",
+     "note": "aggregated_votes 직후, total_voters 계산 전. 동점 판정값을 미리 만들어 둠."
+    },
+    {
+     "targetFile": "backend/app/api/routes/meetings.py",
+     "mode": "replace",
+     "locateAnchor": "    payload = {\n        \"type\": \"vote_update\",\n        \"meeting_id\": meeting.id,\n        \"votes\": aggregated_votes,\n        \"total_voters\": total_voters,\n        \"user_votes\": votes,\n    }",
+     "newCode": "    payload = {\n        \"type\": \"vote_update\",\n        \"meeting_id\": meeting.id,\n        \"votes\": aggregated_votes,\n        \"total_voters\": total_voters,\n        \"user_votes\": votes,\n        # #31 additive: 동점이면 프론트가 별도 이벤트 없이도 인지 가능.\n        # 데모는 단일 best → tie=False, tied_option_indices=[단일 인덱스].\n        \"tie\": _is_tie,\n        \"tied_option_indices\": _tied_option_indices,\n    }",
+     "note": "vote_update payload 에 additive 필드 2개 추가. 기존 키 불변 → 기존 소비자 안전."
+    },
+    {
+     "targetFile": "backend/app/api/routes/meetings.py",
+     "mode": "replace",
+     "locateAnchor": "            if unanimity_rate < 1.0:\n                # 만장일치가 아님 → 갈등 조율 시도\n                try:\n                    best_option_idx = int(best_option)",
+     "newCode": "            if unanimity_rate < 1.0 and _is_tie:\n                # #31: 동점 → 자동 단일 선택 금지. 호스트에게 '동점' 안내만 발행하고\n                # alternative-slot 자동 조율 분기는 건너뛴다(호스트가 직접 선택).\n                # 데모는 단일 best 라 _is_tie=False → 이 분기 미진입(아래 elif 도 게이트\n                # num_voted>=total_voters 미충족으로 미진입) → happy path 불변.\n                try:\n                    tied_details = [\n                        {\n                            \"option_index\": _idx,\n                            \"detail\": vote_options[_idx] if 0 <= _idx < len(vote_options) else {},\n                            \"vote_count\": _best_count,\n                        }\n                        for _idx in _tied_option_indices\n                    ]\n                    tie_payload = {\n                        \"type\": \"vote_tie\",\n                        \"meeting_id\": meeting.id,\n                        \"tied_options\": tied_details,\n                        \"vote_count\": _best_count,\n                        \"total_voters\": total_voters,\n                        \"message\": (\n                            f\"{len(_tied_option_indices)}개 시간이 {_best_count}표로 동점이에요. \"\n                            \"방장님이 직접 골라주세요.\"\n                        ),\n                    }\n                    try:\n                        await redis_client.publish(\n                            f\"agent:{meeting.room_id}\",\n                            json.dumps(tie_payload, ensure_ascii=False),\n                        )\n                    except Exception:\n                        logger.warning(\n                            \"Redis publish failed for vote tie meeting_id=%s\",\n                            meeting.id,\n                            exc_info=True,\n                        )\n                except Exception:\n                    logger.warning(\n                        \"Vote tie notice failed for meeting_id=%s\",\n                        meeting.id,\n                        exc_info=True,\n                    )\n            elif unanimity_rate < 1.0:\n                # 만장일치가 아님(단일 최다 득표) → 기존 갈등 조율 시도 (분기 불변)\n                try:\n                    best_option_idx = int(best_option)",
+     "note": "기존 'if unanimity_rate < 1.0:' 를 동점 가드(if ... and _is_tie) + 기존 단일-best 분기(elif)로 분리. 단일-best 분기 본문은 그대로 유지(아래 줄들 변경 없음)."
+    }
+   ],
+   "frontendDeferred": "동점 안내 UI(호스트 전용 '동점 — 직접 선택' 카드/배지)와 재투표(번복) 프론트 가드 완화는 미적용. 구현 시: (1) useAgentWebSocket 의 VoteUpdatePayload 타입에 optional `tie?: boolean; tied_option_indices?: number[]` 추가, (2) 신규 `vote_tie` WS 이벤트 핸들러 등록(type 분기) → ScheduleRecommendationCard/VoteCardSection 에서 isHost && tie 시 '동점이에요 — 방장이 직접 확정' 안내 + tied 옵션만 강조, (3) 재투표 허용을 위한 프론트 투표 잠금(이미 투표함) 가드 완화. 모두 backend additive 필드/이벤트만으로 동작 가능하도록 설계됨.",
+   "demoReasoning": "두 가지 이유로 데모 출력 불변. (1) 갈등조율/동점 블록 자체가 gate `num_voted >= total_voters and total_voters > 0`(line 748) 안에 있는데 데모는 num_voted=3, total_voters=4(호스트+게스트3, 전원 RoomMember)라 3>=4 False → 블록 미진입. (2) 설령 진입하더라도 게스트 전원 option_index=0 이라 aggregated={\\\"0\\\":3} 단일 best → _is_tie=False → 새 vote_tie 분기 미진입, 기존 elif(단일-best conflict_resolution) 분기로 동일하게 흐름. vote_update payload 에 추가한 tie/tied_option_indices 는 additive 키라 기존 프론트 소비자(MeetingContext.setVoteUpdate 는 update 객체를 그대로 저장만 함, 특정 키 파싱 없음)에 영향 없음. demo-scenario-v3.md 의 ACT3 화면(슬롯 vote count 변화 + TimeBar consensus 확정)은 vote_tie/tie 필드와 무관.",
+   "verdict": {
+    "id": "31",
+    "applySafe": true,
+    "breaksDemo": false,
+    "breaksReason": "",
+    "implementsDecision": true,
+    "anchorsUnique": true,
+    "signatureChange": false,
+    "confidence": 0.92,
+    "improvedNote": "검증 결과 #31은 적용 안전(applySafe=true), 데모 불변(breaksDemo=false), 결정 정확 구현(implementsDecision=true). 근거:\n\n[앵커 유일성] 3개 앵커 모두 grep 1건씩 정확 매칭 — 라인 711(aggregated_votes[key]…), 724(\\\"type\\\": \\\"vote_update\\\"), 754(if unanimity_rate < 1.0:). 파일 텍스트와 인덱스·들여쓰기까지 일치 확인.\n\n[데모 동점 없음] .gstack-demo.py 전체에서 /vote 호출은 단 1곳(859줄), 게스트 3명 전원 option_index=0(233~250 vote_as_user). 호스트는 /vote 미사용 — TimeBar WS time_selection + /rooms/{id}/schedule-confirm 로 확정(821·848·887줄). 따라서 votes={suhyun:0,minsu:0,yerin:0} → aggregated={\\\"0\\\":3} → _best_count=3, _tied_option_indices=[0], _is_tie=False. 동점 분기 미진입.\n\n[이중 안전망] 게다가 데모는 게스트 3명만 vote → num_voted=3, total_voters=4(호스트+게스트3, _current_member_ids 기준). meetings.py:748 `if num_voted >= total_voters` 게이트가 False라 갈등조율 블록 자체에 진입하지 않음(BUG-26-H 게스트 vote는 vote_count 표시용 cosmetic). 새 tie/elif 분기 어느 쪽도 데모에서 실행 안 됨.\n\n[구조 정합] edit1: 집계 루프 직후·total_voters 계산 전 삽입, 모든 참조 변수 스코프 내. edit2: vote_update payload에 additive 2키(tie,tied_option_indices) — 프론트 isVoteUpdatePayload(useAgentWebSocket.ts:208~217)는 type/meeting_id/total_voters만 검사, 미지 키 무시 → 소비자 안전. edit3: 원 `if unanimity_rate<1.0:`을 `if … and _is_tie`(vote_tie 발행, suggest_alternative_slots/conflict_resolution 미호출) + `elif unanimity_rate<1.0:`(원 단일-best 본문 보존)으로 분리. 원 if 블록은 813줄 try/except로 종료, 매달린 else 없음 → elif 오결합 위험 없음. 814줄 finally는 외부 try(736) 소속이라 영향 없음. vote_options(676), redis_client(730), logger·json·meeting·_best_count·_tied_option_indices 전부 스코프 내.\n\n[결정 구현] (1)최다득표 ≥2 동점 시 자동 단일선택 차단 + type=vote_tie WS 발행 — 구현됨. (2)비동점 시 기존 best_option 자동 분기 유지 — elif로 보존. (3)vote_update에 additive tie(bool)+tied_option_indices(list[int]) — 구현됨(비동점도 tie=false,[단일idx]로 동봉, 결정 명시와 일치). (4)동점 안내/재투표 가드 완화 UI는 frontendDeferred로 분리 — 정확.\n\n[시그니처] 함수 시그니처 변경 0, 모듈 로컬 변수(_best_count 등)만 추가.\n\n만장일치(aggregated={\\\"0\\\":4}, unanimity_rate=1.0) 케이스도 _is_tie=False & unanimity<1.0 False → 두 분기 모두 미진입, 원 동작(만장일치 시 조율 안 함) 보존 확인. 적용 권고."
+   }
+  },
+  {
+   "id": "#58",
+   "decisionImplemented": "1인 모임(현재 RoomMember 수 < 2)에서는 vote_card 생성을 건너뛴다. vote_card_creation 진입부에서 RoomMember 수를 세고, member_count < 2면 #48과 동일한 status='vote_card_skipped' 패턴으로 무음 종료하되, 그 전에 '혼자 계신 방이라 시간을 바로 확정하실 수 있어요' narrator를 발화한다. 라운드2 #27이 social.py _maybe_emit_proposal의 consensus 발화는 이미 차단했고, finalization proposal의 1표 자동확정 경로(scheduling_round.is_majority_reached)는 _maybe_emit_proposal의 member_count<2 가드가 상위에서 proposal 생성 자체를 막으므로 솔로 방에선 도달 불가 — 추가 가드는 방어적(additive) 차원에서만 별도 edit으로 제안.",
+   "stillNeeded": true,
+   "edits": [
+    {
+     "targetFile": "backend/app/services/pipeline/nodes/vote_card.py",
+     "mode": "insert-after",
+     "locateAnchor": "        selected_slot = state[\"calendar_free_slots\"][0] if state.get(\"calendar_free_slots\") else {}\n        start_at = _parse_iso_datetime(selected_slot.get(\"start_at\")) if selected_slot else None\n        meeting_id = selected_slot.get(\"meeting_id\") or selected_slot.get(\"id\")",
+     "newCode": "\n        # finding #58: 1인 모임(현재 RoomMember 수 < 2)은 투표/제안 흐름을 건너뛰고\n        # 바로 확정 안내로 처리. 라운드2 #27이 social.py consensus 발화를 이미 차단했고,\n        # 여기서는 남은 vote_card 경로를 #48과 동일한 status·무음 종료(라우터 END)로 막되,\n        # 혼자임을 알리는 narrator 한 줄을 발화한다. 다인 데모(멤버>=2)는 분기 미진입 → 불변.\n        try:\n            _room_pk_solo = _room_id_as_int(state[\"room_id\"])\n            if _room_pk_solo is not None:\n                _member_count = (\n                    await state[\"db\"].execute(\n                        select(RoomMember).where(RoomMember.room_id == _room_pk_solo)\n                    )\n                ).scalars().all()\n                if len(_member_count) < 2:\n                    narrator = \"혼자 계신 방이라 투표 없이 시간을 바로 확정하실 수 있어요. 원하는 시간을 알려주세요. 🕒\"\n                    async with AsyncSessionLocal() as _db_solo:\n                        await _emit_assistant_message(state[\"room_id\"], _db_solo, narrator, state, shared=True)\n                    state[\"status\"] = \"vote_card_skipped\"\n                    logger.info(\n                        \"[VOTE_CARD] skipped (solo room, member_count=%d) %.2fs\",\n                        len(_member_count), time.monotonic() - _t0,\n                    )\n                    return state\n        except Exception:\n            # 멤버 카운트 조회 실패는 happy path를 막지 않음 — 정상 vote_card 흐름 유지.\n            logger.warning(\"[VOTE_CARD] solo-room member_count probe failed\", exc_info=True)\n",
+     "note": "#48과 동일한 status='vote_card_skipped' + 무음 종료 패턴. state['db']는 라인 306~309의 member 조회와 동일한 라이브 세션. narrator emit은 라인 199~200/220~221 skip 블록과 동일하게 AsyncSessionLocal() 사용. try/except로 감싸 조회 실패 시 happy path 보존. is_majority_fallback/preference_based 등 후속 분기보다 앞에 배치되지만, 멤버>=2면 분기 미진입이라 기존 경로 모두 보존."
+    },
+    {
+     "targetFile": "backend/app/services/scheduling_round.py",
+     "mode": "replace",
+     "locateAnchor": "    @property\n    def is_majority_reached(self) -> bool:\n        \"\"\">50% of eligible voters chose 'like'.\"\"\"\n        if self.total_eligible_voters <= 0:\n            return False\n        return self.like_count * 2 > self.total_eligible_voters",
+     "newCode": "    @property\n    def is_majority_reached(self) -> bool:\n        \"\"\">50% of eligible voters chose 'like'.\n\n        finding #58: 1인 모임(eligible<2)에서는 1표만으로 과반이 성립해\n        자동 확정되는 사각지대가 있어, 방어적으로 eligible<2면 과반 미달로 본다.\n        솔로 방은 상위 _maybe_emit_proposal(social.py, 라운드2 #27)의 member_count<2\n        가드로 proposal 생성 자체가 막히므로 정상 흐름엔 도달하지 않지만,\n        혹시 stale proposal이 남아도 1표 자동확정을 막는 additive 가드.\n        \"\"\"\n        if self.total_eligible_voters < 2:\n            return False\n        return self.like_count * 2 > self.total_eligible_voters",
+     "note": "기존 `<= 0` → `< 2`로 임계만 좁힘. is_majority_reached는 record_vote(427줄)·confirm_proposal(461줄) 두 호출부에서만 사용되며 둘 다 1인 모임에선 _maybe_emit_proposal 가드 때문에 proposal이 없어 영향 없음. 다인 모임(eligible>=2)은 동작 완전 불변. 데모는 eligible=4라 무관."
+    }
+   ],
+   "frontendDeferred": "없음(backend-only로 완결). 추가로 1인 모임용 인터랙티브 '바로 확정' 다이얼로그(narrator 대신 즉시 확정 버튼)나 재투표/번복 UI 가드 완화는 프론트 동반이 필요하나 이번 결정 범위 밖이라 미포함. 현재는 narrator 안내 + vote_card skip(무음)으로 backend 핵심만 충족.",
+   "demoReasoning": "데모는 매번 새 방에 호스트+게스트3=4명. vote_card_creation 진입 시 RoomMember 수 4 → `len < 2` False → 새 솔로 분기 미진입, 기존 is_majority_fallback/preference_based/multi_date_vote 분기 전부 그대로 실행. ACT2.5 majority_fallback vote_card, ACT3 TimeBar 합의, ACT4 partial maedeup, ACT5 장소 모두 불변. 새 분기는 selected_slot/meeting_id 계산 직후·is_multi_date 판정 전에 삽입되지만 멤버>=2면 즉시 통과하므로 가시 출력·라우팅 변화 없음. narrator도 솔로 방에서만 발화. scheduling_round 가드는 eligible=4(다인)라 `<2`에 걸리지 않아 proposal/confirm 동작 동일. 게스트 vote는 meetings vote 엔드포인트(option_index)로 proposal like/other choice와 무관 — 동점 여부도 무관.",
+   "verdict": {
+    "id": "58",
+    "applySafe": true,
+    "breaksDemo": false,
+    "implementsDecision": true,
+    "anchorsUnique": true,
+    "signatureChange": false,
+    "confidence": 0.9,
+    "breaksReason": "데모 ACT2.5는 호스트+게스트3=멤버4명이므로 Edit#1의 솔로 가드(len<2)는 진입조차 안 함 — 게스트가 모두 join하는 .gstack-demo.py:686~695로 확인. 가드는 anchor(L231) 직후, single-slot/majority_fallback/#48 분기보다 앞에 배치되나 멤버>=2면 fall-through라 기존 happy path 전부 보존. Edit#2의 is_majority_reached는 finalization proposal flow(record_vote L427·host_confirm L461)에서만 사용되는데, 데모는 ACT3에서 TimeBar consensus + POST /rooms/{id}/schedule-confirm로 확정하고 게스트 vote는 /meetings/{id}/vote(vote_meeting L649, 자체 집계, is_majority_reached 미사용)로 처리하므로 이 프로퍼티에 도달하지 않음. total_eligible_voters>=2 동작 완전 불변(==1 솔로 엣지만 차단). 데모 게스트 3명은 .gstack-demo.py:858~859에서 전원 option_index=0 동일 투표 → 동점 아님이며 이 패치들과 무관.",
+    "improvedNote": "Edit#1: locateAnchor grep 유일(L229~231 단일 매치). 인용 심볼 전부 in-scope — select(L26)·RoomMember(L34)·AsyncSessionLocal(L31)·_room_id_as_int/_emit_assistant_message(L36~44)·time/_t0(L22/L185)·logger(L54)·state['db'](L302/306 동일 라이브세션). vote_card_skipped + return state는 라우터 END 정합(기존 4곳 선례, #48과 동일 패턴이 main 8207117에 이미 작동 중). try/except로 probe 실패 시 happy path 보존. 솔로 가드는 social.py _maybe_emit_proposal L79 member_count<2 차단(라운드2 #27)과 일관 — 결정 방향(멤버<2 → narrator 발화 + skip) 정확히 구현. Edit#2: anchor 정확 일치(L121~125, 한 줄 docstring + `<= 0` → `< 2`). is_majority_reached는 L427·L461 두 곳에서만 사용, 둘 다 finalization flow라 데모 미경유. 솔로 방은 social.py 가드로 proposal 생성 자체가 막혀 정상 흐름 도달 불가 — additive 방어 가드로 적절. 두 edit 모두 함수 시그니처 불변·additive·데모 불변. 권고: 적용 안전."
+   }
+  },
+  {
+   "id": "#41",
+   "decisionImplemented": "같은 room에 이미 활성 confirmed 모임(status==confirmed AND scheduled_at>=now)이 있으면, 자동 트리거(stalemate_judged / all_members_selected)에 한해 파이프라인을 억제하고 \"이미 확정된 모임이 있어요\" narrator만 발행 후 early-return. direct_request(ACT5 사용자 명시 요청)는 _run_auto_trigger_pipeline을 타지 않으므로 이 패치의 영향 밖이며, \"새로 잡을까요?\" 인터랙티브 다이얼로그는 frontendDeferred로 분리.",
+   "stillNeeded": true,
+   "edits": [
+    {
+     "targetFile": "backend/app/api/ws/agent.py",
+     "mode": "insert-after",
+     "locateAnchor": "    try:\n        # 해결점 B: trigger_reason별 분석중 메시지 즉시 발행 (LLM 분석 전)\n        # — 5~15초 LLM 대기 동안 사용자에게 \"AI가 일하는 중\"임을 알림.\n        # all_members_selected는 TimeBar 합의 구간을 동적으로 박아 시연 임팩트 ↑.\n        greeting: str | None = None",
+     "newCode": "        # #41 — F 재트리거 억제: 같은 room에 이미 활성 confirmed 모임이 있으면\n        # 자동 트리거(stalemate/all_members_selected)는 파이프라인 억제 + 안내만.\n        # direct_request(ACT5 사용자 명시 요청)는 이 함수를 타지 않으므로 영향 없음.\n        # 데모는 매번 새 방 → 시작 시 confirmed 없음 → 억제 미발동(불변).\n        if trigger_reason in {\"stalemate_judged\", \"all_members_selected\"}:\n            if await _has_active_confirmed_meeting(room_id):\n                logger.info(\n                    \"[AUTO_TRIGGER] suppressed: active confirmed meeting exists room=%s reason=%s\",\n                    room_id, trigger_reason,\n                )\n                await _emit_auto_trigger_greeting(\n                    redis_client,\n                    room_id,\n                    shared_channel,\n                    \"이미 확정된 모임이 있어요. 새로 잡고 싶으면 말씀해 주세요 🙂\",\n                )\n                return\n",
+     "note": "억제 분기를 try 블록 진입 직후·greeting 생성 직전에 삽입. anchor 줄(greeting: str | None = None) 바로 뒤에 추가하면 기존 greeting/분석/run_pipeline 흐름은 그대로 보존(additive). early-return은 finally의 redis aclose를 정상 통과."
+    },
+    {
+     "targetFile": "backend/app/api/ws/agent.py",
+     "mode": "new-helper",
+     "locateAnchor": "async def _run_auto_trigger_pipeline(",
+     "newCode": "async def _has_active_confirmed_meeting(room_id: str) -> bool:\n    \"\"\"#41: room에 활성(미래) confirmed MeetingSchedule이 존재하는지 검사.\n\n    재트리거 억제 게이트 — status==confirmed AND scheduled_at>=now(naive UTC).\n    DB/파싱 실패 시 False(fail-open) — 억제는 보수적으로만 발동(데모 안전).\n    \"\"\"\n    from app.models.meeting import MeetingSchedule, MeetingStatus\n\n    try:\n        room_pk = int(room_id)\n    except (TypeError, ValueError):\n        return False\n    try:\n        now = datetime.now(timezone.utc).replace(tzinfo=None)\n        async with AsyncSessionLocal() as session:\n            found = (\n                await session.execute(\n                    select(MeetingSchedule.id)\n                    .where(\n                        MeetingSchedule.room_id == room_pk,\n                        MeetingSchedule.status == MeetingStatus.confirmed,\n                        MeetingSchedule.scheduled_at >= now,\n                    )\n                    .limit(1)\n                )\n            ).scalar_one_or_none()\n        return found is not None\n    except Exception:\n        logger.warning(\"[AUTO_TRIGGER] confirmed-meeting probe failed room=%s\", room_id, exc_info=True)\n        return False\n\n\n",
+     "note": "새 헬퍼를 _run_auto_trigger_pipeline 정의 바로 앞에 추가. MeetingSchedule/MeetingStatus는 함수 내부 지역 import로 모듈 import 블록 무변경(다른 호출부 regress 방지). datetime/timezone은 datetime import 필요 — 아래 frontendDeferred 참고."
+    },
+    {
+     "targetFile": "backend/app/api/ws/agent.py",
+     "mode": "replace",
+     "locateAnchor": "from datetime import datetime",
+     "newCode": "from datetime import datetime, timezone",
+     "note": "현 파일 line4는 `from datetime import datetime` 단독. timezone을 추가해야 _has_active_confirmed_meeting의 naive-UTC now 계산이 동작. datetime은 기존에 이미 사용 중이라 grep 유일. 이 한 줄만 변경(additive 토큰 추가)."
+    }
+   ],
+   "frontendDeferred": "사용자 명시 요청(\"X 추천해줘\")에 대한 인터랙티브 \"이미 확정된 모임이 있어요 — 새로 잡을까요?\" 다이얼로그(yes→재트리거 허용, no→유지)는 프론트 동반 필수라 이번 backend 패치에서 제외. direct_request 경로(receive loop)에서 confirmed 모임 감지 시 다이얼로그 트리거 payload를 발행하고, 프론트 AiAssistantPane이 확인 버튼을 렌더 → 사용자가 'yes' 선택 시 slot_context에 override 플래그를 실어 재요청하는 별도 PR로 분리 권고. backend 핵심(자동 트리거 억제 + narrator 안내)만 이번에 적용.",
+   "demoReasoning": "데모는 매번 새 방으로 시작(task 명시) → 시작 시 confirmed 모임 0건. ACT2(stalemate)·ACT2.5·ACT3(all_members_selected) 자동 트리거가 발생하는 시점에는 아직 confirmed 모임이 없음 → _has_active_confirmed_meeting=False → 억제 미발동, 기존 vote_card/maedeup_card 발행 흐름 불변. ACT3에서 모임이 confirmed로 전환되지만, 그 이후 데모에 추가 stalemate_judged/all_members_selected 자동 트리거가 없음(ACT4는 ACT3 확정의 후속 maedeup_card, ACT5는 direct_request). 따라서 happy-path 출력 전부 불변. early-return 위치도 finally의 redis aclose를 정상 통과해 리소스 누수 없음.",
+   "verdict": {
+    "id": "41",
+    "applySafe": true,
+    "breaksDemo": false,
+    "breaksReason": "데모는 게이트가 발동하는 트리거 시점에 활성 confirmed 모임이 없으므로 억제 미발동. (1) stalemate_judged(ACT2/2.5)는 fresh room에서 발동 → confirmed 없음 → gate False. (2) all_members_selected(ACT3): rooms.py schedule_confirm(593~598)은 트리거 publish만 하고 status=confirmed는 다운스트림 파이프라인에서 세팅 → 트리거 dispatch 시점엔 meeting이 여전히 pending → gate False → ACT4 partial 카드 정상 발행. (3) direct_request(ACT5)는 WS receive loop(run_pipeline line 1160)로 처리, _run_auto_trigger_pipeline 미경유 → 게이트 도달 불가. 게스트 vote는 전원 option_index=0(.gstack-demo.py:859)으로 동점 아님이며 패치는 vote 경로 무관.",
+    "implementsDecision": true,
+    "anchorsUnique": true,
+    "signatureChange": false,
+    "confidence": 0.9,
+    "improvedNote": "검증 완료, applySafe=true. 앵커 3개 모두 grep 유일·verbatim 일치: edit1 멀티라인 앵커=line373~377 정확 일치(`greeting: str | None = None` line377 1회), edit2 `async def _run_auto_trigger_pipeline(`=line349 1회, edit3 `from datetime import datetime`=line4 1회. 의존성 전부 해소: select/AsyncSessionLocal/datetime/logger=모듈 레벨, timezone=edit3가 추가, MeetingSchedule/MeetingStatus=함수 내 지역 import(모듈 미import 확인→shadowing 없음). status==MeetingStatus.confirmed AND scheduled_at>=now(naive UTC) 비교는 meetings.py:248~260의 기존 production 패턴과 동일(String(32) 컬럼 vs str-Enum 비교 정상). early-return은 finally(line607~610) redis aclose 정상 통과. 억제 시 분석중 greeting 대신 안내 메시지만 발행=의도대로. implementsDecision=true(게이트 {stalemate_judged,all_members_selected}로 정확히 한정, direct_request 무수정, 인터랙티브 다이얼로그 frontendDeferred 분리, DB 실패 fail-open=보수적 억제). [경미 nit, non-blocking] edit1·edit2 note가 timezone 의존성을 'frontendDeferred 참고'로 적었으나 실제로는 edit3가 처리 — 문서 부정확일 뿐 기능 영향 없음. [범위 관찰, 데모 무관] conclusion_detected(social.py:681)는 게이트 미포함 3번째 자동 트리거 — 결정이 stalemate/all_members만 명시했으므로 결정 위반 아니나, 자유사용에서 confirmed 존재 방의 conclusion_detected는 여전히 파이프라인 재실행됨(향후 확장 후보)."
+   }
+  }
+ ],
+ "rejected": [
+  {
+   "id": "#19",
+   "stillNeeded": true,
+   "applySafe": true,
+   "breaksDemo": false,
+   "breaksReason": "",
+   "implementsDecision": true,
+   "improvedNote": "검증 결과 applySafe=true. 4개 anchor 모두 grep 유일·정확 일치 (scheduling_round.py:120-125 / :436 / :461-465, meetings.py:486-495). 데모 무영향 확인: ACT3 확정은 POST /rooms/{id}/schedule-confirm(rooms.py:512)를 타며 host_confirm·proposal_id·is_majority_reached를 전혀 거치지 않는다(.gstack-demo.py:882-887 '추천 시간 그대로 확정' 클릭). 게스트 vote 3건은 모두 option_index=0(만장일치, 동점 아님)이며 레거시 /meetings/{id}/vote(vote_meeting) 경로 → Proposal dataclass/B경로와 무관하므로 #19와 코드 경로가 분리됨. 데모는 proposal_id를 절대 보내지 않아 confirm_meeting의 proposal 분기(신규 SELECT+host_confirm)가 실행되지 않음 → 신규 RoomMember 카운트 쿼리도 데모에서 미실행. signatureChange=true이나 keyword-only(* 이후) 기본값 None 인자라 유일 호출부(meetings.py:489 keyword 호출) 안전, Optional import 존재(line22). eligible_override=None이면 effective_eligible==total_eligible_voters로 산술 동치 → 기존 동작 100% 보존. is_majority_reached property 보존(record_vote:427 사용처 영향 0), majority_reached_for는 additive. select(RoomMember.user_id)+len(scalars().all())은 _current_member_ids(meetings.py:171-174)와 동일 패턴, 신규 import 불필요. BelowMajorityError 메시지의 eligible 표기 변경은 문자열만. implementsDecision=true(확정 시점 현재 멤버 수 재조회·과반 재계산, 게스트 포함을 정확히 구현). 참고(비차단): 신규 SELECT는 전체 RoomMember를 세므로 propose() 시점 total_eligible_voters와 '자격자' 정의가 다를 경우 실제 proposal 흐름의 과반 의미가 달라질 수 있으나 결정문이 '현재 멤버 수·게스트 포함'을 명시하므로 의도된 동작이며 데모 경로는 미영향.",
+   "edits": [
+    {
+     "targetFile": "backend/app/services/scheduling_round.py",
+     "mode": "insert-after",
+     "locateAnchor": "    @property\n    def is_majority_reached(self) -> bool:\n        \"\"\">50% of eligible voters chose 'like'.\"\"\"\n        if self.total_eligible_voters <= 0:\n            return False\n        return self.like_count * 2 > self.total_eligible_voters",
+     "newCode": "\n    def majority_reached_for(self, eligible: int) -> bool:\n        \"\"\"#19 (free-use round4): 임의의 eligible 수 기준 과반 판정.\n\n        proposal 생성 시점 고정값(total_eligible_voters) 대신 확정 시점에\n        재조회한 현재 RoomMember 수로 과반을 재계산하기 위한 헬퍼.\n        eligible<=0이면 판정 불가(과반 차단). is_majority_reached와 동일 로직.\n        \"\"\"\n        if eligible <= 0:\n            return False\n        return self.like_count * 2 > eligible",
+     "note": "Proposal dataclass에 신규 메서드 추가. 기존 is_majority_reached property는 그대로 보존(record_vote:427·finalization payload 등 영향 없음)."
+    },
+    {
+     "targetFile": "backend/app/services/scheduling_round.py",
+     "mode": "replace",
+     "locateAnchor": "async def host_confirm(\n    redis: aioredis.Redis,\n    *,\n    room_id: int,\n    proposal_id: str,\n    user_id: int,\n    room_host_id: int,\n) -> Proposal:",
+     "newCode": "async def host_confirm(\n    redis: aioredis.Redis,\n    *,\n    room_id: int,\n    proposal_id: str,\n    user_id: int,\n    room_host_id: int,\n    eligible_override: Optional[int] = None,\n) -> Proposal:",
+     "note": "시그니처에 기본값 None 인자 추가 — keyword-only(*) 영역이라 유일 호출부(meetings.py:489, keyword 호출) 안전. 미지정 시 동작 불변."
+    },
+    {
+     "targetFile": "backend/app/services/scheduling_round.py",
+     "mode": "replace",
+     "locateAnchor": "    if not proposal.is_majority_reached:\n        raise BelowMajorityError(\n            f\"likes={proposal.like_count} / eligible={proposal.total_eligible_voters}\"\n        )\n    return proposal",
+     "newCode": "    # #19 (free-use round4): 확정 시점 최신 멤버 수로 과반 재계산.\n    # eligible_override가 오면 그것(현재 RoomMember 수)을, 없으면 생성 시점\n    # 고정값(total_eligible_voters)을 사용 → 기존 호출부 동작 불변.\n    effective_eligible = (\n        eligible_override\n        if eligible_override is not None\n        else proposal.total_eligible_voters\n    )\n    if not proposal.majority_reached_for(effective_eligible):\n        raise BelowMajorityError(\n            f\"likes={proposal.like_count} / eligible={effective_eligible}\"\n        )\n    return proposal",
+     "note": "is_majority_reached(고정값 기반)를 majority_reached_for(재계산 기반)로 교체. eligible_override None이면 effective_eligible==total_eligible_voters라 산술적으로 기존과 동일."
+    },
+    {
+     "targetFile": "backend/app/api/routes/meetings.py",
+     "mode": "replace",
+     "locateAnchor": "        # Finalization-proposal path: validate proposal state before DB write.\n        if body.proposal_id is not None:\n            try:\n                await sr.host_confirm(\n                    redis,\n                    room_id=body.room_id,\n                    proposal_id=body.proposal_id,\n                    user_id=int(current_user.sub),\n                    room_host_id=room.created_by,\n                )",
+     "newCode": "        # Finalization-proposal path: validate proposal state before DB write.\n        if body.proposal_id is not None:\n            # #19 (free-use round4): 확정 시점의 현재 RoomMember 수를 재조회해\n            # 과반을 재계산한다. proposal 생성 시점 고정값(total_eligible_voters)\n            # 대신 최신 멤버 수 기준 — 중간 join/leave가 있으면 과반 기준이 갱신됨.\n            # 게스트도 RoomMember이므로 그대로 포함. 데모는 중간 변동 없어 동일값.\n            _eligible_rows = await session.execute(\n                select(RoomMember.user_id).where(\n                    RoomMember.room_id == body.room_id\n                )\n            )\n            _current_eligible = len(_eligible_rows.scalars().all())\n            try:\n                await sr.host_confirm(\n                    redis,\n                    room_id=body.room_id,\n                    proposal_id=body.proposal_id,\n                    user_id=int(current_user.sub),\n                    room_host_id=room.created_by,\n                    eligible_override=_current_eligible,\n                )",
+     "note": "confirm_meeting proposal 분기에서 현재 멤버 수를 세어 eligible_override로 전달. select(RoomMember.user_id)+len(scalars().all())은 같은 파일 _current_room_member_ids(line 172 인근) 동일 패턴 → 새 import 불필요(select·RoomMember 이미 import). 이 edit은 try 직전까지만 교체, except 블록·이후 코드는 불변."
+    }
+   ],
+   "frontendDeferred": "없음 — 백엔드 전용으로 완결. 재투표/멤버 변동 UI 가드나 'X명이 나가서 과반 기준이 바뀌었어요' 안내 메시지는 본 항목 범위 밖이며 필요 시 추후 분리. 현 백엔드 핵심은 confirm 시점 과반 재계산만으로 충족."
+  }
+ ]
+}

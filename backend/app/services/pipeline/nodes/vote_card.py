@@ -229,6 +229,33 @@ async def vote_card_creation(state: GraphState) -> GraphState:
         selected_slot = state["calendar_free_slots"][0] if state.get("calendar_free_slots") else {}
         start_at = _parse_iso_datetime(selected_slot.get("start_at")) if selected_slot else None
         meeting_id = selected_slot.get("meeting_id") or selected_slot.get("id")
+
+        # finding #58: 1인 모임(현재 RoomMember 수 < 2)은 투표/제안 흐름을 건너뛰고
+        # 바로 확정 안내로 처리. 라운드2 #27이 social.py consensus 발화를 이미 차단했고,
+        # 여기서는 남은 vote_card 경로를 #48과 동일한 status·무음 종료(라우터 END)로 막되,
+        # 혼자임을 알리는 narrator 한 줄을 발화한다. 다인 데모(멤버>=2)는 분기 미진입 → 불변.
+        try:
+            _room_pk_solo = _room_id_as_int(state["room_id"])
+            if _room_pk_solo is not None:
+                _solo_members = (
+                    await state["db"].execute(
+                        select(RoomMember).where(RoomMember.room_id == _room_pk_solo)
+                    )
+                ).scalars().all()
+                if len(_solo_members) < 2:
+                    narrator = "혼자 계신 방이라 투표 없이 시간을 바로 확정하실 수 있어요. 원하는 시간을 알려주세요. 🕒"
+                    async with AsyncSessionLocal() as _db_solo:
+                        await _emit_assistant_message(state["room_id"], _db_solo, narrator, state, shared=True)
+                    state["status"] = "vote_card_skipped"
+                    logger.info(
+                        "[VOTE_CARD] skipped (solo room, member_count=%d) %.2fs",
+                        len(_solo_members), time.monotonic() - _t0,
+                    )
+                    return state
+        except Exception:
+            # 멤버 카운트 조회 실패는 happy path를 막지 않음 — 정상 vote_card 흐름 유지.
+            logger.warning("[VOTE_CARD] solo-room member_count probe failed", exc_info=True)
+
         if state.get("date_hint"):
             state["confirmed_date"] = state.get("date_hint")
         if start_at is not None:

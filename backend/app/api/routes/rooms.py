@@ -610,9 +610,9 @@ async def leave_room(
 
     - 모든 사용자: 본인 RoomMember + MeetingPreference + MeetingParticipant 삭제,
       이 방의 confirmed 모임에서 본인 캘린더 이벤트 best-effort 삭제.
-    - 호스트(room.created_by) + 다른 멤버 존재 시: 이 방의 모든 활성(pending|confirmed)
-      모임을 cancelled로 전환 → 모든 멤버의 캘린더 이벤트 삭제 + meeting_cancelled
-      WS 브로드캐스트.
+    - 호스트(room.created_by) + 다른 멤버 존재 시: 활성 모임을 cancel하지 않고, 남은
+      멤버 중 가장 먼저 가입한 멤버에게 소유권 이양(created_by 갱신 + role=owner 승격)
+      → host_transferred WS 브로드캐스트 (free-use audit round4 #11+#20).
     - Idempotent: 이미 방에 없으면 빈 응답으로 200.
     """
     user_id = int(current_user.sub)
@@ -646,61 +646,50 @@ async def leave_room(
     triggered_cancellation = False
 
     if is_host and other_members_count > 0:
-        # 호스트가 다른 멤버 두고 나감 → 활성 모임 전체 cancel.
-        triggered_cancellation = True
-        active_result = await session.execute(
-            select(MeetingSchedule).where(
-                MeetingSchedule.room_id == room_id,
-                MeetingSchedule.status != MeetingStatus.cancelled,
+        # free-use audit round4 #11+#20: 호스트가 다른 멤버를 두고 나감.
+        # 기존엔 활성 모임을 전부 cancel했으나 → 남은 멤버 입장에서 모임이 고아화되고
+        # created_by가 떠난 user에 고정돼 schedule-confirm/place/cancel 권한이 영구 공백(#20).
+        # 대신 남은 멤버 중 가장 먼저 가입한 멤버에게 소유권을 자동 이양한다:
+        #   - Room.created_by = 새 호스트 user_id
+        #   - 새 호스트 RoomMember.role = owner 승격
+        # 활성 모임은 유지(유효 호스트가 생겼으므로 cancel 불필요).
+        # 데모: 호스트는 leave하지 않으므로 이 분기 자체가 happy path에서 미실행.
+        new_host_result = await session.execute(
+            select(RoomMember)
+            .where(
+                RoomMember.room_id == room_id,
+                RoomMember.user_id != user_id,
             )
+            .order_by(RoomMember.joined_at.asc(), RoomMember.id.asc())
+            .limit(1)
         )
-        active_meetings = active_result.scalars().all()
-
-        room_members_result = await session.execute(
-            select(User)
-            .join(RoomMember, RoomMember.user_id == User.id)
-            .where(RoomMember.room_id == room_id)
-        )
-        room_member_users = room_members_result.scalars().all()
-
-        for meeting in active_meetings:
-            meeting.status = MeetingStatus.cancelled
-            meeting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            session.add(meeting)
-            cancelled_meeting_ids.append(meeting.id)
-
-        await session.commit()
-
-        for meeting in active_meetings:
-            await session.refresh(meeting)
+        new_host_member = new_host_result.scalar_one_or_none()
+        if new_host_member is not None:
+            room.created_by = new_host_member.user_id
+            new_host_member.role = MemberRole.owner
+            session.add(room)
+            session.add(new_host_member)
+            await session.commit()
+            triggered_cancellation = True  # 이양 발생 신호 (모임 cancel은 안 함)
+            logger.info(
+                "leave_room: host=%s left room=%s → ownership transferred to user=%s (oldest member)",
+                user_id, room_id, new_host_member.user_id,
+            )
             try:
                 await _publish_finalization_event(
                     redis,
                     room_id,
                     {
-                        "type": "meeting_cancelled",
+                        "type": "host_transferred",
                         "room_id": room_id,
-                        "meeting_id": meeting.id,
+                        "new_host_user_id": new_host_member.user_id,
+                        "previous_host_user_id": user_id,
                     },
                 )
             except Exception:
                 logger.warning(
-                    "Failed to broadcast meeting_cancelled on host leave (meeting_id=%s)",
-                    meeting.id, exc_info=True,
-                )
-            try:
-                remaining = await delete_events_for_meeting_members(
-                    meeting, room_member_users, session
-                )
-                if remaining != (meeting.google_event_ids or {}):
-                    meeting.google_event_ids = remaining
-                    session.add(meeting)
-                    await session.commit()
-                    await session.refresh(meeting)
-            except Exception:
-                logger.warning(
-                    "Calendar fan-out delete failed on host leave (meeting_id=%s)",
-                    meeting.id, exc_info=True,
+                    "Failed to broadcast host_transferred (room_id=%s, new_host=%s)",
+                    room_id, new_host_member.user_id, exc_info=True,
                 )
     else:
         # 일반 멤버 OR 호스트 단독: 본인 캘린더 이벤트만 정리.

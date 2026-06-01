@@ -119,10 +119,25 @@ class Proposal:
 
     @property
     def is_majority_reached(self) -> bool:
-        """>50% of eligible voters chose 'like'."""
-        if self.total_eligible_voters <= 0:
+        """>50% of eligible voters chose 'like'.
+
+        finding #58: 1인 모임(eligible<2)에서는 1표만으로 과반이 성립해 자동 확정되는
+        사각지대가 있어, 방어적으로 eligible<2면 과반 미달로 본다. 솔로 방은 상위
+        _maybe_emit_proposal(social.py, 라운드2 #27)의 member_count<2 가드로 proposal
+        생성 자체가 막히지만, 혹시 stale proposal이 남아도 1표 자동확정을 막는 additive 가드.
+        """
+        return self.majority_reached_for(self.total_eligible_voters)
+
+    def majority_reached_for(self, eligible: int) -> bool:
+        """#19 (free-use round4): 임의의 eligible 수 기준 과반 판정.
+
+        proposal 생성 시점 고정값(total_eligible_voters) 대신 확정 시점에 재조회한
+        현재 RoomMember 수로 과반을 재계산하기 위한 헬퍼. #58과 일관되게 eligible<2면
+        과반 미달로 본다(1인 모임 자동확정 차단).
+        """
+        if eligible < 2:
             return False
-        return self.like_count * 2 > self.total_eligible_voters
+        return self.like_count * 2 > eligible
 
 
 class SchedulingRoundError(Exception):
@@ -440,6 +455,7 @@ async def host_confirm(
     proposal_id: str,
     user_id: int,
     room_host_id: int,
+    eligible_override: Optional[int] = None,
 ) -> Proposal:
     """
     Host finalizes the proposal. Does NOT call the /meetings/confirm DB write —
@@ -458,9 +474,17 @@ async def host_confirm(
         raise SupersededError(f"proposal {proposal_id} superseded by {proposal.superseded_by}")
     if proposal.status == ProposalStatus.confirmed:
         return proposal   # idempotent
-    if not proposal.is_majority_reached:
+    # #19 (free-use round4): 확정 시점 최신 멤버 수로 과반 재계산.
+    # eligible_override가 오면 그것(현재 RoomMember 수)을, 없으면 생성 시점
+    # 고정값(total_eligible_voters)을 사용 → 기존 호출부 동작 불변.
+    effective_eligible = (
+        eligible_override
+        if eligible_override is not None
+        else proposal.total_eligible_voters
+    )
+    if not proposal.majority_reached_for(effective_eligible):
         raise BelowMajorityError(
-            f"likes={proposal.like_count} / eligible={proposal.total_eligible_voters}"
+            f"likes={proposal.like_count} / eligible={effective_eligible}"
         )
     return proposal
 

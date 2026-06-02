@@ -268,6 +268,14 @@ async def guest_join_room(
     await session.commit()
     await session.refresh(guest)
 
+    # 멤버 변동 → free-slots 캐시(TTL 30s) 무효화. 안 하면 캘린더 X/N 분모가
+    # 캐시된 옛 멤버수로 최대 30초 남아 2/2 → (나중에) 4/4로 늦게 갱신됨.
+    try:
+        from app.api.routes.calendar import invalidate_free_slots_cache
+        await invalidate_free_slots_cache(room.id)
+    except Exception:
+        logger.warning("free-slots cache invalidate failed (guest-join) room=%s", room.id, exc_info=True)
+
     # G-1: 다른 멤버에게 새 join 알림 → frontend가 받아서 캘린더 X/N 자동 갱신.
     # _publish_social_message wrapper 사용 — Redis 실패 시 manager.broadcast fallback.
     # 발행 실패는 join 자체를 실패시키지 않음 (silent).
@@ -763,6 +771,13 @@ async def leave_room(
             "Failed to broadcast member_left (room_id=%s, user_id=%s)",
             room_id, user_id, exc_info=True,
         )
+
+    # 멤버 탈퇴 → free-slots 캐시 무효화 (분모 즉시 감소).
+    try:
+        from app.api.routes.calendar import invalidate_free_slots_cache
+        await invalidate_free_slots_cache(room_id)
+    except Exception:
+        logger.warning("free-slots cache invalidate failed (leave) room=%s", room_id, exc_info=True)
 
     return LeaveRoomResponse(
         room_id=room_id,

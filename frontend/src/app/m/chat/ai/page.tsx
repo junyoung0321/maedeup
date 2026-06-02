@@ -42,6 +42,9 @@ function MobileMeetingInner({ roomId, room }: { roomId: string; room: Room | nul
       setTab("calendar");
     } else if (phaseChanged && infoPanePhase === "dateConfirmed") {
       setTab("calendar");
+    } else if (phaseChanged && infoPanePhase === "timeConfirmed") {
+      // 시간 확정 직후 → AI 탭(매듭 카드 + "이제 어디서 만날까?" 장소 추천 안내가 거기 뜸).
+      setTab("ai");
     }
   }, [infoPanePhase, contextMode]);
 

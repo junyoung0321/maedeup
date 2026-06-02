@@ -114,6 +114,10 @@ def _resolve(constraints: list, today: datetime, window: int = _WINDOW) -> dict:
             available |= iso_set
 
     rejected.discard(today_iso)  # 오늘은 발화에서 보통 미언급 — 과확장 방지
+    # 정정(reflect-back 후 "아 그날은 돼") 반영: 명시적 가능/선호로 표현된 날짜는
+    # 거부에서 제외한다. 'X 빼고 다 바빠'(거부) + '수요일은 돼'(가능)가 같은 날짜를
+    # 양쪽에 넣어도, 더 구체적·긍정적인 '가능'이 blanket 거부를 이긴다.
+    rejected -= (available | preferred)
     return {"rejected": rejected, "preferred": preferred, "available": available}
 
 

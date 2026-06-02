@@ -128,6 +128,13 @@ function ScheduleVotePageContent() {
         >
           캘린더
         </div>
+        <div
+          className="flex-1 flex items-center justify-center cursor-pointer"
+          onClick={() => router.push(`/m/chat/ai?roomId=${roomId}`)}
+          style={{ fontSize: 14, fontWeight: 500, color: "#94a3b8" }}
+        >
+          AI
+        </div>
       </div>
 
       {/* 3. Content */}

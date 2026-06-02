@@ -97,6 +97,13 @@ function ScheduleChatPageContent() {
         >
           캘린더
         </div>
+        <div
+          className="flex-1 flex items-center justify-center cursor-pointer"
+          onClick={() => router.push(`/m/chat/ai?roomId=${roomId}`)}
+          style={{ fontFamily: "Pretendard, sans-serif", fontSize: 14, fontWeight: 500, color: "#94a3b8" }}
+        >
+          AI
+        </div>
       </div>
 
       {/* 3. AI Banner */}

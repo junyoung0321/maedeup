@@ -1,359 +1,88 @@
-﻿"use client";
+"use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import {
-  ArrowLeft,
-  EllipsisVertical,
-  Sparkles,
-  Calendar,
-  MapPin,
-  Users,
-  Send,
-} from "lucide-react";
-import { useAgentWebSocket } from "@/hooks/useAgentWebSocket";
+import { ArrowLeft, Menu } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
-import MobileVoteCard from "@/components/meeting/MobileVoteCard";
+import { MeetingProvider } from "@/contexts/MeetingContext";
+import AiAssistantPane from "@/components/meeting/AiAssistantPane";
+import type { Room } from "@/types";
 
-function relativeTime(iso: string): string {
-  const d = new Date(iso);
-  const h = d.getHours();
-  const m = d.getMinutes();
-  const period = h < 12 ? "오전" : "오후";
-  const hh = h % 12 || 12;
-  return `${period} ${hh}:${String(m).padStart(2, "0")}`;
-}
-
-function AiChatPageContent() {
+// 모바일 AI 탭 — 웹과 동일한 AI 패널을 그대로 렌더한다.
+// 데스크탑 AiAssistantPane(추천/장소/매듭 카드 + TimeBar + 공유 토글)을 MeetingProvider로
+// 감싸 roomId만 주입하면 데스크탑과 완전히 동일한 기능·디자인·출력을 모바일에서 제공.
+function MobileAiTab() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const roomId = searchParams.get("roomId") ?? "";
   const { user, loading: authLoading } = useAuth();
-  const sender = !authLoading && user ? user.name : "익명";
-
-  const { messages, sendMessage, status, cardsByMeetingId, voteUpdate } =
-    useAgentWebSocket(roomId, sender);
-
-  // AI가 만든 일정 추천(vote_card)만 추출 — 장소/매듭 카드는 별도 화면에서 처리.
-  const voteCards = Object.values(cardsByMeetingId).filter(
-    (c): c is Extract<typeof c, { type: "vote_card" }> => c.type === "vote_card",
-  );
-
-  const [input, setInput] = useState("");
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [room, setRoom] = useState<Room | null>(null);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, voteCards.length]);
+    if (authLoading || !user || !roomId) return;
+    apiFetch<Room>(`/api/v1/rooms/${roomId}`)
+      .then(setRoom)
+      .catch(() => null);
+  }, [authLoading, user, roomId]);
 
-  function handleSend() {
-    const text = input.trim();
-    if (!text || status !== "open") return;
-    sendMessage(text);
-    setInput("");
-  }
+  const roomName = room?.name ?? "모임";
+
+  const tab = (label: string, active: boolean, onClick?: () => void) => (
+    <div
+      className={`flex-1 flex items-center justify-center ${active ? "" : "cursor-pointer"}`}
+      onClick={onClick}
+      style={{
+        fontFamily: "Pretendard, sans-serif",
+        fontSize: 14,
+        fontWeight: active ? 600 : 500,
+        color: active ? "#4f46e5" : "#94a3b8",
+        borderBottom: active ? "2px solid #4f46e5" : "none",
+      }}
+    >
+      {label}
+    </div>
+  );
 
   return (
     <div
-      style={{
-        width: "100%",
-        height: "844px",
-        background: "#ffffff",
-        display: "flex",
-        flexDirection: "column",
-        fontFamily: "Pretendard, sans-serif",
-      }}
+      className="relative flex flex-col bg-white overflow-hidden"
+      style={{ width: "100%", height: "100dvh" }}
     >
       {/* Header */}
       <div
-        style={{
-          height: 56,
-          minHeight: 56,
-          background: "#ffffff",
-          padding: "0 16px",
-          display: "flex",
-          alignItems: "center",
-          borderBottom: "1px solid #e2e8f0",
-        }}
+        className="flex items-center shrink-0"
+        style={{ height: 56, padding: "0 16px", borderBottom: "1px solid #e2e8f0" }}
       >
-        <ArrowLeft size={24} color="#1e293b" style={{ cursor: "pointer" }} onClick={() => router.back()} />
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-          <Sparkles size={20} color="#4f46e5" />
-          <span style={{ fontSize: 17, fontWeight: 700, color: "#1e293b" }}>AI 비서</span>
-          <span
-            style={{
-              fontSize: 10,
-              fontWeight: 600,
-              color: "#4f46e5",
-              background: "#eef2ff",
-              borderRadius: 10,
-              padding: "0 8px",
-              height: 20,
-              display: "flex",
-              alignItems: "center",
-            }}
-          >
-            Beta
+        <ArrowLeft size={24} color="#1e293b" className="shrink-0 cursor-pointer" onClick={() => router.push("/m/chat")} />
+        <div className="flex-1 flex flex-col items-center gap-[2px]">
+          <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 17, fontWeight: 600, color: "#1e293b" }}>
+            {roomName}
+          </span>
+          <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 12, fontWeight: 400, color: "#94a3b8" }}>
+            {room?.category ?? "모임"}
           </span>
         </div>
-        <EllipsisVertical
+        <Menu
           size={24}
           color="#64748b"
-          style={{ cursor: "pointer" }}
-          onClick={() => alert("AI 비서 설정은 준비 중입니다")}
+          className="shrink-0 cursor-pointer"
+          onClick={() => router.push(`/m/meeting/detail?roomId=${roomId}`)}
         />
       </div>
 
-      {/* Message Area */}
-      <div
-        style={{
-          flex: 1,
-          background: "#f8fafc",
-          padding: 16,
-          gap: 16,
-          display: "flex",
-          flexDirection: "column",
-          overflowY: "auto",
-        }}
-      >
-        {/* Welcome Card */}
-        <div
-          style={{
-            borderRadius: 16,
-            background: "linear-gradient(135deg, #4f46e5, #7c3aed)",
-            padding: 20,
-            display: "flex",
-            flexDirection: "column",
-            gap: 10,
-          }}
-        >
-          <Sparkles size={28} color="#ffffff" />
-          <span style={{ fontSize: 18, fontWeight: 700, color: "#ffffff" }}>안녕하세요! AI 비서입니다</span>
-          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.8)", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
-            {"모임 일정 조율, 장소 추천, 빠른 매칭 등\n무엇이든 도와드릴게요 😊"}
-          </span>
-        </div>
-
-        {/* Quick Action Chips */}
-        <div style={{ display: "flex", gap: 8 }}>
-          {[
-            { icon: Calendar, label: "일정 잡기", color: "#4f46e5" },
-            { icon: MapPin, label: "장소 추천", color: "#0ea5e9" },
-            { icon: Users, label: "모임 매칭", color: "#7c3aed" },
-          ].map((btn) => (
-            <div
-              key={btn.label}
-              onClick={() => setInput(btn.label)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "8px 14px",
-                borderRadius: 20,
-                background: "#ffffff",
-                border: "1px solid #e2e8f0",
-                cursor: "pointer",
-              }}
-            >
-              <btn.icon size={14} color={btn.color} />
-              <span style={{ fontSize: 13, color: btn.color }}>{btn.label}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Messages */}
-        {messages.map((msg) => {
-          if (msg.role === "user") {
-            // public 공유 입력으로 '남의 user 메시지'도 도착 → user_id로 본인 여부 판정.
-            // (role==user 만으로 판정하면 타인 입력이 '나'로 우측정렬되는 버그.)
-            const isMe = msg.user_id == null || msg.user_id === Number(user?.sub);
-            if (isMe) {
-              return (
-                <div key={msg.id} style={{ display: "flex", justifyContent: "flex-end" }}>
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-                    <div
-                      style={{
-                        borderRadius: "16px 0 16px 16px",
-                        background: "#4f46e5",
-                        padding: 12,
-                        maxWidth: 260,
-                      }}
-                    >
-                      <span style={{ fontSize: 14, color: "#ffffff", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                        {msg.content}
-                      </span>
-                    </div>
-                    <span style={{ fontSize: 11, color: "#94a3b8" }}>{relativeTime(msg.created_at)}</span>
-                  </div>
-                </div>
-              );
-            }
-            // 공유된 남의 입력 — 좌측 정렬 + 화자명 (AI와 구분되는 글자 아바타)
-            const who = msg.sender ?? "익명";
-            return (
-              <div key={msg.id} style={{ display: "flex", gap: 8 }}>
-                <div
-                  style={{
-                    width: 32,
-                    height: 32,
-                    borderRadius: 16,
-                    background: "#818cf8",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  <span style={{ fontSize: 13, fontWeight: 600, color: "#ffffff" }}>{who.charAt(0)}</span>
-                </div>
-                <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
-                  <span style={{ fontSize: 12, color: "#94a3b8" }}>{who}</span>
-                  <div
-                    style={{
-                      borderRadius: "0 16px 16px 16px",
-                      background: "#ffffff",
-                      border: "0.5px solid #e2e8f0",
-                      padding: 12,
-                      maxWidth: 260,
-                      alignSelf: "flex-start",
-                    }}
-                  >
-                    <span style={{ fontSize: 14, color: "#1e293b", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                      {msg.content}
-                    </span>
-                  </div>
-                  <span style={{ fontSize: 11, color: "#94a3b8" }}>{relativeTime(msg.created_at)}</span>
-                </div>
-              </div>
-            );
-          }
-
-          if (msg.role === "assistant") {
-            return (
-              <div key={msg.id} style={{ display: "flex", gap: 8 }}>
-                <div
-                  style={{
-                    width: 32,
-                    height: 32,
-                    borderRadius: 16,
-                    background: "linear-gradient(135deg, #4f46e5, #7c3aed)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  <Sparkles size={16} color="#ffffff" />
-                </div>
-                <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
-                  <span style={{ fontSize: 12, color: "#94a3b8" }}>AI 비서</span>
-                  <div
-                    style={{
-                      borderRadius: "0 16px 16px 16px",
-                      background: "#ffffff",
-                      border: "0.5px solid #e2e8f0",
-                      padding: 12,
-                      maxWidth: 260,
-                    }}
-                  >
-                    <span style={{ fontSize: 14, color: "#1e293b", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                      {msg.content}
-                    </span>
-                  </div>
-                  <span style={{ fontSize: 11, color: "#94a3b8" }}>{relativeTime(msg.created_at)}</span>
-                </div>
-              </div>
-            );
-          }
-
-          return (
-            <div key={msg.id} style={{ display: "flex", justifyContent: "center" }}>
-              <span
-                style={{
-                  fontSize: 11,
-                  color: "#94a3b8",
-                  background: "#f1f5f9",
-                  borderRadius: 8,
-                  padding: "4px 10px",
-                }}
-              >
-                {msg.content}
-              </span>
-            </div>
-          );
-        })}
-
-        {/* AI 일정 추천 카드 (vote_card) — 백엔드 파이프라인이 만든 추천 날짜 옵션 */}
-        {voteCards.map((c) => (
-          <MobileVoteCard key={c.meeting_id} card={c.payload} voteUpdate={voteUpdate} />
-        ))}
-
-        <div ref={messagesEndRef} />
+      {/* Tab Bar — 채팅방 / 캘린더 / AI */}
+      <div className="flex shrink-0" style={{ height: 44, borderBottom: "1px solid #e2e8f0" }}>
+        {tab("채팅방", false, () => router.push(`/m/chat/schedule?roomId=${roomId}`))}
+        {tab("캘린더", false, () => router.push(`/m/schedule?roomId=${roomId}`))}
+        {tab("AI", true)}
       </div>
 
-      {/* Input Bar */}
-      <div
-        style={{
-          height: 60,
-          background: "#ffffff",
-          padding: "0 12px",
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          borderTop: "1px solid #e2e8f0",
-        }}
-      >
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleSend();
-            }
-          }}
-          placeholder="AI 비서에게 물어보세요..."
-          style={{
-            flex: 1,
-            height: 40,
-            borderRadius: 20,
-            background: "#ffffff",
-            border: "1px solid #e2e8f0",
-            padding: "0 16px",
-            fontSize: 14,
-            color: "#1e293b",
-            outline: "none",
-          }}
-        />
-        <div
-          onClick={handleSend}
-          style={{
-            width: 40,
-            height: 40,
-            borderRadius: 20,
-            background: status === "open" ? "#4f46e5" : "#c7d2fe",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: status === "open" ? "pointer" : "not-allowed",
-            flexShrink: 0,
-          }}
-        >
-          <Send size={18} color="#ffffff" />
-        </div>
-      </div>
-
-      {/* Home Indicator */}
-      <div
-        style={{
-          height: 20,
-          background: "#ffffff",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <div style={{ width: 134, height: 5, borderRadius: 3, background: "#000000" }} />
+      {/* AI 패널 (데스크탑 컴포넌트 그대로) */}
+      <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
+        <MeetingProvider initialRoomId={roomId} initialRoomName={roomName}>
+          <AiAssistantPane />
+        </MeetingProvider>
       </div>
     </div>
   );
@@ -362,7 +91,7 @@ function AiChatPageContent() {
 export default function AiChatPage() {
   return (
     <Suspense fallback={null}>
-      <AiChatPageContent />
+      <MobileAiTab />
     </Suspense>
   );
 }

@@ -2,7 +2,8 @@
 
 ## 진행 중인 작업
 세션 시작 시 `docs/handoff/` 폴더의 가장 최근 문서를 먼저 확인하세요.
-**현재 task**: 전시 안정성 round 완료 (HEAD `ccc67e6`, 2026-05-30). 16 site 모델 매핑 확정 (gpt-4o-mini 8 + gemini-3.1-flash-lite 8), **K1.3 ACT5 SLA <5s PASS** (3.99s, baseline 10.86s 대비 -73%). K2 PASS 유지 (97.4% / 90% / 40%). bug fix 3건 완료 (T6 cache option c / AI banner / C 구조 B+D, 16 site abstraction). bug-26-* 회귀 0. **다음**: 전시 진행 (2026-06-04 수 + 06-05 목). 운영 보완 — warmup 1회 + ACT2 narration 강화 + 부스 안내문. round summary `docs/handoff/2026-05-30-round-summary.md` 참고.
+**현재 task**: PWA/TWA + 모바일 AI 흐름 main 머지·푸시 완료 (HEAD `50a6999`, origin/main, 2026-06-02). feat/pwa-twa-app 통합 — 설치형 PWA + TWA 스캐폴딩, SW 보수화, 모바일 채팅 AI 추천 흐름 2건 수정: ① agent WS keepalive (`/m/chat/layout.tsx` + `AgentTriggerKeepalive.tsx`) — 모바일 채팅 중 교착 트리거 유실 수정, ② `MobileVoteCard.tsx` — `/m/chat/ai`에 추천 카드 표시. qa-runtime 실제 Chromium e2e PASS (트리거 소비→vote_card 생성→카드 렌더+투표). 자동배포 파이프라인 없음(.github/workflows deploy 부재).
+전(前) 전시 안정성 round (HEAD `ccc67e6`, 2026-05-30): 16 site 모델 매핑 (gpt-4o-mini 8 + gemini-3.1-flash-lite 8), K1.3 ACT5 SLA <5s PASS (3.99s), K2 PASS (97.4%/90%/40%). round summary `docs/handoff/2026-05-30-round-summary.md`. **다음**: 전시 진행 (2026-06-04 수 + 06-05 목, 데모는 데스크탑). 운영 보완 — warmup 1회 + ACT2 narration 강화 + 부스 안내문.
 시연 자동화 (WSL venv v2, 2026-05-15):
 - 터미널 1: `~/.venv-maedeup-demo/bin/python3 .gstack-browser-launch.py`
 - 터미널 2: `~/.venv-maedeup-demo/bin/python3 .gstack-demo.py` (또는 `--fast`)
@@ -16,6 +17,8 @@
 5. F4 narrator (Q17 후속)
 6. 코덱스 P1 backlog (Option C 라운드 1~9 완료 후 추가 필요 검토, TODOS.md §10) — vote_update 좁히기·VoteCardSection 회귀 테스트·timeConfirmed mount·seed 주석·refresh state 통일
 7. 장소 추천 vote 시스템 검토 (v2 spec PR-v2.1 후보)
+8. 뷰포트 축소 시 데스크탑↔모바일(/m) 자동 전환 — 전시 후 진행. 데스크탑/모바일이 별개 라우트 트리(`/meeting/[id]` path param ↔ `/m/chat?roomId=N` query)라 단순 CSS 반응형 불가. 권장: 접근법 A(진입 시 1회 폭 감지→라우팅, ~1일, 데모 리스크 0) 또는 정석 C(데스크탑 페이지 진짜 반응형 통합, 1~2주). 구현 스케치: `viewportRoutes.ts` 매핑 테이블 + `ViewportRouter.tsx`(root layout 마운트). 모임방 WS/Context 재마운트로 진행상태 유실이 핵심 난점.
+9. 모바일 AI 흐름 후속 — `/m/chat/ai` 추천 카드까지 완료, 풀 투표/TimeBar/finalization 흐름은 데스크탑 전용(모바일 미구현). /ws/agent accept 로그 JWT 평문 마스킹(P2).
 참고:
 - `docs/handoff/2026-05-30-round-summary.md` (전시 round 통합 정리, 2026-05-30)
 - `docs/handoff/2026-05-30-final-result.md` (Phase 5 + ACT5 revert addendum)

@@ -83,8 +83,9 @@ def _detect_complement_constraints(context: str) -> list[dict]:
 
         def _emit(exclude_codes):
             out.append({"polarity": "unavailable", "scope": scope, "days": "all", "exclude_weekdays": list(exclude_codes), "speaker": speaker})
-            # 예외 요일은 명시적 가능 → 거부 반전 교정(같은 화자의 rejected -= available)
-            out.append({"polarity": "available", "scope": scope, "days": list(exclude_codes), "speaker": speaker})
+            # 예외 요일은 '빼고'의 그 날 = 결정적 가능일. complement_exception 마커로
+            # _resolve가 전역 차감(다른 화자에 오귀속된 거부도 이 날만은 제거).
+            out.append({"polarity": "available", "scope": scope, "days": list(exclude_codes), "speaker": speaker, "complement_exception": True})
 
         m = _COMPLEMENT_WD.search(body) or _ONLY_WD.search(body)
         if m:
@@ -96,10 +97,10 @@ def _detect_complement_constraints(context: str) -> list[dict]:
                 continue
         if _WEEKEND_ONLY.search(body):
             out.append({"polarity": "unavailable", "scope": scope, "days": "weekdays", "speaker": speaker})
-            out.append({"polarity": "available", "scope": scope, "days": "weekend", "speaker": speaker})
+            out.append({"polarity": "available", "scope": scope, "days": "weekend", "speaker": speaker, "complement_exception": True})
         elif _WEEKDAY_ONLY.search(body):
             out.append({"polarity": "unavailable", "scope": scope, "days": "weekend", "speaker": speaker})
-            out.append({"polarity": "available", "scope": scope, "days": "weekdays", "speaker": speaker})
+            out.append({"polarity": "available", "scope": scope, "days": "weekdays", "speaker": speaker, "complement_exception": True})
     return out
 
 
@@ -209,6 +210,7 @@ def _resolve(constraints: list, today: datetime, window: int = _WINDOW) -> dict:
     preferred: set[str] = set()
     available: set[str] = set()
     rejected_by: dict[str, set] = {}
+    comp_exc: set[str] = set()  # 여집합 예외일('빼고'의 그 날) — 결정적 가능일
 
     for spk, gcons in groups.items():
         g_rej: set[str] = set()
@@ -223,6 +225,8 @@ def _resolve(constraints: list, today: datetime, window: int = _WINDOW) -> dict:
                 g_pref |= iso_set
             elif pol == "available":
                 g_avail |= iso_set
+                if c.get("complement_exception"):
+                    comp_exc |= iso_set
         g_rej.discard(today_iso)  # 오늘은 발화에서 보통 미언급 — 과확장 방지
         # 같은 화자의 명시적 '가능(available)'만 그 화자의 거부를 이긴다.
         # preferred(좋아/선호)는 빼지 않는다 — '쉬고 싶다' 오분류가 거부를 덮지 않게.
@@ -232,6 +236,14 @@ def _resolve(constraints: list, today: datetime, window: int = _WINDOW) -> dict:
         available |= g_avail
         for d in g_rej:
             rejected_by.setdefault(d, set()).add(spk)
+
+    # 여집합 예외일(detector의 '빼고' 그 날)은 결정적 가능일 → 전역 차감.
+    # LLM이 여집합을 다른 화자에 오귀속해도 이 날만은 모두에게서 제거(예: 06-13이
+    # 민수에게 잘못 불가로 남는 것 방지). LLM '돼/가능'(정정)은 화자별로만 적용돼 A/B 보존.
+    if comp_exc:
+        rejected -= comp_exc
+        for d in comp_exc:
+            rejected_by.pop(d, None)
 
     return {"rejected": rejected, "preferred": preferred, "available": available, "rejected_by": rejected_by}
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -43,6 +44,15 @@ from app.services.pipeline.helpers.slots import (
 logger = logging.getLogger(__name__)
 
 _CONV_CACHE_TTL = 300  # 5분
+
+# 날짜 신호 게이트 — 이게 있을 때만 date_classify(2단계 추출)로 rejected_dates 교체.
+_DATE_SIGNAL_RE = re.compile(
+    r"빼고|제외|말고|평일|주중|주말|내내|"
+    r"안\s*[돼되]|못\s*[가오와]|바[쁘빠]|일정\s*있|약속\s*있|패스|불가|힘들|어렵|"
+    r"월요일|화요일|수요일|목요일|금요일|토요일|일요일|"
+    r"월욜|화욜|수욜|목욜|금욜|토욜|일욜|"
+    r"내일|모레|다음\s*주|담주|이번\s*주|다다음|담담|\d{1,2}일|\d{1,2}/\d{1,2}|\d{4}-\d{2}-\d{2}"
+)
 
 
 def _build_conv_cache_key(room_id: str, last_message_id: int) -> str:
@@ -229,6 +239,28 @@ async def _analyze_conversation(
     signals = parsed.get("signals")
     if not isinstance(card, dict) or not isinstance(signals, dict):
         return None
+
+    # ▼ rejected_dates를 정확한 2단계 추출(date_classify)로 교체.
+    # 위 단일 LLM 추출은 여집합('X 빼고 다 바빠')·다화자에서 약해, 이걸 그대로 쓰면
+    # CHAT_UNAVAIL_SYNC가 멤버별 캘린더에 틀린 날짜/화자를 적용한다(예: 06-10 누락·오귀속).
+    # conversation은 "이름: 발화" 라벨이라 date_classify가 화자 귀속까지 정확히 산출 →
+    # 캘린더 멤버 unavailability가 reflect-back/vote_card와 동일하게 맞아떨어진다.
+    if _DATE_SIGNAL_RE.search(conversation):
+        try:
+            from app.services.pipeline.helpers.date_classify import (
+                KST as _KST,
+                classify_availability as _classify,
+                to_rejected_dates as _to_rejected,
+            )
+            _av = await _classify(conversation, now_kst=datetime.now(_KST))
+            if _av.get("rejected"):
+                signals["rejected_dates"] = _to_rejected(_av["rejected"], _av.get("rejected_by"))
+                logger.info(
+                    "[conv_analyze] rejected_dates date_classify 교체 room=%s n=%d",
+                    room_id, len(_av["rejected"]),
+                )
+        except Exception:
+            logger.warning("[conv_analyze] date_classify 교체 실패 room=%s", room_id, exc_info=True)
 
     conv_result: dict[str, Any] = {
         "card": {

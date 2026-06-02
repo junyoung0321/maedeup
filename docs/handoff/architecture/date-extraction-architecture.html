@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>매듭 — 채팅 → 날짜 추출 → 추천 아키텍처</title>
+<style>
+  :root{
+    --bg:#0f1729; --panel:#16203a; --panel2:#1c2845; --line:#2a3a63;
+    --ink:#e8eefc; --mut:#93a3c9; --dim:#6b7aa3;
+    --openai:#34d399; --openai-bg:#06281f;
+    --gemini:#60a5fa; --gemini-bg:#0a2042;
+    --code:#94a3b8; --code-bg:#1a2236;
+    --rag:#c084fc; --rag-bg:#241338;
+    --rej:#f87171; --ok:#34d399; --accent:#fbbf24;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(160deg,#0b1120,#0f1729 40%,#101a30);
+    color:var(--ink);font-family:"Pretendard Variable",Pretendard,-apple-system,"Segoe UI",sans-serif;
+    line-height:1.5;padding:0 0 80px}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+  header{padding:48px 0 28px;border-bottom:1px solid var(--line);margin-bottom:36px;
+    background:radial-gradient(1200px 220px at 20% -40%,rgba(96,165,250,.18),transparent)}
+  h1{font-size:30px;margin:0 0 8px;letter-spacing:-.5px}
+  h1 .em{background:linear-gradient(90deg,#60a5fa,#34d399);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .sub{color:var(--mut);font-size:15px;max-width:760px}
+  .meta{margin-top:14px;font-size:12.5px;color:var(--dim)}
+  h2{font-size:20px;margin:46px 0 6px;letter-spacing:-.3px}
+  h2 .num{color:var(--accent);font-variant-numeric:tabular-nums;margin-right:8px}
+  .lead{color:var(--mut);font-size:14px;margin:0 0 20px}
+  /* badges */
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;
+    padding:2px 8px;border-radius:999px;border:1px solid transparent;white-space:nowrap}
+  .b-openai{color:var(--openai);background:var(--openai-bg);border-color:#0c5}
+  .b-gemini{color:var(--gemini);background:var(--gemini-bg);border-color:#2563eb}
+  .b-code{color:var(--code);background:var(--code-bg);border-color:#3a486b}
+  .b-rag{color:var(--rag);background:var(--rag-bg);border-color:#7c3aed}
+  .t{font-variant-numeric:tabular-nums;color:var(--accent);font-weight:600}
+  /* flow row */
+  .flow{display:flex;align-items:stretch;gap:0;flex-wrap:wrap}
+  .step{flex:1 1 0;min-width:150px;background:var(--panel);border:1px solid var(--line);
+    border-radius:14px;padding:14px 14px 13px;position:relative}
+  .step .k{font-size:11px;color:var(--dim);font-weight:600;letter-spacing:.4px;text-transform:uppercase}
+  .step .nm{font-size:14.5px;font-weight:700;margin:3px 0 7px}
+  .step .ds{font-size:12px;color:var(--mut);margin-bottom:9px;min-height:32px}
+  .step .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .arrow{align-self:center;color:var(--dim);font-size:20px;padding:0 6px;flex:0 0 auto}
+  /* detail pipeline (vertical) */
+  .vp{display:flex;flex-direction:column;gap:0;margin-top:6px}
+  .vnode{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:15px 18px;
+    position:relative;display:flex;gap:16px;align-items:flex-start}
+  .vnode.code{border-left:3px solid var(--code)}
+  .vnode.ai{border-left:3px solid var(--gemini)}
+  .vnode.aio{border-left:3px solid var(--openai)}
+  .vnode.rej{border-left:3px solid var(--rej)}
+  .vnode .idx{font-size:12px;font-weight:800;color:var(--dim);min-width:22px;padding-top:2px}
+  .vnode .body{flex:1}
+  .vnode .ttl{font-size:15px;font-weight:700;margin:0 0 4px;display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+  .vnode .dsc{font-size:13px;color:var(--mut)}
+  .vnode .dsc code{background:#0c1426;color:#bcd0ff;padding:1px 6px;border-radius:5px;font-size:12px}
+  .vconn{height:18px;width:2px;background:linear-gradient(var(--line),var(--line));margin-left:31px}
+  .vconn.split{background:none;height:8px}
+  .ex{margin-top:9px;background:#0c1426;border:1px dashed var(--line);border-radius:9px;padding:9px 12px;font-size:12.5px}
+  .ex .q{color:#bcd0ff}
+  .pill-rej{color:var(--rej);font-weight:600}
+  .pill-ok{color:var(--ok);font-weight:600}
+  /* table */
+  table{width:100%;border-collapse:collapse;margin-top:8px;font-size:13px;background:var(--panel);
+    border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  th,td{padding:11px 13px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--panel2);color:var(--mut);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px}
+  tr:last-child td{border-bottom:none}
+  td .role{color:var(--dim);font-size:12px}
+  .star{color:var(--accent)}
+  /* latency cards */
+  .lc{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:6px}
+  .lcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+  .lcard .big{font-size:26px;font-weight:800;color:var(--accent);font-variant-numeric:tabular-nums}
+  .lcard .lab{font-size:13px;color:var(--mut);margin-top:2px}
+  .lcard .det{font-size:12px;color:var(--dim);margin-top:8px;border-top:1px solid var(--line);padding-top:8px}
+  .note{font-size:12px;color:var(--dim);margin-top:10px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin:14px 0 0;font-size:12px;color:var(--mut)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .dot{width:10px;height:10px;border-radius:3px;display:inline-block}
+  footer{margin-top:54px;padding-top:20px;border-top:1px solid var(--line);font-size:12px;color:var(--dim)}
+  footer code{color:#9fb4e6}
+  @media(max-width:760px){.flow{flex-direction:column}.arrow{transform:rotate(90deg);padding:4px 0}}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>매듭 — 채팅에서 <span class="em">되는 날 · 안 되는 날</span>을 뽑아 일정 추천까지</h1>
+  <div class="sub">자유로운 채팅 발화("다음주 토요일 빼고 다 바빠")가 어떤 단계를 거쳐 구조화된 가용성으로 추출되고,
+    그 값을 기반으로 어떤 연산을 거쳐 일정 추천 카드가 만들어지는지 — AI 호출부의 모델과 기대 시간 포함.</div>
+  <div class="meta">대상: 2026-06-02 main (<code>9bd1913</code>) · LangGraph 파이프라인 · 모델은 <code>.env</code> 매핑 기준</div>
+  <div class="legend">
+    <span><i class="dot" style="background:var(--openai)"></i> OpenAI gpt-4o-mini</span>
+    <span><i class="dot" style="background:var(--gemini)"></i> Gemini 3.1 flash-lite</span>
+    <span><i class="dot" style="background:var(--rag)"></i> RAG / 임베딩</span>
+    <span><i class="dot" style="background:var(--code)"></i> 결정적 코드 (LLM 아님)</span>
+    <span><i class="dot" style="background:var(--rej)"></i> 거부 날짜 처리</span>
+  </div>
+</div></header>
+
+<div class="wrap">
+
+<!-- ===================== 1. 전체 흐름 ===================== -->
+<h2><span class="num">1</span>전체 데이터 흐름 (채팅 → 추천)</h2>
+<p class="lead">채팅방 발화가 WebSocket으로 들어오면 의도를 분류하고, LangGraph 8노드 파이프라인을 거쳐 일정/장소 추천 카드를 만든다. 아래는 <b>일정(날짜) 흐름</b> 기준.</p>
+<div class="flow">
+  <div class="step">
+    <div class="k">입력</div><div class="nm">채팅 발화</div>
+    <div class="ds">방 채팅(WS <code>social</code>) 또는 AI 패널 직접 요청</div>
+    <div class="row"><span class="badge b-code">WebSocket</span></div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="step">
+    <div class="k">의도</div><div class="nm">intent 분류</div>
+    <div class="ds">RAG(임베딩 유사도) + 경계 시 LLM. meeting_schedule 감지 → 파이프라인 트리거</div>
+    <div class="row"><span class="badge b-rag">RAG embedding</span><span class="badge b-gemini">flash-lite</span><span class="t">~0.3–1.5s</span></div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="step" style="border-color:#3b5bbd">
+    <div class="k">★ 추출</div><div class="nm">날짜 가용성 추출</div>
+    <div class="ds">대화 → <b>안 되는 날 / 되는 날</b> 구조화. (상세는 2번 섹션)</div>
+    <div class="row"><span class="badge b-openai">gpt-4o-mini</span><span class="badge b-code">코드 확장</span><span class="t">~2–6s</span></div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="step">
+    <div class="k">계산</div><div class="nm">가용 슬롯 계산</div>
+    <div class="ds">연동 멤버 Google Calendar freeBusy + 거부 날짜 제외 → 후보 슬롯</div>
+    <div class="row"><span class="badge b-code">deterministic</span><span class="badge b-gemini">GCal API</span><span class="t">~0.6s + GCal</span></div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="step">
+    <div class="k">추천</div><div class="nm">일정 추천 카드</div>
+    <div class="ds">필터된 슬롯으로 vote_card / maedeup 카드 발행</div>
+    <div class="row"><span class="badge b-code">deterministic</span><span class="t">~0.05s</span></div>
+  </div>
+</div>
+<p class="note">노드 체인(<code>graph.py</code>): <code>intent_detection → entity_extraction → slot_filling → function_calling → supervisor_validation → vote_card_creation →(place_recommendation)→ maedeup_card_creation</code></p>
+
+<!-- ===================== 2. 날짜 추출 상세 ===================== -->
+<h2><span class="num">2</span>핵심 — 안 되는 날 / 되는 날 추출 (2단계 구조)</h2>
+<p class="lead">단일 LLM에 "의도이해 + 날짜계산 + 여집합생성"을 한 번에 시키면 brittle했다(여집합 정확도 10%). 그래서 <b>LLM은 '구조'만, 날짜 확장은 코드가</b> 하도록 분리. (<code>helpers/date_classify.py</code>)</p>
+
+<div class="vp">
+  <div class="vnode code">
+    <div class="idx">1</div><div class="body">
+      <div class="ttl">후보 달력 enumerate <span class="badge b-code">코드 · 0ms</span></div>
+      <div class="dsc">오늘 기준 향후 <b>21일</b>을 ISO+요일+상대태그로 나열. <code>2026-06-08(월)[다음주]</code> … LLM이 날짜를 <i>계산</i>하지 않고 이 목록에서 <i>조회</i>만 하게 해 날짜 환각 제거.</div>
+    </div>
+  </div>
+  <div class="vconn"></div>
+  <div class="vnode aio">
+    <div class="idx">2</div><div class="body">
+      <div class="ttl">가용성 '제약' 구조 추출 <span class="badge b-openai">gpt-4o-mini (ENTITY)</span><span class="t">~2–6s</span></div>
+      <div class="dsc">대화에서 <b>구조</b>만 뽑는다 — 날짜 나열 X. 각 제약: <code>polarity</code>(unavailable/available/preferred) · <code>scope</code>(this/next/week_after/range) · <code>days</code>(all/weekdays/weekend/요일들) · <code>exclude_weekdays</code>(여집합).
+        AI 자신의 reflect-back 메시지는 무시하고 사람 발화만 본다.</div>
+      <div class="ex"><span class="q">"다음주 토요일 빼고 다 바빠"</span> → <code>{polarity:unavailable, scope:next_week, days:all, exclude_weekdays:["sat"]}</code></div>
+    </div>
+  </div>
+  <div class="vconn"></div>
+  <div class="vnode code">
+    <div class="idx">3</div><div class="body">
+      <div class="ttl">결정적 확장 + 정정 reconcile <span class="badge b-code">코드 · 0ms</span></div>
+      <div class="dsc">구조 → ISO 날짜 집합으로 <b>코드가 확장</b>(여집합·범위·요일 완전 보장). 그 후 <code>rejected −= (available ∪ preferred)</code> — "수요일은 돼" 같은 <b>정정이 거부를 이긴다</b>.</div>
+      <div class="ex">
+        <span class="pill-rej">안 되는 날(rejected)</span>: 6/8·6/9·6/10·6/11·6/12·6/14 &nbsp;·&nbsp;
+        <span class="pill-ok">되는 날(preferred/available)</span>: 6/13(토)
+      </div>
+    </div>
+  </div>
+  <div class="vconn"></div>
+  <div class="vnode rej">
+    <div class="idx">4</div><div class="body">
+      <div class="ttl">reflect-back 확인 <span class="badge b-code">코드 · 메시지 발행</span></div>
+      <div class="dsc">비자명 해석(거부 2개+)이면 사용자에게 보여 교정 기회 제공. 잔여 추출 오차(eval F1 0.62)가 조용히 반영되는 대신 가시화.</div>
+      <div class="ex"><span class="q">📅 일정을 이렇게 이해했어요 — 어려운 날: 6/8(월)·6/9(화)…6/14(일). 제가 잘못 봤으면 알려주세요!</span></div>
+    </div>
+  </div>
+  <div class="vconn"></div>
+  <div class="vnode code">
+    <div class="idx">5</div><div class="body">
+      <div class="ttl">거부 날짜로 후보 슬롯 필터 <span class="badge b-code">_filter_out_rejected</span></div>
+      <div class="dsc">free-slots 후보에서 <code>rejected</code>에 든 날짜를 제거(<code>slot.start_at[:10] ∉ rejected</code>). 남은 날짜만 추천 대상이 된다.</div>
+    </div>
+  </div>
+</div>
+<p class="note">정확도(eval 103발화): rejected_dates <b>F1 0.22 → 0.62</b>, 여집합 exact <b>0.10 → 0.70</b>. 잔여 오차는 4단계 reflect-back이 보완.</p>
+
+<!-- ===================== 3. AI 호출 레퍼런스 ===================== -->
+<h2><span class="num">3</span>AI 호출 레퍼런스 — 어느 모델 · 기대 시간</h2>
+<p class="lead"><code>USE_PAID_GEMINI=true</code> · 무거운 추론/추출 = gpt-4o-mini, 빠른 분류/파싱 = Gemini 3.1 flash-lite. 16개 사용처를 <code>.env</code>로 매핑.</p>
+<table>
+  <thead><tr><th>단계 · 호출부</th><th>모델</th><th>provider / tier</th><th>기대 시간</th><th>역할</th></tr></thead>
+  <tbody>
+    <tr><td>intent 분류 <span class="role">(RAG)</span></td><td><span class="badge b-rag">gemini-embedding-001</span></td><td>임베딩 768d + cosine</td><td class="t">~0.3–0.5s</td><td class="role">유사도 ≥0.85 즉시 확정</td></tr>
+    <tr><td>intent 경계/폴백</td><td><span class="badge b-gemini">flash-lite</span></td><td>tier = low</td><td class="t">~0.5–1.5s</td><td class="role">0.6–0.85 구간 LLM 확정</td></tr>
+    <tr><td>quick_classify <span class="role">(AI패널 직접요청)</span></td><td><span class="badge b-gemini">flash-lite</span></td><td>tier = low (1.5s timeout)</td><td class="t">~0.5–1.5s</td><td class="role">direct_request 빠른 분기</td></tr>
+    <tr><td>conversation_analyzer</td><td><span class="badge b-openai">gpt-4o-mini</span></td><td>ANALYZER = openai</td><td class="t">~2–5s</td><td class="role">대화 → 초벌 신호(pre_extracted)</td></tr>
+    <tr><td>entity_extraction (core)</td><td><span class="badge b-openai">gpt-4o-mini</span></td><td>ENTITY = openai</td><td class="t">~2–5s</td><td class="role">date_hint·place·인원·충돌</td></tr>
+    <tr><td class="star">★ date_classify (날짜 가용성)</td><td><span class="badge b-openai">gpt-4o-mini</span></td><td>ENTITY = openai</td><td class="t">~2–6s</td><td class="role">되는/안되는 날 구조 추출</td></tr>
+    <tr><td>place_recommendation (점수화)</td><td><span class="badge b-gemini">flash-lite</span></td><td>PLACE_SCORING = gemini</td><td class="t">~1–3s</td><td class="role">장소 적합도 점수</td></tr>
+    <tr><td>일반 대화 응답</td><td><span class="badge b-gemini">flash-lite</span></td><td>call_gemini</td><td class="t">~1–2s</td><td class="role">general intent 답변</td></tr>
+    <tr><td>대화 요약 / social 요약</td><td><span class="badge b-openai">gpt-4o-mini</span></td><td>SUMMARY = openai</td><td class="t">~2–4s</td><td class="role">컨텍스트 압축</td></tr>
+    <tr><td>가용 슬롯 (freeBusy)</td><td><span class="badge b-gemini">Google Calendar</span></td><td>GCal API (LLM 아님)</td><td class="t">~1–3s / 멤버</td><td class="role">연동 멤버 바쁜시간 조회</td></tr>
+  </tbody>
+</table>
+<p class="note">실측 API 호출 비중: <code>googleapis</code> 1008회(flash-lite + GCal) vs <code>openai</code> 80회. 무거운 추출만 gpt-4o-mini로, 나머지는 저비용 flash-lite.</p>
+
+<!-- ===================== 4. latency 요약 ===================== -->
+<h2><span class="num">4</span>전체 기대 시간 (end-to-end)</h2>
+<div class="lc">
+  <div class="lcard">
+    <div class="big">~19–38s</div><div class="lab">일정 흐름 (채팅 → 일정 추천 카드)</div>
+    <div class="det">analyzer + entity + ★date_classify(LLM 3회) + GCal freeBusy + 슬롯계산. LLM 호출이 지배적.</div>
+  </div>
+  <div class="lcard">
+    <div class="big">~5.5s</div><div class="lab">장소 흐름 (채팅 → 장소 추천 카드)</div>
+    <div class="det">flash-lite 분류 + 카카오 검색 + flash-lite 점수화. 날짜 흐름보다 가벼움.</div>
+  </div>
+  <div class="lcard">
+    <div class="big">~0.6s</div><div class="lab">가용 슬롯 계산 (function_calling)</div>
+    <div class="det">실측 0.55–0.74s. + 연동 멤버 GCal freeBusy(멤버당 ~1–3s).</div>
+  </div>
+  <div class="lcard">
+    <div class="big">~0.05s</div><div class="lab">추천 카드 생성 (vote_card)</div>
+    <div class="det">supervisor_validation 0s, vote_card 0.05s — 순수 코드.</div>
+  </div>
+</div>
+<p class="note">★ date_classify는 entity 추출과 별개의 LLM 1회를 추가(날짜 단서 있을 때만 게이트)해 일정 흐름이 ~3–6s 늘어남. 정확도(여집합 0.10→0.70)와의 트레이드오프. 후속 최적화 후보: entity 메인 추출과 1회로 병합.
+  <br>※ Google Calendar 토큰 만료(401) 시 freeBusy 재시도가 더해져 latency가 더 길어질 수 있음 → 전시 전 호스트 재연동 권장.</p>
+
+<footer>
+  근거: 노드 체인 <code>backend/app/services/pipeline/graph.py</code> · 날짜 추출 <code>helpers/date_classify.py</code> · 통합 <code>nodes/entity.py</code> ·
+  슬롯/필터 <code>helpers/slots.py</code> · 모델 매핑 <code>.env</code> + <code>services/llm.py</code> · 정확도 <code>docs/handoff/eval/</code>.
+  기대 시간은 실측 [TIMING] 로그 + 모델 클래스 기반 추정(환경/네트워크에 따라 변동).
+</footer>
+</div>
+</body>
+</html>

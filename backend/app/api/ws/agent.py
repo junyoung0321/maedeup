@@ -34,6 +34,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# direct_request 동시성 가드 — 같은 방에 여러 사용자가 거의 동시에 직접 요청하면
+# run_pipeline이 병렬 실행돼 중복 vote_card·DB 경합이 생긴다(auto_trigger·투표 경로는
+# NX 락으로 보호되지만 direct_request는 무방비였음). 방별 in-process Lock으로 직렬화 —
+# 두 번째 요청은 대기 후 진행하고, vote_card 노드의 F-1 'pending 재사용'이 중복을 차단한다.
+# 단일 uvicorn 워커 가정(backend/Dockerfile). 다중 워커로 확장 시 Redis 락으로 교체 필요.
+_room_direct_request_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_room_direct_request_lock(room_id: str) -> asyncio.Lock:
+    lock = _room_direct_request_locks.get(room_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _room_direct_request_locks[room_id] = lock
+    return lock
+
+
 async def _publish_agent_message(
     redis_client: aioredis.Redis | None,
     channel: str,
@@ -1207,9 +1223,11 @@ async def agent_ws(
                     )
 
                     try:
-                        result = await run_pipeline(
-                            room_id, context, session, slot_context=slot_context
-                        )
+                        # 방별 직렬화 — 동시 direct_request의 중복 카드 경합 차단.
+                        async with _get_room_direct_request_lock(room_id):
+                            result = await run_pipeline(
+                                room_id, context, session, slot_context=slot_context
+                            )
                     finally:
                         slot_context.pop("trigger_reason", None)
                         slot_context.pop("direct_request_kind", None)

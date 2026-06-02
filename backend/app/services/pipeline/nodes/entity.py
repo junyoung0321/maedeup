@@ -269,7 +269,7 @@ async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
             )
             avail = await classify_availability(context, now_kst=datetime.now(KST))
             if avail.get("rejected"):
-                extracted["rejected_dates"] = to_rejected_dates(avail["rejected"])
+                extracted["rejected_dates"] = to_rejected_dates(avail["rejected"], avail.get("rejected_by"))
             if avail.get("preferred"):
                 extracted["preferred_dates"] = [{"date": d} for d in sorted(avail["preferred"])]
             logger.info(
@@ -488,7 +488,7 @@ async def entity_extraction(state: GraphState) -> GraphState:
                     )
                     _av = await classify_availability(_ctx_dc, now_kst=datetime.now(KST))
                     if _av.get("rejected"):
-                        extracted["rejected_dates"] = to_rejected_dates(_av["rejected"])
+                        extracted["rejected_dates"] = to_rejected_dates(_av["rejected"], _av.get("rejected_by"))
                     if _av.get("preferred"):
                         _existing_pref = extracted.get("preferred_dates") or []
                         _seen_pref = {p.get("date") for p in _existing_pref if isinstance(p, dict)}

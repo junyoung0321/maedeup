@@ -52,6 +52,8 @@ _ONLY_WD = re.compile(
 # 평일/주말 여집합
 _WEEKEND_ONLY = re.compile(r"(?:주말|토일)\s*만\s*(?:가능|돼|되|시간|남|ok|콜|좋)|(?:평일|주중)\s*(?:빼고|제외|말고)\s*다")
 _WEEKDAY_ONLY = re.compile(r"(?:평일|주중)\s*만\s*(?:가능|돼|되|시간|남|ok|콜|좋)|(?:주말|토일)\s*(?:빼고|제외|말고)\s*다")
+# "이름: 발화" 화자 라벨 분리 (social_recent 포맷 `{sender}: {content}`). B: 화자 귀속.
+_SPEAKER_LINE = re.compile(r"^\s*([^:\n]{1,20}?)\s*:\s*(.*)$")
 
 
 def _detect_complement_constraints(context: str) -> list[dict]:
@@ -60,23 +62,31 @@ def _detect_complement_constraints(context: str) -> list[dict]:
     LLM이 다인 대화에서 이 패턴을 반전(X를 거부)하거나 누락하는 사각을 보완.
     명시적 주 범위(이번주/다음주/다다음주)가 있을 때만 — 범위 모호 시 LLM에 위임.
     반환: constraints(_resolve 입력). 불가(scope+all+exclude) + 예외요일 available 쌍.
+    줄의 'X:' 화자 라벨을 speaker로 태그해 _resolve가 화자별로 정정/여집합을 적용한다.
     """
     out: list[dict] = []
     for line in (context or "").splitlines():
+        # 화자 라벨 분리 — body(발화 본문) 기준으로 패턴 검사, speaker로 귀속.
+        speaker = None
+        body = line
+        ms = _SPEAKER_LINE.match(line)
+        if ms:
+            speaker, body = (ms.group(1).strip() or None), ms.group(2)
+
         scope = None
         for pat, sc in _SCOPE_PREFIX:
-            if re.search(pat, line):
+            if re.search(pat, body):
                 scope = sc
                 break
         if scope is None:
             continue  # 주 범위 모호 → LLM에 맡김(잘못된 scope 방지)
 
         def _emit(exclude_codes):
-            out.append({"polarity": "unavailable", "scope": scope, "days": "all", "exclude_weekdays": list(exclude_codes)})
-            # 예외 요일은 명시적 가능 → 거부 반전 교정(rejected -= available)
-            out.append({"polarity": "available", "scope": scope, "days": list(exclude_codes)})
+            out.append({"polarity": "unavailable", "scope": scope, "days": "all", "exclude_weekdays": list(exclude_codes), "speaker": speaker})
+            # 예외 요일은 명시적 가능 → 거부 반전 교정(같은 화자의 rejected -= available)
+            out.append({"polarity": "available", "scope": scope, "days": list(exclude_codes), "speaker": speaker})
 
-        m = _COMPLEMENT_WD.search(line) or _ONLY_WD.search(line)
+        m = _COMPLEMENT_WD.search(body) or _ONLY_WD.search(body)
         if m:
             # "토요일"의 '일'을 일요일로 오인하지 않게 'X요일' 토큰 단위로 추출.
             toks = re.findall(r"(월|화|수|목|금|토|일)(?:요일|욜)?", m.group(1))
@@ -84,12 +94,12 @@ def _detect_complement_constraints(context: str) -> list[dict]:
             if codes:
                 _emit(codes)
                 continue
-        if _WEEKEND_ONLY.search(line):
-            out.append({"polarity": "unavailable", "scope": scope, "days": "weekdays"})
-            out.append({"polarity": "available", "scope": scope, "days": "weekend"})
-        elif _WEEKDAY_ONLY.search(line):
-            out.append({"polarity": "unavailable", "scope": scope, "days": "weekend"})
-            out.append({"polarity": "available", "scope": scope, "days": "weekdays"})
+        if _WEEKEND_ONLY.search(body):
+            out.append({"polarity": "unavailable", "scope": scope, "days": "weekdays", "speaker": speaker})
+            out.append({"polarity": "available", "scope": scope, "days": "weekend", "speaker": speaker})
+        elif _WEEKDAY_ONLY.search(body):
+            out.append({"polarity": "unavailable", "scope": scope, "days": "weekend", "speaker": speaker})
+            out.append({"polarity": "available", "scope": scope, "days": "weekdays", "speaker": speaker})
     return out
 
 
@@ -105,82 +115,125 @@ def _week_bounds(today: datetime, which: str):
     return base, base + timedelta(days=6)
 
 
+def _constraint_speaker(c: dict) -> str | None:
+    """제약을 말한 화자 키. LLM의 users[0] 또는 detector의 speaker. 없으면 None.
+
+    None(미상)은 단일 그룹으로 묶이므로 화자 라벨 없는 입력(eval·단일발화)은
+    기존 전역 동작과 완전히 동일하다(하위호환).
+    """
+    u = c.get("users")
+    if isinstance(u, list) and u:
+        s = str(u[0]).strip()
+        return s or None
+    if isinstance(u, str) and u.strip():
+        return u.strip()
+    sp = c.get("speaker")
+    if isinstance(sp, str) and sp.strip():
+        return sp.strip()
+    return None
+
+
+def _expand_constraint(c: dict, today: datetime, cal: list, cal_iso: set, today_iso: str) -> set:
+    """단일 제약(구조) → ISO 날짜 set. (polarity 무관 — 날짜 확장만)"""
+    scope = c.get("scope")
+    dates: list[datetime] = []
+    if scope in ("this_week", "next_week", "week_after"):
+        b = _week_bounds(today, scope)
+        if b:
+            lo, hi = b
+            dates = [d for d in cal if lo <= d <= hi]
+    elif scope == "range":
+        try:
+            fr = datetime.strptime(c.get("range_from"), "%Y-%m-%d").replace(tzinfo=KST) if c.get("range_from") else None
+            to = datetime.strptime(c.get("range_to"), "%Y-%m-%d").replace(tzinfo=KST) if c.get("range_to") else None
+        except (ValueError, TypeError):
+            fr = to = None
+        if fr and to:
+            dates = [d for d in cal if fr <= d <= to]
+    elif scope == "explicit":
+        for iso in (c.get("dates") or []):
+            if iso in cal_iso:
+                try:
+                    dates.append(datetime.strptime(iso, "%Y-%m-%d").replace(tzinfo=KST))
+                except ValueError:
+                    pass
+
+    days = c.get("days", "all")
+
+    def _wd_ok(d: datetime) -> bool:
+        wd = d.weekday()
+        if days == "weekdays":
+            return wd <= 4
+        if days == "weekend":
+            return wd >= 5
+        if isinstance(days, list):
+            return wd in {_WD_CODE.get(x) for x in days}
+        return True  # "all" 또는 미상
+
+    sel = [d for d in dates if _wd_ok(d)]
+
+    ex_wd = c.get("exclude_weekdays") or []
+    if ex_wd == "weekend":
+        ex_codes = {5, 6}
+    elif ex_wd == "weekdays":
+        ex_codes = {0, 1, 2, 3, 4}
+    elif isinstance(ex_wd, list):
+        ex_codes = {_WD_CODE.get(x) for x in ex_wd}
+    else:
+        ex_codes = set()
+    ex_dates = set(c.get("exclude_dates") or [])
+    sel = [d for d in sel if d.weekday() not in ex_codes and d.strftime("%Y-%m-%d") not in ex_dates]
+
+    return {d.strftime("%Y-%m-%d") for d in sel if d.strftime("%Y-%m-%d") >= today_iso}
+
+
 def _resolve(constraints: list, today: datetime, window: int = _WINDOW) -> dict:
-    """LLM이 뽑은 구조 제약을 결정적으로 ISO 날짜 집합으로 확장."""
+    """구조 제약을 결정적으로 ISO 날짜 집합으로 확장(화자별).
+
+    B(화자 귀속): 화자별로 그룹화해 'rejected −= 본인 available'을 적용한다.
+    → A의 "수목금 안돼"를 B의 "수요일 돼"가 못 지운다(다화자 정정 정확도).
+    반환에 rejected_by(날짜→화자 set)를 추가 — 멤버별 unavailability 귀속에 사용.
+    화자 라벨이 없으면 모두 None 그룹 → 기존 전역 동작과 동일(하위호환).
+    """
     cal = [today + timedelta(days=i) for i in range(window)]
     cal_iso = {d.strftime("%Y-%m-%d") for d in cal}
     today_iso = today.strftime("%Y-%m-%d")
-    rejected: set[str] = set()
-    preferred: set[str] = set()
-    available: set[str] = set()
 
+    groups: dict[Any, list] = {}
     for c in constraints or []:
         if not isinstance(c, dict):
             continue
-        scope = c.get("scope")
-        dates: list[datetime] = []
-        if scope in ("this_week", "next_week", "week_after"):
-            b = _week_bounds(today, scope)
-            if b:
-                lo, hi = b
-                dates = [d for d in cal if lo <= d <= hi]
-        elif scope == "range":
-            try:
-                fr = datetime.strptime(c.get("range_from"), "%Y-%m-%d").replace(tzinfo=KST) if c.get("range_from") else None
-                to = datetime.strptime(c.get("range_to"), "%Y-%m-%d").replace(tzinfo=KST) if c.get("range_to") else None
-            except (ValueError, TypeError):
-                fr = to = None
-            if fr and to:
-                dates = [d for d in cal if fr <= d <= to]
-        elif scope == "explicit":
-            for iso in (c.get("dates") or []):
-                if iso in cal_iso:
-                    try:
-                        dates.append(datetime.strptime(iso, "%Y-%m-%d").replace(tzinfo=KST))
-                    except ValueError:
-                        pass
+        groups.setdefault(_constraint_speaker(c), []).append(c)
 
-        days = c.get("days", "all")
+    rejected: set[str] = set()
+    preferred: set[str] = set()
+    available: set[str] = set()
+    rejected_by: dict[str, set] = {}
 
-        def _wd_ok(d: datetime) -> bool:
-            wd = d.weekday()
-            if days == "weekdays":
-                return wd <= 4
-            if days == "weekend":
-                return wd >= 5
-            if isinstance(days, list):
-                return wd in {_WD_CODE.get(x) for x in days}
-            return True  # "all" 또는 미상
+    for spk, gcons in groups.items():
+        g_rej: set[str] = set()
+        g_pref: set[str] = set()
+        g_avail: set[str] = set()
+        for c in gcons:
+            iso_set = _expand_constraint(c, today, cal, cal_iso, today_iso)
+            pol = c.get("polarity")
+            if pol == "unavailable":
+                g_rej |= iso_set
+            elif pol == "preferred":
+                g_pref |= iso_set
+            elif pol == "available":
+                g_avail |= iso_set
+        g_rej.discard(today_iso)  # 오늘은 발화에서 보통 미언급 — 과확장 방지
+        # 같은 화자의 명시적 '가능(available)'만 그 화자의 거부를 이긴다.
+        # preferred(좋아/선호)는 빼지 않는다 — '쉬고 싶다' 오분류가 거부를 덮지 않게.
+        g_rej -= g_avail
+        rejected |= g_rej
+        preferred |= g_pref
+        available |= g_avail
+        for d in g_rej:
+            rejected_by.setdefault(d, set()).add(spk)
 
-        sel = [d for d in dates if _wd_ok(d)]
-
-        ex_wd = c.get("exclude_weekdays") or []
-        if ex_wd == "weekend":
-            ex_codes = {5, 6}
-        elif ex_wd == "weekdays":
-            ex_codes = {0, 1, 2, 3, 4}
-        elif isinstance(ex_wd, list):
-            ex_codes = {_WD_CODE.get(x) for x in ex_wd}
-        else:
-            ex_codes = set()
-        ex_dates = set(c.get("exclude_dates") or [])
-        sel = [d for d in sel if d.weekday() not in ex_codes and d.strftime("%Y-%m-%d") not in ex_dates]
-
-        iso_set = {d.strftime("%Y-%m-%d") for d in sel if d.strftime("%Y-%m-%d") >= today_iso}
-        pol = c.get("polarity")
-        if pol == "unavailable":
-            rejected |= iso_set
-        elif pol == "preferred":
-            preferred |= iso_set
-        elif pol == "available":
-            available |= iso_set
-
-    rejected.discard(today_iso)  # 오늘은 발화에서 보통 미언급 — 과확장 방지
-    # 정정("아 그날은 돼")·여집합 예외 반영: 명시적 '가능(available)'만 거부를 이긴다.
-    # preferred(좋아/선호)는 빼지 않는다 — 그룹에선 한 명이라도 못 오면 거부이고,
-    # '쉬고 싶다'를 preferred로 오분류해도 다른 사람의 거부를 덮지 않게 한다.
-    rejected -= available
-    return {"rejected": rejected, "preferred": preferred, "available": available}
+    return {"rejected": rejected, "preferred": preferred, "available": available, "rejected_by": rejected_by}
 
 
 def _cal_lines(today: datetime, n: int = _WINDOW) -> str:
@@ -232,7 +285,8 @@ def _build_prompt(context: str, today: datetime) -> str:
         "- days: \"all\" | \"weekdays\" | \"weekend\" | [\"mon\",\"wed\"...]\n"
         "- exclude_weekdays: [\"sat\"] 또는 \"weekend\"/\"weekdays\"\n"
         "- exclude_dates: [YYYY-MM-DD]\n"
-        "- users, reason\n\n"
+        "- users: 이 제약을 말한 사람. 대화 줄의 'X:' 화자명 그대로 [\"X\"]. 누가 말했는지 분명할 때만, 모르면 생략.\n"
+        "- reason\n\n"
         "규칙:\n"
         "1) 'X는/X요일 안 돼·못 가·패스·일정 있어'(빼고/만 없음) → unavailable, days=[그 요일들] 또는 scope=explicit,dates. scope는 '담주/다음주'면 next_week, 아니면 this_week.\n"
         "2) 'X 빼고 다 바빠/안 돼' → unavailable, scope=그 주, days=all, exclude_weekdays=[X].\n"
@@ -277,10 +331,21 @@ async def classify_availability(context: str, now_kst: datetime | None = None) -
     return _resolve(list(llm_constraints) + det, today)
 
 
-def to_rejected_dates(rejected: set, users: list | None = None) -> list[dict[str, Any]]:
-    """rejected ISO set → 기존 rejected_dates 포맷 [{date, user, reason}]."""
-    u = (users or [None])[0] if users else None
-    return [{"date": d, "user": u, "reason": None} for d in sorted(rejected)]
+def to_rejected_dates(rejected: set, rejected_by: dict | None = None) -> list[dict[str, Any]]:
+    """rejected ISO set → rejected_dates 포맷 [{date, user, reason}].
+
+    rejected_by(날짜→화자 set)가 있으면 (날짜, 화자)별로 항목을 만들어 멤버별
+    unavailability 귀속이 올바르게 되도록 한다(B: 화자 귀속). 한 날짜를 여러 명이
+    거부하면 여러 항목. 화자 미상이면 user=None(기존 동작 — speaker_user_id fallback).
+    """
+    if rejected_by:
+        out: list[dict[str, Any]] = []
+        for d in sorted(rejected):
+            speakers = sorted(s for s in (rejected_by.get(d) or set()) if s)
+            for spk in (speakers or [None]):
+                out.append({"date": d, "user": spk, "reason": None})
+        return out
+    return [{"date": d, "user": None, "reason": None} for d in sorted(rejected)]
 
 
 # reflect-back 메시지 머리말 — 중복 발행 dedupe 마커로도 사용.

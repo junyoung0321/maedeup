@@ -3,3 +3,11 @@ images/
 *.pen
 Pretendard-Black.otf
 tsconfig.tsbuildinfo
+
+# PWA (next-pwa) 빌드 산출물 — 빌드마다 생성
+public/sw.js
+public/sw.js.map
+public/workbox-*.js
+public/workbox-*.js.map
+public/fallback-*.js
+public/swe-worker-*.js

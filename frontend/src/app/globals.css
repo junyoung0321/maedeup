@@ -2,18 +2,28 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 폰(설치형 PWA/TWA·모바일 뷰)은 표준 모바일 사이징(16px). */
 html {
-  font-size: 22px;
+  font-size: 16px;
 }
 
-/* 작은 fixed px 글씨 일괄 키우기 (시연 가독성 — 교수님 시청 대응) */
-.text-\[10px\] { font-size: 16px !important; }
-.text-\[11px\] { font-size: 17px !important; }
-.text-\[12px\] { font-size: 18px !important; }
-.text-\[13px\] { font-size: 19px !important; }
 body {
   font-family: "Pretendard Variable", "Pretendard", "Noto Sans KR", sans-serif;
-  zoom: 0.95;
+}
+
+/* 시연(데스크탑/프로젝션) 가독성 — 큰 화면에서만 키운다(교수님 시청 대응).
+   폰 앱 컨텍스트(<768px)에는 적용 안 함 → 실제 앱은 정상 크기. */
+@media (min-width: 768px) {
+  html {
+    font-size: 22px;
+  }
+  body {
+    zoom: 0.95;
+  }
+  .text-\[10px\] { font-size: 16px !important; }
+  .text-\[11px\] { font-size: 17px !important; }
+  .text-\[12px\] { font-size: 18px !important; }
+  .text-\[13px\] { font-size: 19px !important; }
 }
 
 /* 스크롤바 숨김 (스크롤 기능 유지) */

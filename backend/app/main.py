@@ -25,6 +25,7 @@ from app.api.routes import (
 )
 from app.api.ws import social as social_ws, agent as agent_ws
 from app.core.config import settings
+from app.core.log_filters import install_token_masking
 from app.db.session import init_db
 from app.services.reminder import run_reminder_job, run_vote_reminder_job
 
@@ -37,10 +38,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger("maedeup")
 
+# 로그에 남는 인증 토큰(JWT) 마스킹 — WS 쿼리스트링 ?token=... 이 평문으로 찍히는 것 차단.
+# uvicorn은 앱 import 전에 로깅을 구성하므로 이 시점에 uvicorn 핸들러가 이미 존재한다.
+install_token_masking()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.validate_startup_settings()
+    # uvicorn 핸들러가 확실히 구성된 startup 시점에 토큰 마스킹 재설치(idempotent).
+    install_token_masking()
     logger.info("Starting Maedeup API server")
     await init_db()
     logger.info("Database initialized")

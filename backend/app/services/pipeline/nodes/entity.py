@@ -226,6 +226,33 @@ _DATE_SIGNAL_RE = re.compile(
 )
 
 
+async def _maybe_emit_reflect_back(state: GraphState, rejected: set, preferred: set | None = None) -> None:
+    """Phase ② reflect-back: 비자명 날짜 해석(거부 2개+)을 사용자에게 보여 교정 기회 제공.
+
+    잔여 추출 오류가 '조용히 반영'되는 대신 가시화. 단일 거부는 생략(노이즈),
+    최근 메시지에 같은 reflect-back 있으면 dedupe. DB/발행 실패는 비차단.
+    """
+    try:
+        from app.services.pipeline.helpers.date_classify import (
+            REFLECT_BACK_PREFIX,
+            build_reflect_back,
+        )
+        rb = build_reflect_back(rejected or set(), preferred or set())
+        if not rb:
+            return
+        recent = state.get("message_records", [])[-6:]
+        if any(
+            isinstance(m, dict) and str(m.get("content", "")).startswith(REFLECT_BACK_PREFIX)
+            for m in recent
+        ):
+            return
+        async with AsyncSessionLocal() as _db_rb:
+            await _emit_assistant_message(state["room_id"], _db_rb, rb, state, shared=True)
+        logger.info("[REFLECT_BACK] emitted: %s", rb[:80])
+    except Exception:
+        logger.warning("[REFLECT_BACK] skipped", exc_info=True)
+
+
 async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
     """엔티티 추출 + 날짜 가용성 구조화 추출기로 rejected_dates 보강(여집합/recall).
 
@@ -457,8 +484,6 @@ async def entity_extraction(state: GraphState) -> GraphState:
                 _ctx_dc = _serialize_context(state) or ""
                 if _ctx_dc.strip() and _DATE_SIGNAL_RE.search(_ctx_dc):
                     from app.services.pipeline.helpers.date_classify import (
-                        REFLECT_BACK_PREFIX,
-                        build_reflect_back,
                         classify_availability,
                         to_rejected_dates,
                     )
@@ -476,20 +501,8 @@ async def entity_extraction(state: GraphState) -> GraphState:
                         len(_av.get("rejected") or []), len(_av.get("preferred") or []),
                         len(_av.get("available") or []),
                     )
-                    # Phase ② reflect-back: 비자명 해석(거부 2개+)을 사용자에게 보여 교정 기회 제공.
-                    # 잔여 추출 오류(eval F1 0.62 → ~38% 오차)가 조용히 반영되는 대신 가시화.
-                    # 최근 메시지에 같은 reflect-back이 있으면 dedupe(재트리거 스팸 방지).
-                    _rb = build_reflect_back(_av.get("rejected") or set(), _av.get("preferred") or set())
-                    if _rb:
-                        _recent = state.get("message_records", [])[-6:]
-                        _dup = any(
-                            isinstance(m, dict) and str(m.get("content", "")).startswith(REFLECT_BACK_PREFIX)
-                            for m in _recent
-                        )
-                        if not _dup:
-                            async with AsyncSessionLocal() as _db_rb:
-                                await _emit_assistant_message(state["room_id"], _db_rb, _rb, state, shared=True)
-                            logger.info("[REFLECT_BACK] emitted: %s", _rb[:80])
+                    # Phase ② reflect-back (비자명 해석을 사용자에게 보여 교정 기회 제공).
+                    await _maybe_emit_reflect_back(state, _av.get("rejected"), _av.get("preferred"))
             except Exception:
                 logger.warning("[DATE_CLASSIFY] (pre-extracted) override skipped", exc_info=True)
 
@@ -798,6 +811,13 @@ async def entity_extraction(state: GraphState) -> GraphState:
             state["rejected_dates"] = cleaned_rejected
             if cleaned_rejected:
                 logger.info("[REJECTED_DATES] Extracted: %s", cleaned_rejected)
+                # Phase ② reflect-back — pre_extracted 분기와 동일하게 비-pre 경로에도 적용.
+                _rej_iso = {r["date"] for r in cleaned_rejected if isinstance(r.get("date"), str)}
+                _pref_iso = {
+                    p.get("date") for p in (extracted.get("preferred_dates") or [])
+                    if isinstance(p, dict) and p.get("date")
+                }
+                await _maybe_emit_reflect_back(state, _rej_iso, _pref_iso)
 
         # PR-V1.5 / S16 (§6.15): rejected_places 누적.
         raw_rp = extracted.get("rejected_places")

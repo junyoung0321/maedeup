@@ -233,16 +233,15 @@ async def _maybe_emit_reflect_back(state: GraphState, rejected: set, preferred: 
     최근 메시지에 같은 reflect-back 있으면 dedupe. DB/발행 실패는 비차단.
     """
     try:
-        from app.services.pipeline.helpers.date_classify import (
-            REFLECT_BACK_PREFIX,
-            build_reflect_back,
-        )
+        from app.services.pipeline.helpers.date_classify import build_reflect_back
         rb = build_reflect_back(rejected or set(), preferred or set())
         if not rb:
             return
+        # dedupe: 동일 내용 reflect-back이 최근에 있으면 스킵(재트리거 스팸 방지).
+        # 단 정정으로 해석이 바뀌면 내용이 달라 새로 발행됨 — 정정 가시화 보장.
         recent = state.get("message_records", [])[-6:]
         if any(
-            isinstance(m, dict) and str(m.get("content", "")).startswith(REFLECT_BACK_PREFIX)
+            isinstance(m, dict) and str(m.get("content", "")).strip() == rb.strip()
             for m in recent
         ):
             return

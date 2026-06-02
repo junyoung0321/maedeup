@@ -21,6 +21,7 @@
 8. 뷰포트 축소 시 데스크탑↔모바일(/m) 자동 전환 — 전시 후 진행. 데스크탑/모바일이 별개 라우트 트리(`/meeting/[id]` path param ↔ `/m/chat?roomId=N` query)라 단순 CSS 반응형 불가. 권장: 접근법 A(진입 시 1회 폭 감지→라우팅, ~1일, 데모 리스크 0) 또는 정석 C(데스크탑 페이지 진짜 반응형 통합, 1~2주). 구현 스케치: `viewportRoutes.ts` 매핑 테이블 + `ViewportRouter.tsx`(root layout 마운트). 모임방 WS/Context 재마운트로 진행상태 유실이 핵심 난점.
 9. 모바일 AI 흐름 후속 — `/m/chat/ai` 추천 카드까지 완료, 풀 투표/TimeBar/finalization 흐름은 데스크탑 전용(모바일 미구현). /ws/agent accept 로그 JWT 평문 마스킹(P2).
 참고:
+- ⭐ `docs/handoff/2026-06-03-session-summary.md` (세션 종합 진입점 — main 머지분 + 브랜치 11커밋 + 상태/다음단계, 2026-06-03)
 - `docs/handoff/2026-06-03-mobile-web-parity.md` (모바일=웹 기능 완전 일치: 3 pane 통합·자동 탭 전환·캘린더 날짜 수정, 2026-06-03)
 - `docs/handoff/2026-06-02-ai-panel-multiuser.md` (AI 패널 멀티유저: 화자 귀속·카드 블록·공유 토글, 2026-06-02)
 - `docs/handoff/2026-05-30-round-summary.md` (전시 round 통합 정리, 2026-05-30)

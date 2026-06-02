@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Menu } from "lucide-react";
 import { apiFetch } from "@/lib/api";
@@ -24,8 +24,26 @@ function MobileMeetingInner({ roomId, room }: { roomId: string; room: Room | nul
   const searchParams = useSearchParams();
   const init = searchParams.get("tab");
   const [tab, setTab] = useState<Tab>(init === "chat" ? "chat" : init === "calendar" ? "calendar" : "ai");
-  const { contextMode } = useMeeting();
+  const { contextMode, infoPanePhase, setContextMode } = useMeeting();
   const roomName = room?.name ?? "모임";
+
+  // 데스크탑은 3 pane을 동시에 보여줘 흐름 진행 시 관련 pane(TimeBar·장소 상세)이 항상 보인다.
+  // 모바일은 한 번에 한 탭이라, 흐름이 진행되면 캘린더 탭(InfoPane)으로 자동 전환해 같은 경험을
+  // 준다 — (a) 시간대 조율 진입(dateConfirmed) (b) 장소 선택(contextMode="place")·확정 단계.
+  // 첫 렌더는 건너뛰어 ?tab= 초기값을 존중.
+  const prevPhase = useRef(infoPanePhase);
+  const prevCtx = useRef(contextMode);
+  useEffect(() => {
+    const phaseChanged = infoPanePhase !== prevPhase.current;
+    const ctxChanged = contextMode !== prevCtx.current;
+    prevPhase.current = infoPanePhase;
+    prevCtx.current = contextMode;
+    if (ctxChanged && (contextMode === "place" || contextMode === "schedule")) {
+      setTab("calendar");
+    } else if (phaseChanged && infoPanePhase === "dateConfirmed") {
+      setTab("calendar");
+    }
+  }, [infoPanePhase, contextMode]);
 
   // 완료(done) — 데스크탑 CompletionPage(고정 480px) 그대로, 390px엔 스케일 래핑.
   if (contextMode === "done") {
@@ -63,6 +81,15 @@ function MobileMeetingInner({ roomId, room }: { roomId: string; room: Room | nul
           <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 17, fontWeight: 600, color: "#1e293b" }}>{roomName}</span>
           <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 12, fontWeight: 400, color: "#94a3b8" }}>{room?.category ?? "모임"}</span>
         </div>
+        {/* 데스크탑 '생성 완료' 헤더 버튼 parity — contextMode="done" → CompletionPage */}
+        <button
+          type="button"
+          onClick={() => setContextMode?.("done")}
+          className="shrink-0"
+          style={{ marginRight: 10, padding: "5px 12px", borderRadius: 16, border: "1px solid #c7d2fe", background: "#eef2ff", color: "#4f46e5", fontFamily: "Pretendard, sans-serif", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+        >
+          완료
+        </button>
         <Menu size={24} color="#64748b" className="shrink-0 cursor-pointer" onClick={() => router.push(`/m/meeting/detail?roomId=${roomId}`)} />
       </div>
 

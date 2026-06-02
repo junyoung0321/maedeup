@@ -41,9 +41,11 @@ from app.services.pipeline.helpers.dates import (
 )
 from app.services.pipeline.helpers.json_extract import _extract_json_object
 from app.services.pipeline.helpers.messaging import (
+    _emit_assistant_message,
     _handle_node_exception,
     _has_node_error,
 )
+from app.db.session import AsyncSessionLocal
 from app.services.pipeline.helpers.places import (
     _OTHER_ENTITY_SIGNAL_PATTERN,
     _PLACE_INTENT_PATTERN,
@@ -214,7 +216,73 @@ def _pattern_extract_entities(context: str) -> dict[str, Any]:
     return result
 
 
+# 날짜/가용성 분류기를 돌릴 가치가 있는 단서 (없으면 추가 LLM 호출 생략 — latency 보호).
+_DATE_SIGNAL_RE = re.compile(
+    r"빼고|제외|말고|평일|주중|주말|내내|"
+    r"안\s*[돼되]|못\s*[가오와]|바[쁘빠]|일정\s*있|약속\s*있|패스|불가|힘들|어렵|"
+    r"월요일|화요일|수요일|목요일|금요일|토요일|일요일|"
+    r"월욜|화욜|수욜|목욜|금욜|토욜|일욜|"
+    r"내일|모레|다음\s*주|담주|이번\s*주|다다음|담담|\d{1,2}일|\d{1,2}/\d{1,2}|\d{4}-\d{2}-\d{2}"
+)
+
+
+async def _maybe_emit_reflect_back(state: GraphState, rejected: set, preferred: set | None = None) -> None:
+    """Phase ② reflect-back: 비자명 날짜 해석(거부 2개+)을 사용자에게 보여 교정 기회 제공.
+
+    잔여 추출 오류가 '조용히 반영'되는 대신 가시화. 단일 거부는 생략(노이즈),
+    최근 메시지에 같은 reflect-back 있으면 dedupe. DB/발행 실패는 비차단.
+    """
+    try:
+        from app.services.pipeline.helpers.date_classify import build_reflect_back
+        rb = build_reflect_back(rejected or set(), preferred or set())
+        if not rb:
+            return
+        # dedupe: 동일 내용 reflect-back이 최근에 있으면 스킵(재트리거 스팸 방지).
+        # 단 정정으로 해석이 바뀌면 내용이 달라 새로 발행됨 — 정정 가시화 보장.
+        recent = state.get("message_records", [])[-6:]
+        if any(
+            isinstance(m, dict) and str(m.get("content", "")).strip() == rb.strip()
+            for m in recent
+        ):
+            return
+        async with AsyncSessionLocal() as _db_rb:
+            await _emit_assistant_message(state["room_id"], _db_rb, rb, state, shared=True)
+        logger.info("[REFLECT_BACK] emitted: %s", rb[:80])
+    except Exception:
+        logger.warning("[REFLECT_BACK] skipped", exc_info=True)
+
+
 async def _extract_entities_from_context(state: GraphState) -> dict[str, Any]:
+    """엔티티 추출 + 날짜 가용성 구조화 추출기로 rejected_dates 보강(여집합/recall).
+
+    coreの LLM 추출 결과에, date_classify(2단계 구조→코드 확장) 결과로 rejected_dates를
+    덮어쓴다. eval(docs/handoff/eval): rejected_dates exact 0.34→0.66, 여집합 0.10→0.65.
+    날짜/가용성 단서가 없으면 분류기 호출 생략. 실패 시 core 결과 그대로(비차단).
+    """
+    extracted = await _extract_entities_core(state)
+    try:
+        context = _serialize_context(state) or ""
+        if context.strip() and _DATE_SIGNAL_RE.search(context):
+            from app.services.pipeline.helpers.date_classify import (
+                classify_availability,
+                to_rejected_dates,
+            )
+            avail = await classify_availability(context, now_kst=datetime.now(KST))
+            if avail.get("rejected"):
+                extracted["rejected_dates"] = to_rejected_dates(avail["rejected"])
+            if avail.get("preferred"):
+                extracted["preferred_dates"] = [{"date": d} for d in sorted(avail["preferred"])]
+            logger.info(
+                "[DATE_CLASSIFY] rejected=%d preferred=%d available=%d",
+                len(avail.get("rejected") or []), len(avail.get("preferred") or []),
+                len(avail.get("available") or []),
+            )
+    except Exception:
+        logger.warning("[DATE_CLASSIFY] override skipped", exc_info=True)
+    return extracted
+
+
+async def _extract_entities_core(state: GraphState) -> dict[str, Any]:
     context = _serialize_context(state) or ""
 
     # --- OPTIMIZATION: Try pattern-based extraction first ---
@@ -406,6 +474,37 @@ async def entity_extraction(state: GraphState) -> GraphState:
                 "conflict_users": pre_extracted.get("conflict_users") or [],
                 "rejected_dates": pre_extracted.get("rejected_dates") or [],
             }
+
+            # free-use 날짜추출 강화 (③, 2026-06-02): 상위 추출기의 rejected_dates를
+            # 구조화 분류기(date_classify, 2단계 구조→코드 확장)로 덮어쓴다.
+            # 여집합("X 빼고 다 바빠")·상대표현 recall 대폭 개선(eval exact 0.34→0.66).
+            # 날짜/가용성 단서가 있을 때만 호출(latency 보호), 실패 시 기존값 유지(비차단).
+            try:
+                _ctx_dc = _serialize_context(state) or ""
+                if _ctx_dc.strip() and _DATE_SIGNAL_RE.search(_ctx_dc):
+                    from app.services.pipeline.helpers.date_classify import (
+                        classify_availability,
+                        to_rejected_dates,
+                    )
+                    _av = await classify_availability(_ctx_dc, now_kst=datetime.now(KST))
+                    if _av.get("rejected"):
+                        extracted["rejected_dates"] = to_rejected_dates(_av["rejected"])
+                    if _av.get("preferred"):
+                        _existing_pref = extracted.get("preferred_dates") or []
+                        _seen_pref = {p.get("date") for p in _existing_pref if isinstance(p, dict)}
+                        extracted["preferred_dates"] = list(_existing_pref) + [
+                            {"date": d} for d in sorted(_av["preferred"]) if d not in _seen_pref
+                        ]
+                    logger.info(
+                        "[DATE_CLASSIFY] (pre-extracted) rejected=%d preferred=%d available=%d",
+                        len(_av.get("rejected") or []), len(_av.get("preferred") or []),
+                        len(_av.get("available") or []),
+                    )
+                    # Phase ② reflect-back (비자명 해석을 사용자에게 보여 교정 기회 제공).
+                    await _maybe_emit_reflect_back(state, _av.get("rejected"), _av.get("preferred"))
+            except Exception:
+                logger.warning("[DATE_CLASSIFY] (pre-extracted) override skipped", exc_info=True)
+
             state["extracted_entities"] = extracted
             _update_slot_state(state, extracted)
 
@@ -711,6 +810,13 @@ async def entity_extraction(state: GraphState) -> GraphState:
             state["rejected_dates"] = cleaned_rejected
             if cleaned_rejected:
                 logger.info("[REJECTED_DATES] Extracted: %s", cleaned_rejected)
+                # Phase ② reflect-back — pre_extracted 분기와 동일하게 비-pre 경로에도 적용.
+                _rej_iso = {r["date"] for r in cleaned_rejected if isinstance(r.get("date"), str)}
+                _pref_iso = {
+                    p.get("date") for p in (extracted.get("preferred_dates") or [])
+                    if isinstance(p, dict) and p.get("date")
+                }
+                await _maybe_emit_reflect_back(state, _rej_iso, _pref_iso)
 
         # PR-V1.5 / S16 (§6.15): rejected_places 누적.
         raw_rp = extracted.get("rejected_places")

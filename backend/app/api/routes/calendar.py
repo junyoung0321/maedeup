@@ -338,6 +338,29 @@ def _build_free_slots_cache_key(room_id: int, start_date: str, end_date: str) ->
     return f"maedeup:free_slots:{room_id}:{start_date}:{end_date}"
 
 
+async def invalidate_free_slots_cache(room_id: int) -> None:
+    """방 멤버 변동(가입/탈퇴) 시 free-slots 캐시(TTL 30s) 무효화.
+
+    멤버가 들어와도 캐시된 옛 total(분모)이 최대 30초간 남아 캘린더 X/N이
+    2/2 → (나중에) 4/4로 늦게 갱신되던 문제 해결. 키가 월(start~end)별로 갈리므로
+    `maedeup:free_slots:{room_id}:*` 패턴을 SCAN+DELETE. Redis 실패는 비차단.
+    """
+    try:
+        r = aioredis.from_url(
+            settings.REDIS_URL, decode_responses=True,
+            socket_connect_timeout=1, socket_timeout=1,
+        )
+        try:
+            keys = [k async for k in r.scan_iter(match=f"maedeup:free_slots:{room_id}:*", count=200)]
+            if keys:
+                await r.delete(*keys)
+                logger.info("[T6_CACHE_INVALIDATE] room=%s deleted=%d", room_id, len(keys))
+        finally:
+            await r.aclose()
+    except Exception:
+        logger.warning("[T6_CACHE] invalidate 실패 room=%s (graceful)", room_id, exc_info=True)
+
+
 @router.get("/free-slots", response_model=FreeSlotsResponse)
 async def get_free_slots(
     response: Response,

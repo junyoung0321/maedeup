@@ -16,6 +16,7 @@ eval(docs/handoff/eval/): rejected_dates F1 0.22→0.66, exact 0.34→0.66,
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -29,6 +30,67 @@ KST = timezone(timedelta(hours=9))
 _WD = ["월", "화", "수", "목", "금", "토", "일"]
 _WD_CODE = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 _WINDOW = 21  # 후보 달력 길이(일). 이번주+다음주+다다음주 커버.
+
+# 여집합 결정적 감지 — LLM이 다인 대화에서 'X 빼고 다 바빠'를 반전/누락하는 사각 보완.
+_KWD_CODE = {"월": "mon", "화": "tue", "수": "wed", "목": "thu", "금": "fri", "토": "sat", "일": "sun"}
+_SCOPE_PREFIX = [
+    (r"다다음\s*주|담담\s*주", "week_after"),
+    (r"다음\s*주|담주|차주", "next_week"),
+    (r"이번\s*주|금주", "this_week"),
+]
+# 'X 빼고/제외/말고 다 (바빠/안 돼/일정/패스...)' — X만 빼고 다 불가
+_COMPLEMENT_WD = re.compile(
+    r"((?:월|화|수|목|금|토|일)(?:요일|욜)?(?:\s*[·,]?\s*(?:월|화|수|목|금|토|일)(?:요일|욜)?)*)\s*"
+    r"(?:빼고|제외|말고)\s*(?:다|전부|모두|는)?\s*"
+    r"(?:바[쁘빠]|안\s*[돼되]|일정|약속|불가|힘들|어렵|패스|못)"
+)
+# 'X만 (가능/돼/시간 남아...)' — X 외 전부 불가
+_ONLY_WD = re.compile(
+    r"((?:월|화|수|목|금|토|일)(?:요일|욜)?(?:\s*[·,]?\s*(?:월|화|수|목|금|토|일)(?:요일|욜)?)*)\s*만\s*"
+    r"(?:가능|돼|되|시간|남|ok|콜|좋|비)"
+)
+# 평일/주말 여집합
+_WEEKEND_ONLY = re.compile(r"(?:주말|토일)\s*만\s*(?:가능|돼|되|시간|남|ok|콜|좋)|(?:평일|주중)\s*(?:빼고|제외|말고)\s*다")
+_WEEKDAY_ONLY = re.compile(r"(?:평일|주중)\s*만\s*(?:가능|돼|되|시간|남|ok|콜|좋)|(?:주말|토일)\s*(?:빼고|제외|말고)\s*다")
+
+
+def _detect_complement_constraints(context: str) -> list[dict]:
+    """'X 빼고 다 바빠'·'X만 가능' 여집합을 줄 단위로 결정적 추출.
+
+    LLM이 다인 대화에서 이 패턴을 반전(X를 거부)하거나 누락하는 사각을 보완.
+    명시적 주 범위(이번주/다음주/다다음주)가 있을 때만 — 범위 모호 시 LLM에 위임.
+    반환: constraints(_resolve 입력). 불가(scope+all+exclude) + 예외요일 available 쌍.
+    """
+    out: list[dict] = []
+    for line in (context or "").splitlines():
+        scope = None
+        for pat, sc in _SCOPE_PREFIX:
+            if re.search(pat, line):
+                scope = sc
+                break
+        if scope is None:
+            continue  # 주 범위 모호 → LLM에 맡김(잘못된 scope 방지)
+
+        def _emit(exclude_codes):
+            out.append({"polarity": "unavailable", "scope": scope, "days": "all", "exclude_weekdays": list(exclude_codes)})
+            # 예외 요일은 명시적 가능 → 거부 반전 교정(rejected -= available)
+            out.append({"polarity": "available", "scope": scope, "days": list(exclude_codes)})
+
+        m = _COMPLEMENT_WD.search(line) or _ONLY_WD.search(line)
+        if m:
+            # "토요일"의 '일'을 일요일로 오인하지 않게 'X요일' 토큰 단위로 추출.
+            toks = re.findall(r"(월|화|수|목|금|토|일)(?:요일|욜)?", m.group(1))
+            codes = [_KWD_CODE[t] for t in toks if t in _KWD_CODE]
+            if codes:
+                _emit(codes)
+                continue
+        if _WEEKEND_ONLY.search(line):
+            out.append({"polarity": "unavailable", "scope": scope, "days": "weekdays"})
+            out.append({"polarity": "available", "scope": scope, "days": "weekend"})
+        elif _WEEKDAY_ONLY.search(line):
+            out.append({"polarity": "unavailable", "scope": scope, "days": "weekend"})
+            out.append({"polarity": "available", "scope": scope, "days": "weekdays"})
+    return out
 
 
 def _week_bounds(today: datetime, which: str):
@@ -114,10 +176,10 @@ def _resolve(constraints: list, today: datetime, window: int = _WINDOW) -> dict:
             available |= iso_set
 
     rejected.discard(today_iso)  # 오늘은 발화에서 보통 미언급 — 과확장 방지
-    # 정정(reflect-back 후 "아 그날은 돼") 반영: 명시적 가능/선호로 표현된 날짜는
-    # 거부에서 제외한다. 'X 빼고 다 바빠'(거부) + '수요일은 돼'(가능)가 같은 날짜를
-    # 양쪽에 넣어도, 더 구체적·긍정적인 '가능'이 blanket 거부를 이긴다.
-    rejected -= (available | preferred)
+    # 정정("아 그날은 돼")·여집합 예외 반영: 명시적 '가능(available)'만 거부를 이긴다.
+    # preferred(좋아/선호)는 빼지 않는다 — 그룹에선 한 명이라도 못 오면 거부이고,
+    # '쉬고 싶다'를 preferred로 오분류해도 다른 사람의 거부를 덮지 않게 한다.
+    rejected -= available
     return {"rejected": rejected, "preferred": preferred, "available": available}
 
 
@@ -199,13 +261,20 @@ async def classify_availability(context: str, now_kst: datetime | None = None) -
     today = today.replace(hour=0, minute=0, second=0, microsecond=0)
     if today.tzinfo is None:
         today = today.replace(tzinfo=KST)
+    # 결정적 여집합 detector — LLM 호출 전에 추출(LLM 실패해도 여집합은 보장).
+    det = _detect_complement_constraints(context)
     try:
         raw = await call_llm(_build_prompt(context, today), provider=settings.LLM_PROVIDER_FOR_ENTITY)
         obj = _extract_json_object(raw) or {}
-        return _resolve(obj.get("constraints"), today)
+        llm_constraints = obj.get("constraints") or []
     except Exception:
-        logger.warning("classify_availability failed", exc_info=True)
-        return {"rejected": set(), "preferred": set(), "available": set()}
+        logger.warning("classify_availability LLM failed — detector만으로 진행", exc_info=True)
+        llm_constraints = []
+    # 병합: LLM + 결정적 detector. _resolve가 rejected −= available 하므로
+    # detector의 '예외요일 available'이 LLM의 반전(예외요일 거부)을 교정한다.
+    if det:
+        logger.info("[DATE_CLASSIFY] complement detector +%d constraints", len(det))
+    return _resolve(list(llm_constraints) + det, today)
 
 
 def to_rejected_dates(rejected: set, users: list | None = None) -> list[dict[str, Any]]:

@@ -631,10 +631,11 @@ export function useAgentWebSocket(roomId: string, sender: string, options?: Agen
   }, [roomId]);
 
   const sendMessage = useCallback(
-    (content: string) => {
+    (content: string, visibility: "public" | "private" = "public") => {
       const ws = wsRef.current;
       if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ role: "user", content, sender }));
+        // visibility: public=방 전체 공유(기본), private=나만 보임. 카드는 항상 공유.
+        ws.send(JSON.stringify({ role: "user", content, sender, visibility }));
       }
     },
     [sender],

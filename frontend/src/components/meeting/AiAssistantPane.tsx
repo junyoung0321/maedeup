@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles, Send, Square, MessageCircle, CalendarDays, MapPin, Users, CheckCircle2, ClipboardList, Share2, Check, AlertCircle, Search } from "lucide-react";
+import { Sparkles, Send, Square, MessageCircle, CalendarDays, MapPin, Users, CheckCircle2, ClipboardList, Share2, Check, AlertCircle, Search, Globe, Lock } from "lucide-react";
 import ScheduleRecommendationCard from "./ScheduleRecommendationCard";
 import PlaceRecommendationCard from "./PlaceRecommendationCard";
 import PlaceInputModal from "./PlaceInputModal";
@@ -29,6 +29,9 @@ const PANE_TYPE_MAP: Record<string, ContextMode> = {
 
 export default function AiAssistantPane() {
   const [input, setInput] = useState("");
+  // AI 패널 입력 공개 범위 — false=공유(방 전체, 기본), true=나만(본인만 보임).
+  // 카드(투표/장소)는 그룹 결정 자산이라 이 토글과 무관하게 항상 공유된다.
+  const [isPrivate, setIsPrivate] = useState(false);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiTimeoutMessage, setAiTimeoutMessage] = useState<string | null>(null);
   const [placeInputMeetingId, setPlaceInputMeetingId] = useState<number | null>(null);
@@ -296,7 +299,7 @@ export default function AiAssistantPane() {
       return;
     }
 
-    sendMessage(nextInput);
+    sendMessage(nextInput, isPrivate ? "private" : "public");
     setInput("");
     setIsAiLoading(true);
     setAiTimeoutMessage(null);
@@ -690,8 +693,15 @@ export default function AiAssistantPane() {
           }
 
           const msg = item.data;
-          const isMe = msg.role === "user";
-          const rawSender = isMe ? (msg.sender ?? user?.name ?? "나") : (msg.sender ?? "AI 어시스턴트");
+          // public 입력 공유로 '남의 user 메시지'도 도착하므로 user_id로 본인 여부 판정.
+          // (role==user 만으로 판정하면 타인 입력이 '나'로 우측 정렬되는 버그.)
+          const isMe =
+            msg.role === "user" &&
+            (msg.user_id == null || msg.user_id === currentUserId);
+          const rawSender =
+            msg.role === "user"
+              ? (msg.sender ?? (isMe ? (user?.name ?? "나") : "익명"))
+              : (msg.sender ?? "AI 어시스턴트");
           const senderLabel = rawSender === "LangGraph" ? "매듭 AI" : rawSender;
 
           // docs/ai-separation.md §2.2 — visibility-based rendering
@@ -1054,6 +1064,31 @@ export default function AiAssistantPane() {
           borderTop: "1px solid #e2e8f0",
         }}
       >
+        <button
+          type="button"
+          onClick={() => setIsPrivate((v) => !v)}
+          title={isPrivate ? "나만 보기 — 클릭하면 방 전체 공유" : "방 전체 공유 — 클릭하면 나만 보기"}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+            height: 40,
+            padding: "0 12px",
+            borderRadius: 60,
+            border: "none",
+            flexShrink: 0,
+            cursor: "pointer",
+            background: isPrivate ? "#475569" : "#ffffff",
+            color: isPrivate ? "#ffffff" : "#475569",
+            fontSize: fs(12, 10),
+            fontWeight: 600,
+            fontFamily: "Pretendard Variable, Pretendard, sans-serif",
+            boxShadow: "0 2px 3.5px rgba(0,0,0,0.15)",
+          }}
+        >
+          {isPrivate ? <Lock style={{ width: 13, height: 13 }} /> : <Globe style={{ width: 13, height: 13 }} />}
+          {isPrivate ? "나만" : "공유"}
+        </button>
         <input
           type="text"
           value={input}

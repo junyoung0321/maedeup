@@ -34,20 +34,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# direct_request 동시성 가드 — 같은 방에 여러 사용자가 거의 동시에 직접 요청하면
-# run_pipeline이 병렬 실행돼 중복 vote_card·DB 경합이 생긴다(auto_trigger·투표 경로는
-# NX 락으로 보호되지만 direct_request는 무방비였음). 방별 in-process Lock으로 직렬화 —
-# 두 번째 요청은 대기 후 진행하고, vote_card 노드의 F-1 'pending 재사용'이 중복을 차단한다.
-# 단일 uvicorn 워커 가정(backend/Dockerfile). 다중 워커로 확장 시 Redis 락으로 교체 필요.
-_room_direct_request_locks: dict[str, asyncio.Lock] = {}
-
-
-def _get_room_direct_request_lock(room_id: str) -> asyncio.Lock:
-    lock = _room_direct_request_locks.get(room_id)
-    if lock is None:
-        lock = asyncio.Lock()
-        _room_direct_request_locks[room_id] = lock
-    return lock
+# direct_request 카드 생성 블록 — 누군가의 입력으로 카드(투표/장소)가 생성 중인 방에는
+# 다른 카드 생성 요청을 막는다(대기가 아니라 '생성 중' 안내 후 차단). auto_trigger·투표
+# 경로는 NX 락으로 보호되지만 direct_request는 무방비라 동시 요청 시 중복 카드·DB 경합이
+# 났다. 첫 요청의 결과 카드는 shared로 모두에게 가므로, 막힌 사용자도 곧 같은 카드를 본다.
+# 단일 uvicorn 워커 가정(backend/Dockerfile). 다중 워커 확장 시 Redis 플래그로 교체 필요.
+_room_card_generating: set[str] = set()
 
 
 async def _publish_agent_message(
@@ -1057,6 +1049,9 @@ async def agent_ws(
             # P0 fix: content가 None인 잘못된 클라이언트 페이로드 방어 (모바일 push 등).
             content = payload.get("content", "") or ""
             sender = payload.get("sender")
+            # 공유/나만 토글 — 기본 public(공유). private면 입력·텍스트응답이 본인에게만.
+            # (투표/장소 카드는 그룹 결정 자산이라 토글과 무관하게 항상 shared.)
+            req_vis = "private" if payload.get("visibility") == "private" else "public"
 
             # 메시지 길이 제한 (2000자)
             if len(content) > 2000:
@@ -1075,7 +1070,7 @@ async def agent_ws(
                     sender=sender,
                     room_id=room_pk,
                     user_id=user_id_check,
-                    visibility=Visibility.private.value,
+                    visibility=(Visibility.shared.value if req_vis == "public" else Visibility.private.value),
                 )
                 session.add(msg)
                 await session.commit()
@@ -1095,11 +1090,13 @@ async def agent_ws(
                     "shared_by_user_id": msg.shared_by_user_id,
                 }
             )
+            # public이면 입력을 방 전체에 화자명과 함께 에코(공유 Q&A 맥락), private면 본인만.
+            echo_channel = shared_channel if req_vis == "public" else user_channel
             await _publish_agent_message(
                 r,
-                user_channel,
+                echo_channel,
                 out,
-                queue_key=f"agent_queue:{room_id}:user:{user_id_check}",
+                queue_key=(None if req_vis == "public" else f"agent_queue:{room_id}:user:{user_id_check}"),
             )
 
             if role == "user":
@@ -1190,7 +1187,7 @@ async def agent_ws(
                     await _emit_auto_trigger_greeting(
                         r,
                         room_id,
-                        shared_channel,
+                        shared_channel if req_vis == "public" else user_channel,
                         reply,
                     )
                     continue
@@ -1222,13 +1219,27 @@ async def agent_ws(
                         viewer_user_id=user_id_check,
                     )
 
+                    # 카드 생성 블록 — 이미 이 방에서 카드(투표/장소)가 생성 중이면 차단(대기 아님).
+                    # check+add 사이에 await가 없어 원자적(TOCTOU 방지). 첫 요청의 카드는 shared로
+                    # 모두에게 가므로 막힌 사용자도 곧 같은 카드를 함께 본다.
+                    if room_id in _room_card_generating:
+                        await _emit_auto_trigger_greeting(
+                            r,
+                            room_id,
+                            user_channel,
+                            "AI가 이미 일정·장소 카드를 만들고 있어요. 잠시만요 — 곧 결과를 함께 보실 수 있어요.",
+                        )
+                        slot_context.pop("trigger_reason", None)
+                        slot_context.pop("direct_request_kind", None)
+                        slot_context.pop("trigger_message_text", None)
+                        continue
+                    _room_card_generating.add(room_id)
                     try:
-                        # 방별 직렬화 — 동시 direct_request의 중복 카드 경합 차단.
-                        async with _get_room_direct_request_lock(room_id):
-                            result = await run_pipeline(
-                                room_id, context, session, slot_context=slot_context
-                            )
+                        result = await run_pipeline(
+                            room_id, context, session, slot_context=slot_context
+                        )
                     finally:
+                        _room_card_generating.discard(room_id)
                         slot_context.pop("trigger_reason", None)
                         slot_context.pop("direct_request_kind", None)
                         slot_context.pop("trigger_message_text", None)
@@ -1264,9 +1275,13 @@ async def agent_ws(
                     logger.info("[TRIGGER] conclusion_detected false positive, silent abort")
                     continue
 
-                # 파이프라인이 발행한 어시스턴트 메시지 — shared는 전체, private는 user 전용
+                # 파이프라인이 발행한 어시스턴트 메시지 — private 요청이면 전부 본인 전용,
+                # public이면 메시지 자체의 visibility(shared/private)를 따른다.
                 for new_msg in result.get("new_assistant_messages", []):
-                    target_ch = shared_channel if new_msg.get("visibility") == "shared" else user_channel
+                    if req_vis == "private":
+                        target_ch = user_channel
+                    else:
+                        target_ch = shared_channel if new_msg.get("visibility") == "shared" else user_channel
                     await _publish_agent_message(
                         r,
                         target_ch,

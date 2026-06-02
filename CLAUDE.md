@@ -2,7 +2,8 @@
 
 ## 진행 중인 작업
 세션 시작 시 `docs/handoff/` 폴더의 가장 최근 문서를 먼저 확인하세요.
-**현재 task**: PWA/TWA + 모바일 AI 흐름 main 머지·푸시 완료 (HEAD `50a6999`, origin/main, 2026-06-02). feat/pwa-twa-app 통합 — 설치형 PWA + TWA 스캐폴딩, SW 보수화, 모바일 채팅 AI 추천 흐름 2건 수정: ① agent WS keepalive (`/m/chat/layout.tsx` + `AgentTriggerKeepalive.tsx`) — 모바일 채팅 중 교착 트리거 유실 수정, ② `MobileVoteCard.tsx` — `/m/chat/ai`에 추천 카드 표시. qa-runtime 실제 Chromium e2e PASS (트리거 소비→vote_card 생성→카드 렌더+투표). 자동배포 파이프라인 없음(.github/workflows deploy 부재).
+**현재 task (브랜치 작업, main 미머지)**: `fix/speaker-attribution-concurrency` — AI 패널 멀티유저 3건 (커밋 `9e4ce93`+`2d82886`, 2026-06-02). ① B 다화자 화자 귀속(전역 `rejected-=available` → 화자별, eval 회귀 0 F1 0.62→0.66), ② C 카드 생성 블록(direct_request 동시 중복 카드 차단, 단일 워커 가정), ③ 공유/나만 토글(입력·텍스트 응답 public/private, 카드는 항상 공유, isMe user_id 판정 수정). qa-runtime + 백엔드 WS 검증 PASS. **다음**: 데스크탑 ACT1~5 데모 스모크 → main 머지 판단. 상세 `docs/handoff/2026-06-02-ai-panel-multiuser.md`.
+**직전 완료**: PWA/TWA + 모바일 AI 흐름 main 머지·푸시 (HEAD `50a6999`→`0472dfb` JWT 로그 마스킹, origin/main, 2026-06-02). feat/pwa-twa-app 통합 — 설치형 PWA + TWA 스캐폴딩, SW 보수화, 모바일 채팅 AI 추천 흐름 2건 수정: ① agent WS keepalive (`/m/chat/layout.tsx` + `AgentTriggerKeepalive.tsx`) — 모바일 채팅 중 교착 트리거 유실 수정, ② `MobileVoteCard.tsx` — `/m/chat/ai`에 추천 카드 표시. qa-runtime 실제 Chromium e2e PASS (트리거 소비→vote_card 생성→카드 렌더+투표). 자동배포 파이프라인 없음(.github/workflows deploy 부재).
 전(前) 전시 안정성 round (HEAD `ccc67e6`, 2026-05-30): 16 site 모델 매핑 (gpt-4o-mini 8 + gemini-3.1-flash-lite 8), K1.3 ACT5 SLA <5s PASS (3.99s), K2 PASS (97.4%/90%/40%). round summary `docs/handoff/2026-05-30-round-summary.md`. **다음**: 전시 진행 (2026-06-04 수 + 06-05 목, 데모는 데스크탑). 운영 보완 — warmup 1회 + ACT2 narration 강화 + 부스 안내문.
 시연 자동화 (WSL venv v2, 2026-05-15):
 - 터미널 1: `~/.venv-maedeup-demo/bin/python3 .gstack-browser-launch.py`
@@ -20,6 +21,7 @@
 8. 뷰포트 축소 시 데스크탑↔모바일(/m) 자동 전환 — 전시 후 진행. 데스크탑/모바일이 별개 라우트 트리(`/meeting/[id]` path param ↔ `/m/chat?roomId=N` query)라 단순 CSS 반응형 불가. 권장: 접근법 A(진입 시 1회 폭 감지→라우팅, ~1일, 데모 리스크 0) 또는 정석 C(데스크탑 페이지 진짜 반응형 통합, 1~2주). 구현 스케치: `viewportRoutes.ts` 매핑 테이블 + `ViewportRouter.tsx`(root layout 마운트). 모임방 WS/Context 재마운트로 진행상태 유실이 핵심 난점.
 9. 모바일 AI 흐름 후속 — `/m/chat/ai` 추천 카드까지 완료, 풀 투표/TimeBar/finalization 흐름은 데스크탑 전용(모바일 미구현). /ws/agent accept 로그 JWT 평문 마스킹(P2).
 참고:
+- `docs/handoff/2026-06-02-ai-panel-multiuser.md` (AI 패널 멀티유저: 화자 귀속·카드 블록·공유 토글, 2026-06-02)
 - `docs/handoff/2026-05-30-round-summary.md` (전시 round 통합 정리, 2026-05-30)
 - `docs/handoff/2026-05-30-final-result.md` (Phase 5 + ACT5 revert addendum)
 - `docs/handoff/2026-05-30-model-swap-comparison.md` (OpenAI swap)

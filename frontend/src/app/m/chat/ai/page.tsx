@@ -7,17 +7,22 @@ import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { MeetingProvider } from "@/contexts/MeetingContext";
 import AiAssistantPane from "@/components/meeting/AiAssistantPane";
+import InfoPane from "@/components/meeting/InfoPane";
 import type { Room } from "@/types";
 
-// 모바일 AI 탭 — 웹과 동일한 AI 패널을 그대로 렌더한다.
-// 데스크탑 AiAssistantPane(추천/장소/매듭 카드 + TimeBar + 공유 토글)을 MeetingProvider로
-// 감싸 roomId만 주입하면 데스크탑과 완전히 동일한 기능·디자인·출력을 모바일에서 제공.
-function MobileAiTab() {
+// 모바일 통합 meeting 화면 — 웹과 동일한 컴포넌트로 캘린더(InfoPane: TimeBar 시간대 조율)
+// + AI(AiAssistantPane: 추천/장소/매듭 카드·공유 토글)를 한 MeetingProvider에 둘 다 마운트.
+// 두 pane이 같은 provider+WS 상태를 공유하므로 데스크탑처럼 "AI 카드 → 시간대 변경 →
+// 캘린더 탭 TimeBar"가 그대로 동작한다. 탭은 visibility 토글(둘 다 살아있음).
+// 채팅방 탭은 별도 라우트(/m/chat/schedule, social 채팅)로 이동.
+function MobileMeetingRoom() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const roomId = searchParams.get("roomId") ?? "";
+  const initialTab = searchParams.get("tab") === "calendar" ? "calendar" : "ai";
   const { user, loading: authLoading } = useAuth();
   const [room, setRoom] = useState<Room | null>(null);
+  const [tab, setTab] = useState<"calendar" | "ai">(initialTab);
 
   useEffect(() => {
     if (authLoading || !user || !roomId) return;
@@ -28,9 +33,9 @@ function MobileAiTab() {
 
   const roomName = room?.name ?? "모임";
 
-  const tab = (label: string, active: boolean, onClick?: () => void) => (
+  const TabBtn = ({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) => (
     <div
-      className={`flex-1 flex items-center justify-center ${active ? "" : "cursor-pointer"}`}
+      className="flex-1 flex items-center justify-center cursor-pointer"
       onClick={onClick}
       style={{
         fontFamily: "Pretendard, sans-serif",
@@ -71,17 +76,28 @@ function MobileAiTab() {
         />
       </div>
 
-      {/* Tab Bar — 채팅방 / 캘린더 / AI */}
+      {/* Tab Bar — 채팅방(라우트) / 캘린더(local) / AI(local) */}
       <div className="flex shrink-0" style={{ height: 44, borderBottom: "1px solid #e2e8f0" }}>
-        {tab("채팅방", false, () => router.push(`/m/chat/schedule?roomId=${roomId}`))}
-        {tab("캘린더", false, () => router.push(`/m/schedule?roomId=${roomId}`))}
-        {tab("AI", true)}
+        <TabBtn label="채팅방" active={false} onClick={() => router.push(`/m/chat/schedule?roomId=${roomId}`)} />
+        <TabBtn label="캘린더" active={tab === "calendar"} onClick={() => setTab("calendar")} />
+        <TabBtn label="AI" active={tab === "ai"} onClick={() => setTab("ai")} />
       </div>
 
-      {/* AI 패널 (데스크탑 컴포넌트 그대로) */}
-      <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
+      {/* 두 pane 모두 마운트(상태·WS 공유), visibility만 토글 — 데스크탑 동시 렌더와 동치 */}
+      <div className="flex-1 relative" style={{ minHeight: 0 }}>
         <MeetingProvider initialRoomId={roomId} initialRoomName={roomName}>
-          <AiAssistantPane />
+          <div
+            className="absolute inset-0 flex flex-col"
+            style={{ display: tab === "calendar" ? "flex" : "none", overflowY: "auto" }}
+          >
+            <InfoPane />
+          </div>
+          <div
+            className="absolute inset-0 flex flex-col"
+            style={{ display: tab === "ai" ? "flex" : "none" }}
+          >
+            <AiAssistantPane />
+          </div>
         </MeetingProvider>
       </div>
     </div>
@@ -91,7 +107,7 @@ function MobileAiTab() {
 export default function AiChatPage() {
   return (
     <Suspense fallback={null}>
-      <MobileAiTab />
+      <MobileMeetingRoom />
     </Suspense>
   );
 }

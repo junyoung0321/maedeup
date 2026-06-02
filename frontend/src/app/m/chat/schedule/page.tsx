@@ -92,7 +92,7 @@ function ScheduleChatPageContent() {
         </div>
         <div
           className="flex-1 flex items-center justify-center cursor-pointer"
-          onClick={() => router.push(`/m/schedule?roomId=${roomId}`)}
+          onClick={() => router.push(`/m/chat/ai?tab=calendar&roomId=${roomId}`)}
           style={{ fontFamily: "Pretendard, sans-serif", fontSize: 14, fontWeight: 500, color: "#94a3b8" }}
         >
           캘린더
@@ -111,7 +111,7 @@ function ScheduleChatPageContent() {
         <div
           className="flex items-center justify-center shrink-0 cursor-pointer"
           style={{ height: 40, background: "#eef2ff", borderBottom: "1px solid #e0e7ff", gap: 6 }}
-          onClick={() => router.push(`/m/schedule?roomId=${roomId}`)}
+          onClick={() => router.push(`/m/chat/ai?tab=calendar&roomId=${roomId}`)}
         >
           <Sparkles size={14} color="#4f46e5" />
           <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 12, fontWeight: 600, color: "#4f46e5" }}>
@@ -212,7 +212,7 @@ function ScheduleChatPageContent() {
             <div
               className="flex items-center justify-center cursor-pointer"
               style={{ gap: 6, padding: "8px 0", borderRadius: 8, background: "rgba(255,255,255,0.15)" }}
-              onClick={() => router.push(`/m/schedule?roomId=${roomId}`)}
+              onClick={() => router.push(`/m/chat/ai?tab=calendar&roomId=${roomId}`)}
             >
               <span style={{ fontFamily: "Pretendard, sans-serif", fontSize: 11, fontWeight: 600, color: "#ffffff" }}>
                 캘린더 탭에서 투표하기 →

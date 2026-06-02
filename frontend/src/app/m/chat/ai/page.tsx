@@ -164,18 +164,61 @@ function AiChatPageContent() {
         {/* Messages */}
         {messages.map((msg) => {
           if (msg.role === "user") {
+            // public 공유 입력으로 '남의 user 메시지'도 도착 → user_id로 본인 여부 판정.
+            // (role==user 만으로 판정하면 타인 입력이 '나'로 우측정렬되는 버그.)
+            const isMe = msg.user_id == null || msg.user_id === Number(user?.sub);
+            if (isMe) {
+              return (
+                <div key={msg.id} style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                    <div
+                      style={{
+                        borderRadius: "16px 0 16px 16px",
+                        background: "#4f46e5",
+                        padding: 12,
+                        maxWidth: 260,
+                      }}
+                    >
+                      <span style={{ fontSize: 14, color: "#ffffff", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                        {msg.content}
+                      </span>
+                    </div>
+                    <span style={{ fontSize: 11, color: "#94a3b8" }}>{relativeTime(msg.created_at)}</span>
+                  </div>
+                </div>
+              );
+            }
+            // 공유된 남의 입력 — 좌측 정렬 + 화자명 (AI와 구분되는 글자 아바타)
+            const who = msg.sender ?? "익명";
             return (
-              <div key={msg.id} style={{ display: "flex", justifyContent: "flex-end" }}>
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+              <div key={msg.id} style={{ display: "flex", gap: 8 }}>
+                <div
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 16,
+                    background: "#818cf8",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  <span style={{ fontSize: 13, fontWeight: 600, color: "#ffffff" }}>{who.charAt(0)}</span>
+                </div>
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ fontSize: 12, color: "#94a3b8" }}>{who}</span>
                   <div
                     style={{
-                      borderRadius: "16px 0 16px 16px",
-                      background: "#4f46e5",
+                      borderRadius: "0 16px 16px 16px",
+                      background: "#ffffff",
+                      border: "0.5px solid #e2e8f0",
                       padding: 12,
                       maxWidth: 260,
+                      alignSelf: "flex-start",
                     }}
                   >
-                    <span style={{ fontSize: 14, color: "#ffffff", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                    <span style={{ fontSize: 14, color: "#1e293b", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
                       {msg.content}
                     </span>
                   </div>

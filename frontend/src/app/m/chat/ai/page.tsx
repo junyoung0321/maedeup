@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useAgentWebSocket } from "@/hooks/useAgentWebSocket";
 import { useAuth } from "@/hooks/useAuth";
+import MobileVoteCard from "@/components/meeting/MobileVoteCard";
 
 function relativeTime(iso: string): string {
   const d = new Date(iso);
@@ -30,14 +31,20 @@ function AiChatPageContent() {
   const { user, loading: authLoading } = useAuth();
   const sender = !authLoading && user ? user.name : "익명";
 
-  const { messages, sendMessage, status } = useAgentWebSocket(roomId, sender);
+  const { messages, sendMessage, status, cardsByMeetingId, voteUpdate } =
+    useAgentWebSocket(roomId, sender);
+
+  // AI가 만든 일정 추천(vote_card)만 추출 — 장소/매듭 카드는 별도 화면에서 처리.
+  const voteCards = Object.values(cardsByMeetingId).filter(
+    (c): c is Extract<typeof c, { type: "vote_card" }> => c.type === "vote_card",
+  );
 
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, voteCards.length]);
 
   function handleSend() {
     const text = input.trim();
@@ -232,6 +239,11 @@ function AiChatPageContent() {
             </div>
           );
         })}
+
+        {/* AI 일정 추천 카드 (vote_card) — 백엔드 파이프라인이 만든 추천 날짜 옵션 */}
+        {voteCards.map((c) => (
+          <MobileVoteCard key={c.meeting_id} card={c.payload} voteUpdate={voteUpdate} />
+        ))}
 
         <div ref={messagesEndRef} />
       </div>

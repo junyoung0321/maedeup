@@ -6,7 +6,12 @@ import json
 import time
 
 from sweep.client import SweepClient
-from sweep.invariants import check_card_payload, check_frame, check_state_consistency
+from sweep.invariants import (
+    check_card_payload,
+    check_frame,
+    check_state_consistency,
+    check_vote_storm,
+)
 from sweep.personas import Persona
 from sweep.scenarios import Scenario, assert_expected
 from sweep.simulator import GeminiCall, generate_utterance
@@ -15,9 +20,17 @@ from sweep.transcript import RoomTranscript, Turn
 _CARD_TYPES = {"vote_card", "place_recommendation", "maedeup_card"}
 
 
-async def _collect_frames(ws, *, window_s: float) -> list[dict]:
-    """window_s 동안 들어오는 프레임 수집 (트리거 후 카드 대기)."""
+async def _collect_frames(
+    ws, *, window_s: float, grace_s: float = 1.0
+) -> tuple[list[dict], float | None]:
+    """window_s 동안 프레임 수집. 첫 카드 도착 후엔 grace_s만 더 대기(공동 발급 카드 포착).
+
+    반환: (frames, 첫 카드 수신 monotonic 시각 또는 None).
+    첫 카드 시각을 따로 반환하므로 트리거→카드 지연을 window 길이가 아닌
+    실제 도착 시점으로 측정할 수 있다(K1 SLA 측정 정확도).
+    """
     frames: list[dict] = []
+    first_card_t: float | None = None
     deadline = time.monotonic() + window_s
     while time.monotonic() < deadline:
         try:
@@ -25,10 +38,15 @@ async def _collect_frames(ws, *, window_s: float) -> list[dict]:
         except asyncio.TimeoutError:
             break
         try:
-            frames.append(json.loads(raw))
+            frame = json.loads(raw)
         except json.JSONDecodeError:
             continue
-    return frames
+        frames.append(frame)
+        if first_card_t is None and frame.get("type") in _CARD_TYPES:
+            first_card_t = time.monotonic()
+            # 첫 카드 도착 — grace 후 종료해 런타임 절약 + 지연을 정확히 측정
+            deadline = min(deadline, first_card_t + grace_s)
+    return frames, first_card_t
 
 
 async def run_room(
@@ -73,9 +91,9 @@ async def run_room(
                 # 비-호스트 발화 후 짧게만 대기해 런타임 절약 (트리거 아님)
                 window = 2.0
 
-            frames = await _collect_frames(agent_ws, window_s=window)
+            frames, first_card_t = await _collect_frames(agent_ws, window_s=window)
             cards = [f for f in frames if f.get("type") in _CARD_TYPES]
-            latency = (time.monotonic() - t0) if cards else None
+            latency = (first_card_t - t0) if first_card_t is not None else None
 
             # 불변조건: 프레임 에러 + 카드 payload
             for f in frames:
@@ -196,7 +214,7 @@ async def run_scenario(
                     await client.send_social(room_id, join["token"], join["name"], u.text)
                     window = 2.0
 
-                frames = await _collect_frames(agent_ws, window_s=window)
+                frames, _first_card_t = await _collect_frames(agent_ws, window_s=window)
                 for f in frames:
                     if f.get("type") in _CARD_TYPES:
                         observed_cards.append(f)

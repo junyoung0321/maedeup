@@ -79,23 +79,26 @@ async def run_sweep(cfg: SweepConfig) -> None:
         (out / f"room-{r.room_id}.json").write_text(r.to_json(), encoding="utf-8")
         (out / f"room-{r.room_id}.md").write_text(r.to_markdown(), encoding="utf-8")
 
-    # GOAL 1: 정확성 시나리오 (CORE_SCENARIOS) 순차 실행
-    _safe_print("\n[시나리오 정확성 검사] CORE_SCENARIOS 실행 중...")
-    scenario_client = SweepClient(load_host_token())
+    # GOAL 1: 정확성 시나리오 (CORE_SCENARIOS) — --scenarios 옵트인 시에만 실행
     scenario_results: dict[str, list[str]] = {}
-    try:
-        for scenario in CORE_SCENARIOS:
-            _safe_print(f"  {scenario.key}: {scenario.key} ...")
-            key, failures = await run_scenario(
-                scenario_client, scenario,
-                host_token=load_host_token(),
-                persona_label_by_key=_PERSONA_LABEL_BY_KEY,
-            )
-            scenario_results[key] = failures
-            status = "PASS" if not failures else f"FAIL ({len(failures)} failures)"
-            _safe_print(f"  {scenario.key}: {status}")
-    finally:
-        await scenario_client.aclose()
+    if cfg.scenarios != "off":
+        _safe_print(f"\n[시나리오 정확성 검사] CORE_SCENARIOS 실행 중 (--scenarios={cfg.scenarios})...")
+        scenario_client = SweepClient(load_host_token())
+        try:
+            for scenario in CORE_SCENARIOS:
+                _safe_print(f"  {scenario.key}: {scenario.key} ...")
+                key, failures = await run_scenario(
+                    scenario_client, scenario,
+                    host_token=load_host_token(),
+                    persona_label_by_key=_PERSONA_LABEL_BY_KEY,
+                )
+                scenario_results[key] = failures
+                status = "PASS" if not failures else f"FAIL ({len(failures)} failures)"
+                _safe_print(f"  {scenario.key}: {status}")
+        finally:
+            await scenario_client.aclose()
+    else:
+        _safe_print("\n[시나리오 정확성 검사] 건너뜀 (--scenarios=off, 기본값). 활성화: --scenarios core")
 
     # GOAL 2: aggregate에 scenario_results 전달
     report = aggregate(rooms, scenario_results=scenario_results)

@@ -13,6 +13,7 @@ class SweepConfig:
     max_turns: int = 12
     seed: int = 0
     out_dir: str = "docs/handoff/robustness-sweep-2026-06-03"
+    scenarios: str = "off"
 
 
 def parse_args(argv: list[str] | None = None) -> SweepConfig:
@@ -23,7 +24,8 @@ def parse_args(argv: list[str] | None = None) -> SweepConfig:
     p.add_argument("--max-turns", type=int, default=12)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out-dir", default="docs/handoff/robustness-sweep-2026-06-03")
+    p.add_argument("--scenarios", choices=["off", "core", "all"], default="off")
     a = p.parse_args(argv)
     return SweepConfig(rooms=a.rooms, concurrency=a.concurrency,
                        members_per_room=a.members_per_room, max_turns=a.max_turns,
-                       seed=a.seed, out_dir=a.out_dir)
+                       seed=a.seed, out_dir=a.out_dir, scenarios=a.scenarios)

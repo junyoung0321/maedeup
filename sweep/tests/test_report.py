@@ -76,3 +76,33 @@ def test_go_no_go_scenario_all_pass():
     # 통과한 시나리오도 PASS로 나열되어야 한다
     assert "S1" in summary
     assert "PASS" in summary
+
+
+# --- --scenarios=off (기본) 동작: 시나리오 없을 때 섹션·차단 없음 ---
+
+def test_go_no_go_empty_scenario_results_no_section():
+    """scenario_results={}이면 정확성 시나리오 섹션이 출력에 없어야 한다."""
+    rooms = [_passing_room(1, 2.0)]
+    rep = aggregate(rooms)  # scenario_results 미전달 → {}
+    summary = go_no_go(rep)
+    assert "정확성 시나리오" not in summary
+
+
+def test_go_no_go_empty_scenario_results_no_blocker():
+    """scenario_results={}이면 GO이고 시나리오 관련 차단 사유가 없어야 한다."""
+    rooms = [_passing_room(1, 2.0)]
+    rep = aggregate(rooms, scenario_results={})
+    summary = go_no_go(rep)
+    assert "GO" in summary and "NO-GO" not in summary
+    assert "정확성 시나리오" not in summary
+
+
+def test_go_no_go_nonempty_failing_scenario_has_section_and_blocker():
+    """실패 시나리오가 있으면 섹션과 차단 사유 모두 존재해야 한다."""
+    rooms = [_passing_room(1, 2.0)]
+    sr = {"S1": ["S1: 기대 vote_card, 관측 []"]}
+    rep = aggregate(rooms, scenario_results=sr)
+    summary = go_no_go(rep)
+    assert "NO-GO" in summary
+    assert "정확성 시나리오" in summary
+    assert "차단 사유" in summary

@@ -179,6 +179,36 @@ def _build_place_cache_key(state: dict) -> str:
     return f"maedeup:place_cache:{location}:{meeting_type}:{headcount}:{cuisine_key}"
 
 
+def _build_place_narrator(
+    *,
+    hint: str,
+    count: int,
+    cuisines: list[str] | None,
+    kakao_error: bool,
+) -> str:
+    """place_recommendation 카드 옆 narrator 문구 (순수 함수).
+
+    분기 (PR-V1.5 / F7 + S18 + §6.15, 2026-06-03 0건 가드 반영):
+      - kakao 장애 + 0건 → 서비스 불가 안내 (최우선, 다른 문구 무력화)
+      - 다중 cuisine(2개+) → ambiguity prefix
+      - count == 0 → 지역 변경 유도 (카드 없음 — place_search_empty 플래그와 무관)
+      - count > 0 → N개 추천 안내
+    """
+    if kakao_error and count == 0:
+        return "장소 검색 서비스가 일시적으로 불가합니다. 잠시 후 다시 시도해주세요."
+
+    parts: list[str] = []
+    if isinstance(cuisines, list) and len(cuisines) >= 2:
+        cuisine_label = "·".join(cuisines)
+        parts.append(f"{cuisine_label} 모두 추천 중이에요. 한 종류만 원하시면 말씀해주세요.")
+    if count == 0:
+        # 0건이면 카드가 발행되지 않으므로 "아래 카드 확인" 대신 지역 변경 유도.
+        parts.append(f"{hint}에서 추천 결과를 찾지 못했어요. 다른 지역을 알려주실래요?")
+    else:
+        parts.append(f"{hint} 근처 추천 장소 {count}개를 정리했어요. 아래 카드에서 확인해 주세요.")
+    return " ".join(parts).strip()
+
+
 async def place_recommendation(state: GraphState) -> GraphState:
     _t0 = time.monotonic()
     dump("node_in", state.get("run_id"), {
@@ -483,39 +513,52 @@ async def place_recommendation(state: GraphState) -> GraphState:
             ranked_places = _filter_out_rejected_places(ranked_places, rejected_places)
 
         state["place_search_results"] = ranked_places
-        if meeting_id is None:
-            meeting_id = await _ensure_pending_meeting_id(
-                state,
-                f"{state.get('meeting_type') or '모임'} 장소 추천",
+        # 가드 (free-use audit 2026-06-03): 추천 결과가 0건이면 빈 장소 카드를
+        # 발행하지 않는다. 카드 대신 아래 narrator가 "다른 지역 알려주세요" 안내만
+        # 내보낸다. 기존엔 recommendations=[] 인 빈 카드를 그대로 broadcast해
+        # 사용자 화면에 내용 없는 추천 카드가 떴음.
+        if not ranked_places:
+            state["status"] = "place_skipped"
+            logger.info(
+                "[OPT] place_recommendation: 추천 0건 — 카드 생략, narrator만 안내 (%.2fs)",
+                time.monotonic() - _t0,
             )
-        state["place_recommendation_payload"] = {
-            "type": "place_recommendation",
-            "room_id": state["room_id"],
-            "meeting_id": meeting_id,
-            "place_hint": state.get("place_hint"),
-            "recommendations": ranked_places[:5],
-            # 익명 group constraint 요약 (디자인 P2). 누가 어떤 값을 가졌는지는
-            # 식별되지 않음. 프론트는 추천 카드 옆에 이 문장을 reasoning으로 노출.
-            "group_constraints_summary": group_constraints_summary,
-            # PR-Z1 (Q7=B): hybrid 그룹/발화자 토글 메타.
-            "preference_source": compute_preference_source(state),
-            "preference_toggle_enabled": compute_preference_toggle_enabled(state),
-        }
-        state["status"] = "place_recommended"
+        else:
+            if meeting_id is None:
+                meeting_id = await _ensure_pending_meeting_id(
+                    state,
+                    f"{state.get('meeting_type') or '모임'} 장소 추천",
+                )
+            state["place_recommendation_payload"] = {
+                "type": "place_recommendation",
+                "room_id": state["room_id"],
+                "meeting_id": meeting_id,
+                "place_hint": state.get("place_hint"),
+                "recommendations": ranked_places[:5],
+                # 익명 group constraint 요약 (디자인 P2). 누가 어떤 값을 가졌는지는
+                # 식별되지 않음. 프론트는 추천 카드 옆에 이 문장을 reasoning으로 노출.
+                "group_constraints_summary": group_constraints_summary,
+                # PR-Z1 (Q7=B): hybrid 그룹/발화자 토글 메타.
+                "preference_source": compute_preference_source(state),
+                "preference_toggle_enabled": compute_preference_toggle_enabled(state),
+            }
+            state["status"] = "place_recommended"
 
         # 새로고침 복구용 — 장소 추천 페이로드를 Redis에 캐시 (24h TTL).
-        try:
-            r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        # 카드가 발행된 경우에만 (0건 가드로 payload 미설정 시 캐시 생략).
+        if state.get("place_recommendation_payload"):
             try:
-                await r.set(
-                    f"room_place_rec:{state['room_id']}",
-                    json.dumps(state["place_recommendation_payload"], ensure_ascii=False),
-                    ex=86400,
-                )
-            finally:
-                await r.aclose()
-        except Exception:
-            logger.debug("place_rec cache failed", exc_info=True)
+                r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+                try:
+                    await r.set(
+                        f"room_place_rec:{state['room_id']}",
+                        json.dumps(state["place_recommendation_payload"], ensure_ascii=False),
+                        ex=86400,
+                    )
+                finally:
+                    await r.aclose()
+            except Exception:
+                logger.debug("place_rec cache failed", exc_info=True)
 
         # T5: cache miss 경로 — 결과를 Redis에 SET (TTL 30min).
         if _t5_cached_recommendations is None and ranked_places:
@@ -539,44 +582,15 @@ async def place_recommendation(state: GraphState) -> GraphState:
                 logger.warning("[T5_CACHE] Redis SET 실패 (graceful)", exc_info=True)
 
         # Narrator: 카드만 띄우고 끝내면 사용자가 "AI가 대답 안 했나?" 헷갈림.
-        # PR-V1.5 / F7 + S18 + §6.15: narrator 분기.
-        #   - kakao_api_error → "장소 검색 서비스 일시 불가".
-        #   - cuisine 2개 이상 → ambiguity 안내 + 정상 추천 narrator.
-        #   - place_search_empty (0건 정상 응답) → "다른 지역" 유도.
-        #   - count == 0 (필터 후 0건) → 기존 fallback.
+        # 분기 로직은 _build_place_narrator(순수 함수)로 분리 — 테스트 가능.
         try:
             count = len(ranked_places[:5])
-            hint = state.get("place_hint") or "요청하신 지역"
-            cuisines = state.get("detected_cuisines") or []
-            place_empty = bool(state.get("place_search_empty"))
-            kakao_error = bool(state.get("kakao_api_error"))
-
-            narrator_parts: list[str] = []
-            # F7: 장애가 최우선 — 다른 narrator 무력화.
-            if kakao_error and count == 0:
-                narrator_parts.append(
-                    "장소 검색 서비스가 일시적으로 불가합니다. 잠시 후 다시 시도해주세요."
-                )
-            else:
-                # S18: 다중 cuisine ambiguity narrator (정상 추천 앞에 prefix).
-                if isinstance(cuisines, list) and len(cuisines) >= 2:
-                    cuisine_label = "·".join(cuisines)
-                    narrator_parts.append(
-                        f"{cuisine_label} 모두 추천 중이에요. 한 종류만 원하시면 말씀해주세요."
-                    )
-                # §6.15: 정상 0건 → 지역 변경 유도.
-                if place_empty and count == 0:
-                    narrator_parts.append(
-                        f"{hint}에서 추천 결과를 찾지 못했어요. 다른 지역을 알려주실래요?"
-                    )
-                elif count > 0:
-                    narrator_parts.append(
-                        f"{hint} 근처 추천 장소 {count}개를 정리했어요. 아래 카드에서 확인해 주세요."
-                    )
-                else:
-                    narrator_parts.append("추천 장소를 정리해봤어요. 아래 카드를 확인해 주세요.")
-
-            narrator = " ".join(narrator_parts).strip()
+            narrator = _build_place_narrator(
+                hint=state.get("place_hint") or "요청하신 지역",
+                count=count,
+                cuisines=state.get("detected_cuisines") or [],
+                kakao_error=bool(state.get("kakao_api_error")),
+            )
             async with AsyncSessionLocal() as db:
                 await _emit_assistant_message(state["room_id"], db, narrator, state, shared=True)
         except Exception:

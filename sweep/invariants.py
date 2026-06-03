@@ -30,13 +30,28 @@ def check_card_payload(card: dict) -> list[Violation]:
         if not card.get("time_options"):
             out.append(Violation("vote_card_no_options", "time_options 비어있음"))
     elif t == "maedeup_card":
-        if not card.get("confirmed_date"):
-            out.append(Violation("maedeup_no_date", "confirmed_date 없음"))
-        if not card.get("confirmed_place"):
-            out.append(Violation("maedeup_no_place", "confirmed_place 없음"))
+        # 실제 payload 키: date / selected_time(=selected_slot) / date_hint (확정 날짜),
+        # place / selected_place (확정 장소). confirmed_* 는 state 키지 카드 키가 아님.
+        has_date = bool(
+            card.get("date") or card.get("selected_time")
+            or card.get("selected_slot") or card.get("date_hint")
+            or card.get("confirmed_date")
+        )
+        if not has_date:
+            out.append(Violation("maedeup_no_date", "날짜 정보 없음"))
+        # 장소는 place_pending(시간만 확정된 부분 카드)이면 비어도 정상 — 위반 아님.
+        if not card.get("place_pending"):
+            has_place = bool(
+                card.get("place") or card.get("selected_place")
+                or card.get("confirmed_place")
+            )
+            if not has_place:
+                out.append(Violation("maedeup_no_place", "장소 정보 없음"))
     elif t == "place_recommendation":
-        if not card.get("places") and not card.get("results"):
-            out.append(Violation("place_reco_empty", "검색 결과 없음"))
+        # 실제 payload 키는 'recommendations'. (places/results 는 폴백용)
+        recs = card.get("recommendations") or card.get("places") or card.get("results")
+        if not recs:
+            out.append(Violation("place_reco_empty", "추천 결과 없음"))
     return out
 
 

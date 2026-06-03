@@ -30,6 +30,34 @@ def test_place_reco_empty_results_flagged():
     assert any(x.code == "place_reco_empty" for x in v)
 
 
+def test_place_reco_recommendations_key_not_flagged():
+    # 회귀: 실제 payload는 'recommendations' 키 사용. 비어있지 않으면 통과해야 함.
+    # (수정 전엔 places/results만 검사해 모든 place 카드가 false-positive)
+    v = check_card_payload({"type": "place_recommendation",
+                            "recommendations": [{"name": "어떤 식당"}]})
+    assert v == []
+
+
+def test_place_reco_empty_recommendations_flagged():
+    v = check_card_payload({"type": "place_recommendation", "recommendations": []})
+    assert any(x.code == "place_reco_empty" for x in v)
+
+
+def test_maedeup_full_card_real_keys_not_flagged():
+    # 회귀: 실제 maedeup payload는 selected_time/selected_place 키 사용.
+    v = check_card_payload({"type": "maedeup_card",
+                            "selected_time": {"date": "2026-06-10"},
+                            "selected_place": {"name": "강남 식당"}})
+    assert v == []
+
+
+def test_maedeup_partial_time_only_card_place_pending_not_flagged():
+    # 회귀: 시간만 확정된 부분 카드는 place가 비어도(place_pending) 정상.
+    v = check_card_payload({"type": "maedeup_card", "date": "2026-06-10",
+                            "place": None, "place_pending": True})
+    assert v == []
+
+
 def test_latency_budget_p95():
     assert check_latency_budget([1.0, 2.0, 3.0, 4.0], p95_budget_s=8.0) == []
     v = check_latency_budget([1.0, 2.0, 3.0, 9.0], p95_budget_s=8.0)

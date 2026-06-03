@@ -86,10 +86,9 @@ async def run_sweep(cfg: SweepConfig) -> None:
         scenario_client = SweepClient(load_host_token())
         try:
             for scenario in CORE_SCENARIOS:
-                _safe_print(f"  {scenario.key}: {scenario.key} ...")
+                _safe_print(f"  {scenario.key} ({scenario.description}) ...")
                 key, failures = await run_scenario(
                     scenario_client, scenario,
-                    host_token=load_host_token(),
                     persona_label_by_key=_PERSONA_LABEL_BY_KEY,
                 )
                 scenario_results[key] = failures

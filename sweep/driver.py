@@ -64,13 +64,11 @@ async def run_room(
     host_persona, host_join = members[0]
     history: list[str] = []
 
-    # GOAL 4: 이 방에서 카드가 발급된 적 있는지 추적 (coarse proxy)
     # NOTE: WS 레벨 하네스는 다른 사용자 화면의 카드 소거 이벤트를 관찰할 수 없다.
     # maedeup_card 직전 window 내에서 vote_card/place_recommendation 가 함께 보인 경우만
     # stale_cards 검사를 수행한다 — 다른 창의 소거 여부는 알 수 없으므로 과탐(false positive)
     # 방지를 위해 동일 window 동시 관측 한정으로만 체크한다.
-    _seen_vote_card = False
-    _seen_place_card = False
+    _storm_done = False  # 동시 투표 경합은 방당 1회만 (재발급 vote_card에 중복 실행 방지)
 
     # host가 /ws/agent 리스너를 열어 트리거 후 카드를 수신
     async with client.agent_listener(room_id, host_join["token"]) as agent_ws:
@@ -108,13 +106,6 @@ async def run_room(
             transcript.add_turn(Turn(speaker=persona.key, text=text,
                                      trigger_reason=trigger, cards=cards, latency_s=latency))
 
-            # GOAL 4: 카드 누적 추적 (이전 턴에서 발급된 카드 기억)
-            for c in cards:
-                if c.get("type") == "vote_card":
-                    _seen_vote_card = True
-                elif c.get("type") == "place_recommendation":
-                    _seen_place_card = True
-
             # maedeup_card가 나오면 확정 → 종료
             if any(c.get("type") == "maedeup_card" for c in cards):
                 # GOAL 4: 동일 window 내 vote_card/place_card와 maedeup_card가 함께 관측된
@@ -129,8 +120,8 @@ async def run_room(
                 ))
                 break
 
-            # GOAL 3: vote_card가 처음 관측됐을 때 동시 투표 경합 검사
-            if enable_vote_storm:
+            # GOAL 3: vote_card가 처음 관측됐을 때 동시 투표 경합 검사 (방당 1회)
+            if enable_vote_storm and not _storm_done:
                 for c in cards:
                     if c.get("type") == "vote_card" and c.get("meeting_id"):
                         meeting_id = int(c["meeting_id"])
@@ -147,6 +138,7 @@ async def run_room(
                             transcript.violations.append(
                                 Violation("vote_storm_error", repr(exc))
                             )
+                        _storm_done = True
                         # 한 turn에 vote_card 1개만 처리
                         break
 
@@ -170,7 +162,6 @@ async def run_scenario(
     client: SweepClient,
     scenario: Scenario,
     *,
-    host_token: str,
     persona_label_by_key: dict[str, str],
 ) -> tuple[str, list[str]]:
     """시나리오 1개를 실행하고 (scenario.key, failures) 반환.
@@ -198,7 +189,7 @@ async def run_scenario(
             label = persona_label_by_key.get(key, key)
             join_by_key[key] = await client.guest_join(room_id, label)
 
-        # host join dict (host_token을 사용하므로 guest_join 토큰은 send_social용)
+        # host agent_listener용 — 시나리오 멤버는 모두 guest_join 토큰 사용
         host_join = join_by_key["host"]
 
         observed_cards: list[dict] = []

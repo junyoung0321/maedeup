@@ -95,6 +95,7 @@ interface MeetingContextValue extends MeetingState {
   setVoteUpdate: (update: VoteUpdatePayload | null) => void;
   setPlaceRecommendation: (rec: PlaceRecommendationPayload | null, meetingId?: number | null) => void;
   requestTimeChange: (slot: VoteCardTimeOption, meetingId: number) => void;
+  openTimeBar: (date: string, meetingId: number) => void;
   resetCoordination: () => void;
   // InfoPane phase actions
   setInfoPanePhase: (phase: InfoPanePhase) => void;
@@ -397,6 +398,19 @@ export function MeetingProvider({
     }));
   }, []);
 
+  // 호스트의 "시간대 변경" 브로드캐스트(timebar_open WS 이벤트)를 받은 전 멤버가 호출.
+  // requestTimeChange와 동일한 상태 전환 → 모든 멤버가 TimeBar 단계로 진입해 투표.
+  const openTimeBar = useCallback((date: string, meetingId: number) => {
+    setState((prev) => ({
+      ...prev,
+      myDateSelection: date,
+      infoPanePhase: "dateConfirmed" as InfoPanePhase,
+      confirmedDate: date,
+      confirmedTimeRange: null,
+      voteAwaitingTimeMeetingId: meetingId,
+    }));
+  }, []);
+
   // InfoPane phase actions
   const setInfoPanePhase = useCallback((phase: InfoPanePhase) => {
     setState((prev) => {
@@ -524,6 +538,7 @@ export function MeetingProvider({
       setVoteUpdate,
       setPlaceRecommendation,
       requestTimeChange,
+      openTimeBar,
       resetCoordination,
       setInfoPanePhase,
       confirmDate,
@@ -591,6 +606,7 @@ export function MeetingProvider({
       setVoteUpdate,
       setPlaceRecommendation,
       requestTimeChange,
+      openTimeBar,
       resetCoordination,
       setInfoPanePhase,
       confirmDate,

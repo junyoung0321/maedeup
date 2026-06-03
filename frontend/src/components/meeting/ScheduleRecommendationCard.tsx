@@ -234,9 +234,20 @@ export default function ScheduleRecommendationCard({
     if (typeof voteCard.meeting_id !== "number") return;
     const slot = voteCard.time_options.find((o) => o.slot_id === selectedSlotId);
     if (!slot) return;
-    requestTimeChange(slot, voteCard.meeting_id);
+    requestTimeChange(slot, voteCard.meeting_id);  // 호스트 본인 화면 즉시 전환
     setContextMode("schedule");
-  }, [voteCard, selectedSlotId, requestTimeChange, setContextMode]);
+    // 전 멤버에게 TimeBar 진입 브로드캐스트 (fire-and-forget). 실패해도 호스트
+    // 로컬 전환은 유지 — 협업 진입만 best-effort.
+    const date = slot.start_at.split("T")[0];
+    if (roomId && date) {
+      apiFetch(`/api/v1/rooms/${roomId}/timebar-open`, {
+        method: "POST",
+        body: JSON.stringify({ meeting_id: voteCard.meeting_id, date }),
+      }).catch(() => {
+        /* 브로드캐스트 실패 무시 */
+      });
+    }
+  }, [voteCard, selectedSlotId, requestTimeChange, setContextMode, roomId]);
 
   if (!voteCard) return null;
 

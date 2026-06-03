@@ -505,6 +505,67 @@ class ChosenTime(BaseModel):
     end_idx: int    # inclusive
 
 
+class TimebarOpenRequest(BaseModel):
+    meeting_id: int
+    date: str  # YYYY-MM-DD — 호스트가 TimeBar를 열 날짜
+
+
+@router.post("/{room_id}/timebar-open")
+async def timebar_open(
+    room_id: int,
+    body: TimebarOpenRequest,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """호스트 '시간대 변경' 클릭 → 전원에게 TimeBar 진입 신호 브로드캐스트.
+
+    (free-use audit 2026-06-03) 기존엔 프론트 requestTimeChange가 호스트 로컬
+    state만 바꿔 호스트 화면에만 TimeBar가 떴고, 다른 멤버는 알림도 TimeBar도
+    못 받아 새 시간 투표에 참여 못 했음. social 채널로 timebar_open 이벤트를
+    발행해 전 멤버 InfoPane이 해당 meeting에 대해 dateConfirmed 단계로 전환 →
+    모두 TimeBar로 원하는 시간을 투표 가능.
+    """
+    room_row = await session.execute(select(Room).where(Room.id == room_id))
+    room = room_row.scalar_one_or_none()
+    if room is None:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if room.created_by != int(current_user.sub):
+        raise HTTPException(status_code=403, detail="방장만 시간대 변경을 시작할 수 있습니다.")
+
+    from app.core.config import settings as _settings
+    from app.api.ws.social import _publish_social_message
+    import redis.asyncio as _aioredis
+
+    social_channel = f"social:{room_id}"
+    payload = json.dumps(
+        {
+            "type": "timebar_open",
+            "room_id": room_id,
+            "meeting_id": body.meeting_id,
+            "date": body.date,
+        },
+        ensure_ascii=False,
+    )
+    try:
+        r = _aioredis.from_url(
+            _settings.REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+    except Exception:
+        r = None
+    try:
+        await _publish_social_message(r, social_channel, payload)
+    finally:
+        if r is not None:
+            try:
+                await r.aclose()
+            except Exception:
+                pass
+    return {"published": True}
+
+
 class ScheduleConfirmRequest(BaseModel):
     snapshot_hash: str
     # A3-3: "auto" = AI 추천 그대로, "manual" = 호스트 정밀 선택. 기본값으로 backward-compat.

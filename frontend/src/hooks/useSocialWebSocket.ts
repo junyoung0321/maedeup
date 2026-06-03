@@ -148,6 +148,14 @@ export interface ScheduleConsensusReadyPayload {
   member_count: number;
 }
 
+// 호스트가 "시간대 변경"을 누르면 전 멤버를 TimeBar 단계로 진입시키는 브로드캐스트.
+export interface TimebarOpenPayload {
+  type: "timebar_open";
+  room_id: number;
+  meeting_id: number;
+  date: string; // YYYY-MM-DD
+}
+
 // G-1: 새 멤버 join 시 다른 멤버 화면 캘린더 X/N 자동 갱신 트리거.
 export interface MemberJoinedPayload {
   type: "member_joined";
@@ -240,6 +248,17 @@ function isScheduleConsensusReadyPayload(data: unknown): data is ScheduleConsens
     typeof c.room_id === "number" &&
     typeof c.snapshot_hash === "string" &&
     typeof c.host_user_id === "number"
+  );
+}
+
+function isTimebarOpenPayload(data: unknown): data is TimebarOpenPayload {
+  if (!data || typeof data !== "object") return false;
+  const c = data as Partial<TimebarOpenPayload>;
+  return (
+    c.type === "timebar_open" &&
+    typeof c.room_id === "number" &&
+    typeof c.meeting_id === "number" &&
+    typeof c.date === "string"
   );
 }
 
@@ -350,6 +369,7 @@ export function useSocialWebSocket(roomId: string, sender: string) {
   const [scheduleConsensus, setScheduleConsensus] = useState<ScheduleConsensusReadyPayload | null>(null);
   // G-1: 새 멤버 join 시 캘린더 X/N 자동 갱신 트리거
   const [lastMemberJoined, setLastMemberJoined] = useState<MemberJoinedPayload | null>(null);
+  const [lastTimebarOpen, setLastTimebarOpen] = useState<TimebarOpenPayload | null>(null);
   const [status, setStatus] = useState<WsStatus>("connecting");
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -585,6 +605,13 @@ export function useSocialWebSocket(roomId: string, sender: string) {
 
         if (isScheduleConsensusReadyPayload(data)) {
           setScheduleConsensus(data);
+          return;
+        }
+
+        if (isTimebarOpenPayload(data)) {
+          // 호스트가 "시간대 변경" → 전 멤버를 TimeBar 단계로 진입. 매번 새 객체로
+          // 세팅돼야 동일 meeting 재요청도 effect를 다시 트리거함.
+          setLastTimebarOpen({ ...data });
           return;
         }
 
@@ -864,5 +891,6 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     scheduleConsensus,
     clearScheduleConsensus: () => setScheduleConsensus(null),
     lastMemberJoined,
+    lastTimebarOpen,
   };
 }

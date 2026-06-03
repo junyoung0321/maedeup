@@ -100,6 +100,7 @@ export default function ChatPane() {
     lastConfirmedMeeting,
     scheduleConsensus,
     lastMemberJoined,
+    lastTimebarOpen,
   } = useSocialWebSocket(roomId, currentUserName);
 
   // Bridge: socket의 peerSelections/sendDateSelection을 MeetingContext로 노출
@@ -115,6 +116,7 @@ export default function ChatPane() {
   const setFinalizationPending = meetingContext?.setFinalizationPending;
   const setLastConfirmedMeeting = meetingContext?.setLastConfirmedMeeting;
   const setScheduleConsensus = meetingContext?.setScheduleConsensus;
+  const openTimeBar = meetingContext?.openTimeBar;
   const refreshCalendar = meetingContext?.refreshCalendar;
   useEffect(() => {
     setPeerDateSelections?.(peerSelections);
@@ -160,6 +162,12 @@ export default function ChatPane() {
   useEffect(() => {
     setScheduleConsensus?.(scheduleConsensus);
   }, [scheduleConsensus, setScheduleConsensus]);
+  // 호스트의 "시간대 변경" 브로드캐스트 → 전 멤버를 TimeBar 단계로 진입시킴.
+  useEffect(() => {
+    if (lastTimebarOpen) {
+      openTimeBar?.(lastTimebarOpen.date, lastTimebarOpen.meeting_id);
+    }
+  }, [lastTimebarOpen, openTimeBar]);
   // G-1: 새 멤버 join → 다른 멤버 화면 캘린더 X/N 자동 갱신
   useEffect(() => {
     if (lastMemberJoined) refreshCalendar?.();

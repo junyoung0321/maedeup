@@ -558,6 +558,38 @@ async def confirm_meeting(
         await session.commit()
         await session.refresh(meeting)
 
+        # Card-resolution broadcast (2026-06-03 bug fix): the time vote /
+        # recommendation card lives on the AGENT websocket (cardsByMeetingId),
+        # which subscribes ONLY to `agent:{room}`. The `meeting_confirmed`
+        # event below was published solely on `social:{room}` and only inside
+        # the proposal_id branch, so non-host clients (and any no-proposal
+        # TimeBar confirm) never received a signal to drop the card — it stayed
+        # on screen. Publish `meeting_confirmed` on the agent channel
+        # unconditionally so every client's agent WS prunes the card. The host
+        # hides its own card via local state, so this is the only signal other
+        # clients get. Frontend: isMeetingResolvedPayload (useAgentWebSocket.ts)
+        # deletes cardsByMeetingId[meeting_id]. The confirm sends meeting_id =
+        # the pending card's id, so the promoted meeting.id matches the card; a
+        # fresh-insert confirm has no matching card so the event is a harmless
+        # no-op on clients.
+        try:
+            await redis.publish(
+                f"agent:{body.room_id}",
+                json.dumps(
+                    {
+                        "type": "meeting_confirmed",
+                        "room_id": body.room_id,
+                        "meeting_id": meeting.id,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        except Exception:
+            logger.warning(
+                "Agent-channel meeting_confirmed publish failed (meeting_id=%s)",
+                meeting.id, exc_info=True,
+            )
+
         # If a proposal drove this confirm, mark it as confirmed in Redis and
         # broadcast `meeting_confirmed` on the social channel so every client
         # transitions into the success state together.

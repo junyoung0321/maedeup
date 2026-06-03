@@ -6,6 +6,7 @@ FastAPI dependency_overrides so each test can swap the "current user".
 """
 from __future__ import annotations
 
+import json
 from typing import AsyncIterator
 
 import fakeredis.aioredis as fake_aioredis
@@ -422,3 +423,48 @@ async def test_confirm_clears_room_availability(client, redis_client):
 
     post = await sr.load_room_availability(redis_client, room_id=10)
     assert post == {}, f"availability should be cleared after confirm, got {post}"
+
+
+async def _drain_agent_channel(pubsub, *, max_reads: int = 20) -> list[dict]:
+    """Collect JSON messages published on the subscribed agent channel."""
+    seen: list[dict] = []
+    for _ in range(max_reads):
+        msg = await pubsub.get_message(timeout=0.2, ignore_subscribe_messages=True)
+        if msg is None:
+            continue
+        try:
+            seen.append(json.loads(msg["data"]))
+        except (TypeError, ValueError):
+            continue
+    return seen
+
+
+async def test_confirm_broadcasts_meeting_confirmed_on_agent_channel(client, redis_client):
+    """Bug fix (2026-06-03): 추천/투표 카드는 agent WS가 소유(cardsByMeetingId)하고
+    agent:{room} 채널만 구독한다. 확정 이벤트가 social 채널로만 발행되면 비호스트
+    클라이언트는 카드 제거 신호를 못 받아 카드가 안 사라진다. 확정 시 agent:{room}
+    채널로도 meeting_confirmed(meeting_id 포함)를 발행해야 한다."""
+    pubsub = redis_client.pubsub()
+    await pubsub.subscribe("agent:10")
+
+    _set_current_user(1)  # host
+    resp = await client.post(
+        "/api/v1/meetings/confirm",
+        json={
+            "room_id": 10,
+            "title": "저녁 모임",
+            "scheduled_at": "2026-05-02T15:00:00",
+            "end_at": "2026-05-02T17:00:00",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    meeting_id = resp.json()["id"]
+
+    seen = await _drain_agent_channel(pubsub)
+    await pubsub.unsubscribe("agent:10")
+    await pubsub.aclose()
+
+    resolved = [m for m in seen if m.get("type") == "meeting_confirmed"]
+    assert resolved, f"expected meeting_confirmed on agent:10, got {seen}"
+    assert resolved[0]["meeting_id"] == meeting_id
+    assert resolved[0]["room_id"] == 10

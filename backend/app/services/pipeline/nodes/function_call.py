@@ -178,8 +178,17 @@ async def function_calling(state: GraphState) -> GraphState:
             and state.get("time_options")
             and not state.get("preference_common_times")
         ):
+            # 2026-06-03 Bug 3 fix: 자연어 시간 옵션도 멤버 GCal busy를 반영해
+            # 실제 교집합 가용성으로 슬롯을 만든다. 이전엔 발화자 메시지 텍스트만으로
+            # available_count를 headcount(가짜)로 채워, 대화 교착 → AI 자동 개입 시
+            # 전원이 가능한 교집합 시간이 아닌 슬롯을 전원 가능처럼 추천했다.
+            # multi_date / preference_based 분기와 동일하게 busy_by_user 주입.
+            busy_by_user = await _load_busy_by_user_for_state(state)
             state["calendar_free_slots"] = _filter_out_rejected(
-                _filter_out_blocked(_build_time_option_slots(state), blocked_dates),
+                _filter_out_blocked(
+                    _build_time_option_slots(state, busy_by_user=busy_by_user),
+                    blocked_dates,
+                ),
                 rejected_dates,
             )
             state["calendar_strategy"] = "natural_language_time_options"

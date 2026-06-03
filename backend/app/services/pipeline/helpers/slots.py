@@ -68,7 +68,21 @@ from app.services.pipeline.state import GraphState
 logger = logging.getLogger(__name__)
 
 
-def _build_time_option_slots(state: GraphState) -> list[dict[str, Any]]:
+def _build_time_option_slots(
+    state: GraphState,
+    busy_by_user: Optional[dict[str, list[dict[str, Any]]]] = None,
+) -> list[dict[str, Any]]:
+    """자연어 시간 옵션(예: 토요일 13/14/15시)으로 투표용 슬롯을 생성합니다.
+
+    2026-06-03 Bug 3 fix: busy_by_user가 주어지면 각 슬롯이 멤버 GCal busy와
+    겹치는지 검사해 available_count/unavailable_users/has_conflict를 실제
+    가용성(교집합)으로 채우고, 가능 인원이 많은 슬롯을 먼저 추천하도록 정렬한다.
+    이전엔 available_count=total_count=headcount(가짜)·has_conflict=False로 채워,
+    대화 교착 → AI 자동 개입 시 "전원이 가능한 교집합 시간"이 아닌 시간도 전원
+    가능처럼 추천됐다. _build_multi_date_slots / _build_preference_time_slots와
+    동일한 패턴. busy_by_user None/빈 dict(캘린더 동의 0 등)면 기존 동작 유지
+    (전 슬롯 headcount, 시간 옵션 순서 보존).
+    """
     date_hint = state.get("date_hint")
     time_options = list(state.get("time_options") or [])
     if not _is_specific_iso_date(date_hint) or not time_options:
@@ -80,6 +94,7 @@ def _build_time_option_slots(state: GraphState) -> list[dict[str, Any]]:
         return []
 
     holiday = _get_korean_holiday(base_date)
+    headcount_total = state.get("headcount") or 0
     slots: list[dict[str, Any]] = []
     for index, time_value in enumerate(time_options, start=1):
         try:
@@ -88,19 +103,30 @@ def _build_time_option_slots(state: GraphState) -> list[dict[str, Any]]:
             continue
         start_at = base_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
         end_at = start_at + timedelta(minutes=SLOT_MINUTES)
+        unavailable: list[str] = []
+        if busy_by_user:
+            for user_key, busy_periods in busy_by_user.items():
+                if _is_busy_during(busy_periods, start_at, end_at):
+                    unavailable.append(_user_display_name(user_key))
         slots.append({
             "slot_id": f"time-option-{index}",
             "start_at": start_at.isoformat(),
             "end_at": end_at.isoformat(),
-            "label": _format_slot_label(start_at, []),
-            "available_count": state.get("headcount"),
-            "total_count": state.get("headcount"),
-            "has_conflict": False,
-            "unavailable_users": [],
+            "label": _format_slot_label(start_at, unavailable),
+            "available_count": (
+                max(headcount_total - len(unavailable), 0)
+                if headcount_total else state.get("headcount")
+            ),
+            "total_count": headcount_total or state.get("headcount"),
+            "has_conflict": bool(unavailable),
+            "unavailable_users": unavailable,
             "is_holiday": bool(holiday),
             "holiday_name": holiday,
             "is_weekend": _is_weekend(start_at),
         })
+    # 교집합 우선: 가능 멤버 수 desc, 동률 시 시간 빠른 순. busy_by_user 없으면
+    # available_count가 모두 같아 안정 정렬로 시간 옵션 순서가 그대로 유지된다.
+    slots.sort(key=lambda s: (-int(s.get("available_count") or 0), str(s.get("start_at") or "")))
     return slots
 
 

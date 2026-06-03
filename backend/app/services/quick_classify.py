@@ -73,8 +73,14 @@ async def quick_classify(text: str) -> dict:
         f"입력: {text or ''}"
     )
 
+    # 타임아웃 (2026-06-03 bug fix): 이전 1.5s는 tier=low(gemini) 실측 분류
+    # 지연(~2.3–3.0s)보다 짧아, regex에 안 걸린 정상 장소/일정 요청
+    # ("천안 신부동 추천해줘" 등)이 정답이 나오기 전에 잘려 general로 떨어지고
+    # 파이프라인이 안 돌아 카드가 안 떴다. 실측 지연을 충분히 덮도록 4.0s로
+    # 상향. 데모 happy-path 표현은 regex로 즉시 분류되므로 영향 없음. 진짜
+    # 응답 못 하는 경우엔 여전히 general로 fail-safe.
     try:
-        raw = await asyncio.wait_for(call_llm_tier(prompt, tier="low"), timeout=1.5)
+        raw = await asyncio.wait_for(call_llm_tier(prompt, tier="low"), timeout=4.0)
     except Exception:
         return _result("general", 0.0, "gemini")
 

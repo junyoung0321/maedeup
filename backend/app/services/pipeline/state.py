@@ -61,6 +61,8 @@ class GraphState(TypedDict, total=False):
     # 해결점 N: 모든 후보 날짜가 거부되어 다음 주로 확장됐는지 표시.
     # _slot_filling_stalemate가 이 플래그 보고 alternative vote 카드 발행.
     expanded_to_next_week: bool
+    # next-week 확장이 절대 horizon(today+35일)을 넘어 중단됐는지 (무한 climb 방지).
+    expansion_exhausted: bool
     # validation → function_calling redirect용 임시 flag.
     # supervisor_validation이 set → function_calling이 date_hint +7일 shift 후 즉시 pop.
     needs_next_week_expansion: bool

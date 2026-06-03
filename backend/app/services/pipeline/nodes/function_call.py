@@ -59,6 +59,30 @@ from app.services.pipeline.state import GraphState
 logger = logging.getLogger(__name__)
 
 
+def _next_week_shift(
+    old_hint: str | None,
+    now: datetime,
+    *,
+    max_horizon_days: int = 35,
+) -> str | None:
+    """next-week 확장용 date_hint +7일 shift. 단 절대 horizon 캡 적용.
+
+    shift 결과가 now + max_horizon_days 를 넘으면 None 반환 → 확장 중단.
+    (free-use audit 2026-06-03) date_hint가 slot_context로 이월되며 재트리거마다
+    +7일씩 무한 climb (2026→2030 폭주)하던 버그 방지. 절대 horizon을 두면
+    이월된 date_hint가 이미 horizon을 넘은 경우에도 확장이 즉시 중단돼 날짜가
+    더 climb하지 않는다. 반환값(YYYY-MM-DD) 또는 None(중단).
+    """
+    if isinstance(old_hint, str) and re.match(r"\d{4}-\d{2}-\d{2}", old_hint):
+        shifted = datetime.fromisoformat(old_hint).replace(tzinfo=timezone.utc) + timedelta(days=7)
+    else:
+        # date_hint 없는 경우: 내일 기준 +7일 (다음 주 시작점)
+        shifted = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=8)
+    if shifted > now + timedelta(days=max_horizon_days):
+        return None
+    return shifted.strftime("%Y-%m-%d")
+
+
 async def function_calling(state: GraphState) -> GraphState:
     _t0 = time.monotonic()
     dump("node_in", state.get("run_id"), {
@@ -86,20 +110,26 @@ async def function_calling(state: GraphState) -> GraphState:
         # needs_next_week_expansion flag는 여기서 즉시 소거 — 무한 루프 방지.
         if state.pop("needs_next_week_expansion", None):
             old_hint = state.get("date_hint")
-            if isinstance(old_hint, str) and re.match(r"\d{4}-\d{2}-\d{2}", old_hint):
-                shifted = (datetime.fromisoformat(old_hint).replace(tzinfo=timezone.utc) + timedelta(days=7)).strftime("%Y-%m-%d")
+            shifted = _next_week_shift(old_hint, datetime.now(timezone.utc))
+            if shifted is None:
+                # horizon 초과 — 확장 중단. date_hint를 advance하지 않아 더 이상
+                # climb하지 않고, validation이 'no slots'로 종결하도록 둔다.
+                state["expansion_exhausted"] = True
+                logger.warning(
+                    "[NEXT_WEEK_EXPANSION] horizon 초과 — 확장 중단 (room=%s, old=%s)",
+                    state.get("room_id"),
+                    old_hint,
+                )
             else:
-                # date_hint 없는 경우: 내일 기준 +7일 (다음 주 시작점)
-                shifted = (datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=8)).strftime("%Y-%m-%d")
-            state["date_hint"] = shifted
-            # date_hints도 갱신 (multi-date 경로 방지 — 단일 date_hint로 진행)
-            state["date_hints"] = [shifted]
-            logger.info(
-                "[NEXT_WEEK_EXPANSION] date_hint shifted %s → %s (room=%s)",
-                old_hint,
-                shifted,
-                state.get("room_id"),
-            )
+                state["date_hint"] = shifted
+                # date_hints도 갱신 (multi-date 경로 방지 — 단일 date_hint로 진행)
+                state["date_hints"] = [shifted]
+                logger.info(
+                    "[NEXT_WEEK_EXPANSION] date_hint shifted %s → %s (room=%s)",
+                    old_hint,
+                    shifted,
+                    state.get("room_id"),
+                )
 
         # entity_extraction이 "다시 추천해줘" 같은 재시도 지시어에서 "다시"를
         # place_hint로 잘못 뽑는 경우 있음 — 카카오맵 검색이 무의미해지니 스킵.

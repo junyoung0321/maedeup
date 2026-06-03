@@ -99,7 +99,7 @@ async def supervisor_validation(state: GraphState) -> GraphState:
 
         is_place_only = state.get("intent") == "place_suggestion"
         if not valid_slots and not is_location_first and not is_place_only:
-            if not state.get("expanded_to_next_week"):
+            if not state.get("expanded_to_next_week") and not state.get("expansion_exhausted"):
                 # 1차 시도: 호스트 GCal full-block → 다음 주로 확장 redirect
                 state["expanded_to_next_week"] = True
                 state["needs_next_week_expansion"] = True
@@ -108,7 +108,7 @@ async def supervisor_validation(state: GraphState) -> GraphState:
                     state.get("room_id"),
                 )
             else:
-                # 2차 시도도 fail → 정상 error 흐름
+                # 2차 시도도 fail 또는 horizon 초과(expansion_exhausted) → 정상 error 흐름
                 errors.append("no valid free time slots available")
         # preference_based 추천은 시간 후보가 주된 결과물 — 장소 검색이 실패해도
         # 일정 투표 카드라도 내보내기 위해 통과.

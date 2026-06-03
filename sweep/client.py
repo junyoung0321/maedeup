@@ -14,7 +14,7 @@ WS = "ws://localhost:8000"
 class SweepClient:
     def __init__(self, host_token: str):
         self.host_token = host_token
-        self._http = httpx.AsyncClient(timeout=15.0)
+        self._http = httpx.AsyncClient(timeout=15.0, follow_redirects=True)
 
     async def aclose(self) -> None:
         await self._http.aclose()

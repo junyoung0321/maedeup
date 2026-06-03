@@ -82,3 +82,48 @@ async def run_room(
                 break
 
     return transcript
+
+
+async def concurrent_vote_storm(
+    client: SweepClient,
+    meeting_id: int,
+    voters: list[tuple[str, int]],   # (token, option_index)
+) -> list[dict]:
+    """전원이 동시에 투표 — race condition 검증 (스펙 §6, K3.1)."""
+    results = await asyncio.gather(
+        *[client.vote(meeting_id, tok, opt) for tok, opt in voters],
+        return_exceptions=True,
+    )
+    return [r if not isinstance(r, Exception) else {"error": repr(r)} for r in results]
+
+
+async def observe_broadcast(
+    client: SweepClient,
+    room_id: int,
+    member_tokens: list[str],
+    trigger: "asyncio.Future | None" = None,
+    *,
+    window_s: float = 8.0,
+) -> list[int]:
+    """전 멤버가 /ws/agent를 동시에 구독한 상태에서 카드 이벤트 수신 수를 반환.
+
+    각 멤버 리스너가 window_s 동안 받은 카드 프레임 개수 리스트.
+    스펙 §5.6: 전원이 동일 카드 이벤트를 받아야 함 → 수신 수가 멤버마다 같아야 함.
+    """
+    async def _listen(token: str) -> int:
+        count = 0
+        async with client.agent_listener(room_id, token) as ws:
+            deadline = time.monotonic() + window_s
+            while time.monotonic() < deadline:
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=deadline - time.monotonic())
+                except asyncio.TimeoutError:
+                    break
+                try:
+                    if json.loads(raw).get("type") in _CARD_TYPES:
+                        count += 1
+                except json.JSONDecodeError:
+                    continue
+        return count
+
+    return await asyncio.gather(*[_listen(t) for t in member_tokens])

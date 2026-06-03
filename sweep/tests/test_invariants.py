@@ -46,3 +46,19 @@ def test_state_consistency_vote_count_monotonic():
     v = check_state_consistency(finalized=False, active_reco_cards=0,
                                 active_vote_cards=1, vote_count_drop=True)
     assert any(x.code == "vote_count_decreased" for x in v)
+
+
+def test_vote_storm_results_no_error_and_monotonic():
+    from sweep.invariants import check_vote_storm
+    good = [{"votes": {"0": 1}, "total_voters": 1},
+            {"votes": {"0": 2}, "total_voters": 2}]
+    assert check_vote_storm(good) == []
+    bad = [{"error": "boom"}]
+    assert any(v.code == "vote_error" for v in check_vote_storm(bad))
+
+
+def test_broadcast_all_members_must_match():
+    from sweep.invariants import check_broadcast
+    assert check_broadcast([1, 1, 1]) == []
+    v = check_broadcast([1, 1, 0])
+    assert any(x.code == "broadcast_missed" for x in v)

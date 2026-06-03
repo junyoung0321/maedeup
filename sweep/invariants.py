@@ -77,3 +77,35 @@ def check_state_consistency(
     if vote_count_drop:
         out.append(Violation("vote_count_decreased", "투표수 감소 발생"))
     return out
+
+
+def check_vote_storm(results: list[dict]) -> list[Violation]:
+    """동시 투표 결과 — 에러 없음 + total_voters 비감소 (스펙 §5.5, §6)."""
+    out: list[Violation] = []
+    prev = -1
+    for r in results:
+        if "error" in r:
+            out.append(Violation("vote_error", r["error"]))
+            continue
+        tv = r.get("total_voters", 0)
+        if tv < prev:
+            out.append(Violation("vote_count_decreased", f"{prev}→{tv}"))
+        prev = max(prev, tv)
+    return out
+
+
+def check_broadcast(per_member_card_counts: list[int]) -> list[Violation]:
+    """전 멤버가 동일 카드 이벤트를 받았는지 (스펙 §5.6, K3.2).
+
+    수신 수가 멤버마다 다르면(특히 0인 멤버) 브로드캐스트 누락.
+    """
+    if not per_member_card_counts:
+        return []
+    mx = max(per_member_card_counts)
+    if mx == 0:
+        return []  # 애초에 카드가 없던 구간 — 누락 아님
+    missed = [i for i, c in enumerate(per_member_card_counts) if c < mx]
+    if missed:
+        return [Violation("broadcast_missed",
+                          f"멤버 {missed}가 카드 수신 부족 (수신={per_member_card_counts})")]
+    return []

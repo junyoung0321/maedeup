@@ -1,4 +1,4 @@
-from sweep.report import percentile, aggregate, go_no_go
+from sweep.report import percentile, aggregate, go_no_go, SweepReport
 from sweep.transcript import RoomTranscript, Turn
 from sweep.invariants import Violation
 
@@ -37,3 +37,42 @@ def test_go_no_go_blocks_on_failure():
 def test_go_no_go_passes_when_clean():
     rep = aggregate([_passing_room(1, 2.0), _passing_room(2, 3.0)])
     assert "GO" in go_no_go(rep) and "NO-GO" not in go_no_go(rep)
+
+
+# --- GOAL 2: scenario_results in SweepReport ---
+
+def test_aggregate_stores_scenario_results():
+    rooms = [_passing_room(1, 2.0)]
+    sr = {"S1": [], "S2": ["S2: 기대 vote_card, 관측 []"]}
+    rep = aggregate(rooms, scenario_results=sr)
+    assert rep.scenario_results == sr
+
+
+def test_aggregate_scenario_results_defaults_empty():
+    rooms = [_passing_room(1, 2.0)]
+    rep = aggregate(rooms)
+    assert rep.scenario_results == {}
+
+
+def test_go_no_go_blocks_on_failing_scenario():
+    """실패한 시나리오가 1개 이상이면 NO-GO + 차단 사유에 포함."""
+    rooms = [_passing_room(1, 2.0)]
+    sr = {"S1": [], "S2": ["S2: 기대 vote_card, 관측 []"]}
+    rep = aggregate(rooms, scenario_results=sr)
+    summary = go_no_go(rep)
+    assert "NO-GO" in summary
+    assert "정확성 시나리오" in summary
+    assert "S2" in summary
+    assert "FAIL" in summary
+
+
+def test_go_no_go_scenario_all_pass():
+    """모든 시나리오 통과 시 GO 유지."""
+    rooms = [_passing_room(1, 2.0)]
+    sr = {"S1": [], "S2": [], "S4": []}
+    rep = aggregate(rooms, scenario_results=sr)
+    summary = go_no_go(rep)
+    assert "GO" in summary and "NO-GO" not in summary
+    # 통과한 시나리오도 PASS로 나열되어야 한다
+    assert "S1" in summary
+    assert "PASS" in summary

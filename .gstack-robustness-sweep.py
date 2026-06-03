@@ -12,6 +12,7 @@ from pathlib import Path
 from sweep.client import SweepClient
 from sweep.config import SweepConfig, parse_args
 from sweep.driver import run_room
+from sweep.invariants import Violation
 from sweep.personas import random_personas
 from sweep.report import aggregate, go_no_go
 from sweep.simulator import default_gemini_call
@@ -45,7 +46,6 @@ async def run_sweep(cfg: SweepConfig) -> None:
             try:
                 return await _one_room(client, i, cfg, gemini_call)
             except Exception as e:  # 방 자체가 터지면 FAIL 전사로 기록
-                from sweep.invariants import Violation
                 t = RoomTranscript(room_id=-i, persona_keys=[])
                 t.violations.append(Violation("room_crashed", repr(e)))
                 return t

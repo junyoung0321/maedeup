@@ -67,3 +67,6 @@ venv/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Robustness sweep generated transcripts (build artifact)
+/docs/handoff/robustness-sweep-*/

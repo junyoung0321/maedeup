@@ -81,7 +81,7 @@ function ScheduleVotePageContent() {
     <div
       style={{
         width: "100%",
-        height: "844px",
+        height: "var(--m-screen-h)",
         backgroundColor: "#ffffff",
         fontFamily: "Pretendard, sans-serif",
       }}

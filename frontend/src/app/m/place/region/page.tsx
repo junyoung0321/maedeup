@@ -47,7 +47,7 @@ function RegionPageContent() {
     <div
       style={{
         width: "100%",
-        height: "844px",
+        height: "var(--m-screen-h)",
         background: "#f8fafc",
         display: "flex",
         flexDirection: "column",

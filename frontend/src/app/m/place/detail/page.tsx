@@ -69,7 +69,7 @@ function PlaceDetailPageContent() {
   return (
     <div
       className="relative flex flex-col bg-white"
-      style={{ width: "100%", height: "844px", fontFamily: "Pretendard, sans-serif" }}
+      style={{ width: "100%", height: "var(--m-screen-h)", fontFamily: "Pretendard, sans-serif" }}
     >
       {/* Header */}
       <div

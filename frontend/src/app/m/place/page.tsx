@@ -75,7 +75,7 @@ function PlaceRecommendPageContent() {
   return (
     <div
       className="relative mx-auto flex flex-col bg-white"
-      style={{ width: "100%", height: "844px" }}
+      style={{ width: "100%", height: "var(--m-screen-h)" }}
     >
       {/* 1. Header */}
       <div

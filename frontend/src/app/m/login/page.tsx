@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 export default function MobileLoginPage() {
   const router = useRouter();
   return (
-    <div className="flex flex-col" style={{ width: "100%", height: "844px" }}>
+    <div className="flex flex-col" style={{ width: "100%", height: "var(--m-screen-h)" }}>
       {/* Top Half - Gradient */}
       <div
         className="flex flex-col items-center justify-center"

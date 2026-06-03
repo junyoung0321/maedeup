@@ -143,7 +143,7 @@ export default function CalendarPage() {
     <div
       style={{
         width: "100%",
-        height: "844px",
+        height: "var(--m-screen-h)",
         display: "flex",
         flexDirection: "column",
         background: "#f8fafc",

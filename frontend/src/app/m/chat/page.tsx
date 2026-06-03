@@ -63,7 +63,7 @@ export default function ChatListPage() {
     <div
       style={{
         width: "100%",
-        height: "844px",
+        height: "var(--m-screen-h)",
         background: "#ffffff",
         display: "flex",
         flexDirection: "column",

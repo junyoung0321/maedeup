@@ -64,7 +64,7 @@ function MeetingDonePageContent() {
   return (
     <div
       className="relative flex flex-col"
-      style={{ width: "100%", height: "844px", backgroundColor: "#ffffff" }}
+      style={{ width: "100%", height: "var(--m-screen-h)", backgroundColor: "#ffffff" }}
     >
       {/* Header */}
       <div className="relative shrink-0" style={{ height: 56, backgroundColor: "#4f46e5" }}>

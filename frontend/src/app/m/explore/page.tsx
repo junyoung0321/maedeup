@@ -86,7 +86,7 @@ export default function ExplorePage() {
     <div
       style={{
         width: "100%",
-        height: "844px",
+        height: "var(--m-screen-h)",
         background: "#ffffffff",
         display: "flex",
         flexDirection: "column",

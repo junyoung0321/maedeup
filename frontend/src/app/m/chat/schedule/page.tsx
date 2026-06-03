@@ -58,7 +58,7 @@ function ScheduleChatPageContent() {
   return (
     <div
       className="relative flex flex-col bg-white overflow-hidden"
-      style={{ width: "100%", height: "844px" }}
+      style={{ width: "100%", height: "var(--m-screen-h)" }}
     >
       {/* 1. Header */}
       <div

@@ -74,7 +74,7 @@ export default function ProfilePage() {
       <div
         style={{
           width: "100%",
-          height: "844px",
+          height: "var(--m-screen-h)",
           display: "flex",
           flexDirection: "column",
           background: "#ffffff",
@@ -96,7 +96,7 @@ export default function ProfilePage() {
     <div
       style={{
         width: "100%",
-        height: "844px",
+        height: "var(--m-screen-h)",
         display: "flex",
         flexDirection: "column",
         background: "#ffffff",

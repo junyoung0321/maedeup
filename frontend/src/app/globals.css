@@ -11,6 +11,20 @@ body {
   font-family: "Pretendard Variable", "Pretendard", "Noto Sans KR", sans-serif;
 }
 
+/* 모바일 페이지 외곽 컨테이너 높이 (2026-06-03 모바일 레이아웃 깨짐 fix).
+   실제 폰(<768px): 뷰포트를 꽉 채움(100dvh). 이전엔 모든 /m 페이지가
+   height:844px로 고정돼 기기 실제 뷰포트 높이를 무시 → 화면보다 길면
+   입력바/홈인디케이터가 잘리고, 짧으면 빈 공간이 생겨 "화면 깨짐".
+   데스크탑(md, ≥768px): 390×844 프레임 미리보기를 위해 844px 고정 유지. */
+:root {
+  --m-screen-h: 100dvh;
+}
+@media (min-width: 768px) {
+  :root {
+    --m-screen-h: 844px;
+  }
+}
+
 /* 시연(데스크탑/프로젝션) 가독성 — 큰 화면에서만 키운다(교수님 시청 대응).
    폰 앱 컨텍스트(<768px)에는 적용 안 함 → 실제 앱은 정상 크기. */
 @media (min-width: 768px) {

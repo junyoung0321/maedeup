@@ -103,7 +103,7 @@ export default function MeetingNewPage() {
       className="relative flex flex-col overflow-hidden"
       style={{
         width: "100%",
-        height: "844px",
+        height: "var(--m-screen-h)",
         backgroundColor: "#ffffffff",
         fontFamily: "Pretendard, sans-serif",
       }}

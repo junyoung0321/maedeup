@@ -46,7 +46,7 @@ export default function ConsentPage() {
       className="flex flex-col"
       style={{
         width: "100%",
-        height: "844px",
+        height: "var(--m-screen-h)",
         fontFamily: "Pretendard, sans-serif",
       }}
     >

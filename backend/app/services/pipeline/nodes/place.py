@@ -179,6 +179,20 @@ def _build_place_cache_key(state: dict) -> str:
     return f"maedeup:place_cache:{location}:{meeting_type}:{headcount}:{cuisine_key}"
 
 
+async def _resolve_place_meeting_id(state: GraphState, title: str) -> int:
+    meeting_id = _card_payload_meeting_id(state.get("vote_card_payload"))
+    if meeting_id is not None:
+        return int(meeting_id)
+
+    context_meeting_id = state.get("context_meeting_id")
+    if isinstance(context_meeting_id, int) and not isinstance(context_meeting_id, bool):
+        return context_meeting_id
+    if isinstance(context_meeting_id, str) and context_meeting_id.isdigit():
+        return int(context_meeting_id)
+
+    return await _ensure_pending_meeting_id(state, title)
+
+
 async def place_recommendation(state: GraphState) -> GraphState:
     _t0 = time.monotonic()
     dump("node_in", state.get("run_id"), {
@@ -197,7 +211,7 @@ async def place_recommendation(state: GraphState) -> GraphState:
         meeting_id = _card_payload_meeting_id(state.get("vote_card_payload"))
         if state.get("confirmed_place"):
             if meeting_id is None:
-                meeting_id = await _ensure_pending_meeting_id(
+                meeting_id = await _resolve_place_meeting_id(
                     state,
                     f"{state.get('meeting_type') or '모임'} 장소 추천",
                 )
@@ -484,7 +498,7 @@ async def place_recommendation(state: GraphState) -> GraphState:
 
         state["place_search_results"] = ranked_places
         if meeting_id is None:
-            meeting_id = await _ensure_pending_meeting_id(
+            meeting_id = await _resolve_place_meeting_id(
                 state,
                 f"{state.get('meeting_type') or '모임'} 장소 추천",
             )

@@ -170,6 +170,11 @@ interface AgentOptions {
   onPaneSwitch?: (paneType: string) => void;
 }
 
+export interface AgentMessageContext {
+  meeting_id?: number | null;
+  info_pane_phase?: string | null;
+}
+
 const MAX_RECONNECT_ATTEMPTS = 5;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
@@ -631,11 +636,15 @@ export function useAgentWebSocket(roomId: string, sender: string, options?: Agen
   }, [roomId]);
 
   const sendMessage = useCallback(
-    (content: string, visibility: "public" | "private" = "public") => {
+    (
+      content: string,
+      visibility: "public" | "private" = "public",
+      context?: AgentMessageContext,
+    ) => {
       const ws = wsRef.current;
       if (ws?.readyState === WebSocket.OPEN) {
         // visibility: public=방 전체 공유(기본), private=나만 보임. 카드는 항상 공유.
-        ws.send(JSON.stringify({ role: "user", content, sender, visibility }));
+        ws.send(JSON.stringify({ role: "user", content, sender, visibility, context }));
       }
     },
     [sender],

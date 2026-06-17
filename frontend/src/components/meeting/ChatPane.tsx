@@ -99,6 +99,7 @@ export default function ChatPane() {
     finalizationPending,
     lastConfirmedMeeting,
     scheduleConsensus,
+    lastScheduleFinalized,
     lastMemberJoined,
   } = useSocialWebSocket(roomId, currentUserName);
 
@@ -115,6 +116,7 @@ export default function ChatPane() {
   const setFinalizationPending = meetingContext?.setFinalizationPending;
   const setLastConfirmedMeeting = meetingContext?.setLastConfirmedMeeting;
   const setScheduleConsensus = meetingContext?.setScheduleConsensus;
+  const setInfoPanePhase = meetingContext?.setInfoPanePhase;
   const refreshCalendar = meetingContext?.refreshCalendar;
   useEffect(() => {
     setPeerDateSelections?.(peerSelections);
@@ -160,6 +162,10 @@ export default function ChatPane() {
   useEffect(() => {
     setScheduleConsensus?.(scheduleConsensus);
   }, [scheduleConsensus, setScheduleConsensus]);
+  useEffect(() => {
+    if (!lastScheduleFinalized) return;
+    setInfoPanePhase?.("timeConfirmed");
+  }, [lastScheduleFinalized, setInfoPanePhase]);
   // G-1: 새 멤버 join → 다른 멤버 화면 캘린더 X/N 자동 갱신
   useEffect(() => {
     if (lastMemberJoined) refreshCalendar?.();

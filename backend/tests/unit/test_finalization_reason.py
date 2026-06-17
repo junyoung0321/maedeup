@@ -1,7 +1,9 @@
 """
 Unit tests for app.services.finalization_reason.
 
-Gemini is mocked so the tests are deterministic and hermetic.
+The LLM call is mocked so the tests are deterministic and hermetic.
+The module calls `call_llm_tier` (provider abstraction, since d705b87 2026-05-27);
+patch that name, not the removed `call_gemini`.
 """
 from __future__ import annotations
 
@@ -13,7 +15,7 @@ from app.services import finalization_reason as fr
 
 
 async def test_uses_gemini_output_when_available():
-    with patch("app.services.finalization_reason.call_gemini", return_value="토요일 3시로 가실까요?"):
+    with patch("app.services.finalization_reason.call_llm_tier", return_value="토요일 3시로 가실까요?"):
         result = await fr.generate_finalization_reason(
             room_id=1,
             proposed_slot={"label": "토요일 15:00"},
@@ -26,7 +28,7 @@ async def test_uses_gemini_output_when_available():
 
 async def test_strips_and_takes_first_line():
     with patch(
-        "app.services.finalization_reason.call_gemini",
+        "app.services.finalization_reason.call_llm_tier",
         return_value="  첫 줄 제안입니다  \n두번째 줄은 무시",
     ):
         result = await fr.generate_finalization_reason(
@@ -40,7 +42,7 @@ async def test_strips_and_takes_first_line():
 
 
 async def test_falls_back_on_empty_gemini_response():
-    with patch("app.services.finalization_reason.call_gemini", return_value=""):
+    with patch("app.services.finalization_reason.call_llm_tier", return_value=""):
         result = await fr.generate_finalization_reason(
             room_id=1,
             proposed_slot={"label": "토요일 15:00"},
@@ -56,7 +58,7 @@ async def test_falls_back_on_empty_gemini_response():
 
 async def test_falls_back_on_gemini_exception():
     with patch(
-        "app.services.finalization_reason.call_gemini",
+        "app.services.finalization_reason.call_llm_tier",
         side_effect=RuntimeError("rate limited"),
     ):
         result = await fr.generate_finalization_reason(
@@ -72,7 +74,7 @@ async def test_falls_back_on_gemini_exception():
 
 
 async def test_tie_case_mentions_both_slots():
-    with patch("app.services.finalization_reason.call_gemini", return_value=""):
+    with patch("app.services.finalization_reason.call_llm_tier", return_value=""):
         result = await fr.generate_finalization_reason(
             room_id=1,
             proposed_slot={"label": "토요일 15:00"},
@@ -85,7 +87,7 @@ async def test_tie_case_mentions_both_slots():
 
 
 async def test_slot_label_fallback_uses_start_at():
-    with patch("app.services.finalization_reason.call_gemini", return_value=""):
+    with patch("app.services.finalization_reason.call_llm_tier", return_value=""):
         result = await fr.generate_finalization_reason(
             room_id=1,
             proposed_slot={"start_at": "2026-05-02T15:00:00"},

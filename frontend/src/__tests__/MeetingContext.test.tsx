@@ -79,6 +79,24 @@ describe("MeetingContext — InfoPanePhase", () => {
     expect(result.current.confirmedMeetingId).toBe(42);
   });
 
+  it("timeConfirmed clears stale scheduleConsensus", () => {
+    const { result } = renderHook(() => useMeeting(), { wrapper });
+
+    act(() =>
+      result.current.setScheduleConsensus({
+        type: "schedule_consensus_ready",
+        room_id: 1,
+        snapshot_hash: "snapshot",
+        host_user_id: 1,
+        member_count: 2,
+      }),
+    );
+    act(() => result.current.setInfoPanePhase("timeConfirmed"));
+
+    expect(result.current.scheduleConsensus).toBeNull();
+    expect(result.current.infoPanePhase).toBe("timeConfirmed");
+  });
+
   it("confirmPlace transitions to placeConfirmed", () => {
     const { result } = renderHook(() => useMeeting(), { wrapper });
 
@@ -113,7 +131,7 @@ describe("MeetingContext — InfoPanePhase", () => {
     expect(result.current.confirmedDate).toBeNull();
   });
 
-  it("new vote_card resets phase mid-flow", () => {
+  it("new vote_card preserves dateConfirmed phase mid-flow", () => {
     const { result } = renderHook(() => useMeeting(), { wrapper });
 
     // Progress to dateConfirmed
@@ -125,8 +143,8 @@ describe("MeetingContext — InfoPanePhase", () => {
     const newCard = { ...mockVoteCard, title: "새 모임", meeting_id: 99 };
     act(() => result.current.setVoteCard(newCard));
 
-    expect(result.current.infoPanePhase).toBe("idle");
-    expect(result.current.confirmedDate).toBeNull();
+    expect(result.current.infoPanePhase).toBe("dateConfirmed");
+    expect(result.current.confirmedDate).toBe("2026-04-17");
     expect(result.current.confirmedMeetingId).toBe(99);
   });
 

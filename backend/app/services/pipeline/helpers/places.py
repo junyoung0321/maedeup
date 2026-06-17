@@ -189,16 +189,32 @@ def _extract_korean_place_keyword(text: str) -> str | None:
     if not text:
         return None
 
-    # 1. 잘 알려진 지역명 매칭 (우선순위 높음)
-    for place in _WELL_KNOWN_PLACES:
-        if place in text:
-            return place
+    known_hits = [
+        (place, text.find(place))
+        for place in _WELL_KNOWN_PLACES
+        if place in text
+    ]
+    known_hits = [(place, pos) for place, pos in known_hits if pos >= 0]
+    suffix_hits = [
+        (match.group(1), match.start(1))
+        for match in _KOREAN_PLACE_PATTERN.finditer(text)
+    ]
 
-    # 2. 한국 지명 패턴 매칭 (XX동, XX역, XX구 등)
-    matches = _KOREAN_PLACE_PATTERN.findall(text)
-    if matches:
-        # 가장 긴 매칭을 반환 (더 구체적인 지명일 가능성)
-        return max(matches, key=len)
+    for suffix, _suffix_pos in sorted(suffix_hits, key=lambda item: (item[1], -len(item[0]))):
+        if any(known in suffix for known, _known_pos in known_hits):
+            return suffix
+
+    for known, known_pos in sorted(known_hits, key=lambda item: item[1]):
+        for suffix, suffix_pos in sorted(suffix_hits, key=lambda item: (item[1], -len(item[0]))):
+            gap = suffix_pos - (known_pos + len(known))
+            if 0 <= gap <= 4 and suffix != known:
+                return f"{known} {suffix}"
+
+    if suffix_hits:
+        return sorted(suffix_hits, key=lambda item: (item[1], -len(item[0])))[0][0]
+
+    if known_hits:
+        return sorted(known_hits, key=lambda item: item[1])[0][0]
 
     # 3. Fix 9 (2026-05-14): 자유 텍스트 fallback.
     #    "천안 터미널", "을지로 입구" 같은 미등록 지명을 Kakao Local에 그대로 전달.

@@ -54,6 +54,7 @@ class GraphState(TypedDict, total=False):
     # direct_request fast path 분류 결과 (해결점 E).
     # 값: "schedule" | "place" | "schedule+place" | "general" | None
     direct_request_kind: str | None
+    context_meeting_id: int | None
     # A3-3 (2026-05-08): 호스트가 [조율] 모달에서 직접 선택한 시간. ai_auto_trigger 흐름의
     # slot_context를 통해 주입됨. _slot_filling_all_members가 이 값을 confirmed_date/time으로
     # 박고 partial maedeup 카드 직행. 값: {"date": "YYYY-MM-DD", "start_idx": int, "end_idx": int} | None.
@@ -184,6 +185,7 @@ def _default_state(
         "trigger_reason": ctx.get("trigger_reason"),
         "partial_mode": ctx.get("partial_mode"),
         "direct_request_kind": ctx.get("direct_request_kind"),
+        "context_meeting_id": ctx.get("context_meeting_id"),
         "manual_chosen_time": ctx.get("manual_chosen_time"),
         "social_recent": [],
         "social_summary": "",

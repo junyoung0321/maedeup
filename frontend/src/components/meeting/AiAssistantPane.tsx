@@ -11,7 +11,7 @@ import { MeetingContext } from "@/contexts/MeetingContext";
 import { fs } from "@/lib/responsive";
 import { apiFetch } from "@/lib/api";
 import type { ContextMode } from "@/types";
-import type { CardPayload } from "@/hooks/useAgentWebSocket";
+import type { AgentMessageContext, CardPayload } from "@/hooks/useAgentWebSocket";
 
 interface ShareMessageResponse {
   id: number;
@@ -50,6 +50,8 @@ export default function AiAssistantPane() {
   const setVoteUpdateCtx = meetingContext?.setVoteUpdate;
   const setPlaceRecommendationCtx = meetingContext?.setPlaceRecommendation;
   const setSendMessageToAi = meetingContext?.setSendMessageToAi;
+  const confirmedMeetingIdCtx = meetingContext?.confirmedMeetingId ?? null;
+  const currentPhaseCtx = meetingContext?.infoPanePhase;
 
   const handlePaneSwitch = useCallback(
     (paneType: string) => {
@@ -77,6 +79,21 @@ export default function AiAssistantPane() {
     dismissAutoTrigger,
     meetingSummary,
   } = useAgentWebSocket(roomId, user?.name ?? "나", websocketOptions);
+
+  const buildAgentMessageContext = useCallback(
+    (): AgentMessageContext => ({
+      meeting_id: confirmedMeetingIdCtx,
+      info_pane_phase: currentPhaseCtx ?? null,
+    }),
+    [confirmedMeetingIdCtx, currentPhaseCtx],
+  );
+
+  const sendMessageWithContext = useCallback(
+    (content: string, visibility: "public" | "private" = "public") => {
+      sendMessage(content, visibility, buildAgentMessageContext());
+    },
+    [buildAgentMessageContext, sendMessage],
+  );
 
   const activeCards = useMemo(
     () =>
@@ -116,7 +133,6 @@ export default function AiAssistantPane() {
   );
   const setInfoPanePhaseCtx = meetingContext?.setInfoPanePhase;
   const setConfirmedPlaceIdCtx = meetingContext?.setConfirmedPlaceId;
-  const currentPhaseCtx = meetingContext?.infoPanePhase;
   // Option C 보존: scheduleConsensus 살아있는 동안은 호스트 in-card 확정 흐름을 보호하기 위해
   // phase 자동 advance를 보류한다. 호스트가 명시적으로 "이 시간으로 확정" / "추천 시간 그대로 확정"을
   // 누르면 onHostFinalize / A3-2 핸들러에서 setInfoPanePhase("timeConfirmed")를 직접 호출한다.
@@ -195,9 +211,9 @@ export default function AiAssistantPane() {
 
   // Register sendMessage callback so CalendarPane can send messages to AI
   useEffect(() => {
-    setSendMessageToAi?.(sendMessage);
+    setSendMessageToAi?.(sendMessageWithContext);
     return () => setSendMessageToAi?.(null);
-  }, [sendMessage, setSendMessageToAi]);
+  }, [sendMessageWithContext, setSendMessageToAi]);
 
   // (vote state and place state now managed by VoteCardSection in InfoPane)
 
@@ -299,7 +315,7 @@ export default function AiAssistantPane() {
       return;
     }
 
-    sendMessage(nextInput, isPrivate ? "private" : "public");
+    sendMessageWithContext(nextInput, isPrivate ? "private" : "public");
     setInput("");
     setIsAiLoading(true);
     setAiTimeoutMessage(null);

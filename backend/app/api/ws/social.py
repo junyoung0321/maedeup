@@ -3,7 +3,7 @@ from contextlib import suppress
 import json
 import logging
 import re
-from typing import Optional
+from typing import Any, Optional
 
 from app.observability.snapshot import dump
 
@@ -159,6 +159,7 @@ async def publish_schedule_auto_trigger(
             "content": "모두 시간대를 선택했어요. 일정을 조율해볼게요!",
             "trigger_reason": "all_members_selected",
             "manual_chosen_time": manual_chosen_time,
+            "snapshot_hash": snapshot_hash,
         },
         ensure_ascii=False,
     )
@@ -170,6 +171,42 @@ async def publish_schedule_auto_trigger(
         manual_chosen_time is not None,
     )
     return True
+
+
+async def publish_schedule_finalized(
+    redis_client: aioredis.Redis,
+    *,
+    room_pk: int,
+    snapshot_hash: str,
+    host_user_id: int,
+    manual_chosen_time: Optional[dict[str, Any]] = None,
+    triggered: bool,
+) -> None:
+    """Notify every room client that the host finalized the TimeBar flow."""
+    nx_key = f"schedule_finalized:{room_pk}:{snapshot_hash}"
+    already = await redis_client.set(nx_key, "1", ex=300, nx=True)
+    if not already:
+        return
+
+    social_channel = f"social:{room_pk}"
+    payload = json.dumps(
+        {
+            "type": "schedule_finalized",
+            "room_id": room_pk,
+            "snapshot_hash": snapshot_hash,
+            "host_user_id": host_user_id,
+            "manual_chosen_time": manual_chosen_time,
+            "triggered": triggered,
+        },
+        ensure_ascii=False,
+    )
+    await redis_client.publish(social_channel, payload)
+    logger.info(
+        "Schedule finalized for room %s (snapshot=%s, triggered=%s)",
+        room_pk,
+        snapshot_hash[:8] if isinstance(snapshot_hash, str) else snapshot_hash,
+        triggered,
+    )
 
 
 async def _publish_social_message(

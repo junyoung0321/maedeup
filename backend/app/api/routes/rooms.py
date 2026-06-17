@@ -24,7 +24,7 @@ from app.api.routes.finalization import (
     _publish_finalization_event,
     get_redis as get_finalization_redis,
 )
-from app.api.ws.social import publish_schedule_auto_trigger
+from app.api.ws.social import publish_schedule_auto_trigger, publish_schedule_finalized
 from app.services import scheduling_round as sr
 from app.models.chat import ChatMessage, PaneType, Visibility
 from app.models.meeting import MeetingParticipant, MeetingSchedule, MeetingStatus
@@ -603,6 +603,14 @@ async def schedule_confirm(
         room_pk=room_id,
         snapshot_hash=body.snapshot_hash,
         manual_chosen_time=manual_chosen_time,
+    )
+    await publish_schedule_finalized(
+        redis,
+        room_pk=room_id,
+        snapshot_hash=body.snapshot_hash,
+        host_user_id=int(current_user.sub),
+        manual_chosen_time=manual_chosen_time,
+        triggered=triggered,
     )
     return ScheduleConfirmResponse(triggered=triggered, snapshot_hash=body.snapshot_hash)
 

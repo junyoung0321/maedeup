@@ -40,6 +40,67 @@ router = APIRouter()
 # 났다. 첫 요청의 결과 카드는 shared로 모두에게 가므로, 막힌 사용자도 곧 같은 카드를 본다.
 # 단일 uvicorn 워커 가정(backend/Dockerfile). 다중 워커 확장 시 Redis 플래그로 교체 필요.
 _room_card_generating: set[str] = set()
+_LOCAL_CONFIRM_CONSUME_LOCKS: dict[str, float] = {}
+
+
+def build_auto_trigger_lock_key(
+    *,
+    room_id: int | str,
+    trigger_reason: str,
+    snapshot_hash: str | None = None,
+) -> str:
+    if trigger_reason == "all_members_selected":
+        return f"nx_confirm_consume:{room_id}:{snapshot_hash or 'nosnap'}"
+    return f"nx_autotrigger:{room_id}"
+
+
+def _try_local_confirm_consume_lock(key: str, *, ttl_seconds: int) -> bool:
+    now = time.monotonic()
+    expired = [
+        lock_key
+        for lock_key, expires_at in _LOCAL_CONFIRM_CONSUME_LOCKS.items()
+        if expires_at <= now
+    ]
+    for lock_key in expired:
+        _LOCAL_CONFIRM_CONSUME_LOCKS.pop(lock_key, None)
+    if key in _LOCAL_CONFIRM_CONSUME_LOCKS:
+        return False
+    _LOCAL_CONFIRM_CONSUME_LOCKS[key] = now + ttl_seconds
+    return True
+
+
+def _extract_context_meeting_id(raw_context: object) -> int | None:
+    if not isinstance(raw_context, dict):
+        return None
+    raw_meeting_id = raw_context.get("meeting_id")
+    if isinstance(raw_meeting_id, bool):
+        return None
+    if isinstance(raw_meeting_id, int):
+        return raw_meeting_id if raw_meeting_id > 0 else None
+    if isinstance(raw_meeting_id, str) and raw_meeting_id.isdigit():
+        parsed = int(raw_meeting_id)
+        return parsed if parsed > 0 else None
+    return None
+
+
+async def _validate_context_meeting_id(
+    session: Any,
+    *,
+    room_pk: int | None,
+    raw_context: object,
+) -> int | None:
+    meeting_id = _extract_context_meeting_id(raw_context)
+    if meeting_id is None or room_pk is None:
+        return None
+
+    from app.models.meeting import MeetingSchedule, MeetingStatus
+
+    meeting = await session.get(MeetingSchedule, meeting_id)
+    if meeting is None or meeting.room_id != room_pk:
+        return None
+    if meeting.status not in {MeetingStatus.pending.value, MeetingStatus.confirmed.value}:
+        return None
+    return meeting_id
 
 
 async def _publish_agent_message(
@@ -859,8 +920,6 @@ async def agent_ws(
             if not trigger_content:
                 continue
 
-            # user-explicit 트리거 (호스트 A3-2 "추천 시간 그대로 확정" 클릭) 는
-            # 짧은 시간 안에 stalemate→all_members_selected 연속 발생 정상 시나리오 → debounce 예외.
             trigger_reason_early = trigger.get("trigger_reason", "")
             is_user_explicit_confirm = trigger_reason_early == "all_members_selected"
 
@@ -868,13 +927,33 @@ async def agent_ws(
             # N users connected = N subscribers to shared channel, all dequeue the trigger.
             # Redis SET NX picks one winner per room; others skip pipeline execution so the
             # AI doesn't run N times per auto-trigger.
-            nx_key = f"nx_autotrigger:{room_id}"
             acquired = False
             if is_user_explicit_confirm:
-                # user-explicit 트리거는 NX lock 우회 — 호스트 확정 명령 묵음 폐기 방지
-                acquired = True
+                snapshot_hash = trigger.get("snapshot_hash")
+                nx_key = build_auto_trigger_lock_key(
+                    room_id=room_id,
+                    trigger_reason=trigger_reason_early,
+                    snapshot_hash=snapshot_hash if isinstance(snapshot_hash, str) else None,
+                )
+                if r is not None:
+                    try:
+                        acquired = bool(await r.set(nx_key, str(user_id_check), nx=True, ex=300))
+                    except Exception:
+                        logger.warning(
+                            "Confirm auto-trigger NX lock failed room=%s key=%s",
+                            room_id,
+                            nx_key,
+                            exc_info=True,
+                        )
+                        acquired = False
+                else:
+                    acquired = _try_local_confirm_consume_lock(nx_key, ttl_seconds=300)
             elif r is not None:
                 try:
+                    nx_key = build_auto_trigger_lock_key(
+                        room_id=room_id,
+                        trigger_reason=trigger_reason_early,
+                    )
                     acquired = bool(
                         await r.set(
                             nx_key, str(user_id_check), nx=True, ex=int(_AUTO_TRIGGER_DEBOUNCE_SECONDS)
@@ -914,6 +993,9 @@ async def agent_ws(
             manual_time = trigger.get("manual_chosen_time")
             if isinstance(manual_time, dict):
                 sc["manual_chosen_time"] = manual_time
+            snapshot_hash = trigger.get("snapshot_hash")
+            if isinstance(snapshot_hash, str):
+                sc["snapshot_hash"] = snapshot_hash
 
             # P1 fix (v2): viewer_user_id = 실제 trigger 발화자.
             # trigger_message_id가 있으면 해당 ChatMessage.user_id 조회 (stalemate / conclusion).
@@ -1052,6 +1134,7 @@ async def agent_ws(
             # 공유/나만 토글 — 기본 public(공유). private면 입력·텍스트응답이 본인에게만.
             # (투표/장소 카드는 그룹 결정 자산이라 토글과 무관하게 항상 shared.)
             req_vis = "private" if payload.get("visibility") == "private" else "public"
+            raw_message_context = payload.get("context")
 
             # 메시지 길이 제한 (2000자)
             if len(content) > 2000:
@@ -1213,6 +1296,16 @@ async def agent_ws(
                             user_id_check, room_id, exc_info=True,
                         )
 
+                    context_meeting_id = await _validate_context_meeting_id(
+                        session,
+                        room_pk=room_pk,
+                        raw_context=raw_message_context,
+                    )
+                    if context_meeting_id is not None:
+                        slot_context["context_meeting_id"] = context_meeting_id
+                    else:
+                        slot_context.pop("context_meeting_id", None)
+
                     context = await MessageReader.load_agent_context(
                         session=session,
                         room_id=room_pk,
@@ -1232,6 +1325,7 @@ async def agent_ws(
                         slot_context.pop("trigger_reason", None)
                         slot_context.pop("direct_request_kind", None)
                         slot_context.pop("trigger_message_text", None)
+                        slot_context.pop("context_meeting_id", None)
                         continue
                     _room_card_generating.add(room_id)
                     try:
@@ -1243,6 +1337,7 @@ async def agent_ws(
                         slot_context.pop("trigger_reason", None)
                         slot_context.pop("direct_request_kind", None)
                         slot_context.pop("trigger_message_text", None)
+                        slot_context.pop("context_meeting_id", None)
 
                 # 슬롯 컨텍스트 업데이트 (다음 메시지에서 이어받기)
                 for key in (
@@ -1292,13 +1387,13 @@ async def agent_ws(
                 if result.get("awaiting_user_reply") is True:
                     continue
 
-                # location_first: 장소 추천 페이로드를 먼저 발행 후 슬롯 컨텍스트 유지 (private)
+                # location_first: 장소 추천 카드도 그룹 결정 자산이므로 shared 발행.
                 if result.get("is_location_first") and not result.get("date_hint"):
                     place_recommendation_payload = result.get("place_recommendation_payload")
                     if place_recommendation_payload:
                         await _publish_agent_message(
                             r,
-                            user_channel,
+                            shared_channel,
                             json.dumps(
                                 {
                                     "type": "place_recommendation",

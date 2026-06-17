@@ -148,6 +148,15 @@ export interface ScheduleConsensusReadyPayload {
   member_count: number;
 }
 
+export interface ScheduleFinalizedPayload {
+  type: "schedule_finalized";
+  room_id: number;
+  snapshot_hash: string;
+  host_user_id: number;
+  manual_chosen_time?: unknown;
+  triggered?: boolean;
+}
+
 // G-1: 새 멤버 join 시 다른 멤버 화면 캘린더 X/N 자동 갱신 트리거.
 export interface MemberJoinedPayload {
   type: "member_joined";
@@ -237,6 +246,17 @@ function isScheduleConsensusReadyPayload(data: unknown): data is ScheduleConsens
   const c = data as Partial<ScheduleConsensusReadyPayload>;
   return (
     c.type === "schedule_consensus_ready" &&
+    typeof c.room_id === "number" &&
+    typeof c.snapshot_hash === "string" &&
+    typeof c.host_user_id === "number"
+  );
+}
+
+function isScheduleFinalizedPayload(data: unknown): data is ScheduleFinalizedPayload {
+  if (!data || typeof data !== "object") return false;
+  const c = data as Partial<ScheduleFinalizedPayload>;
+  return (
+    c.type === "schedule_finalized" &&
     typeof c.room_id === "number" &&
     typeof c.snapshot_hash === "string" &&
     typeof c.host_user_id === "number"
@@ -348,6 +368,7 @@ export function useSocialWebSocket(roomId: string, sender: string) {
   const [lastConfirmedMeeting, setLastConfirmedMeeting] = useState<MeetingConfirmedPayload | null>(null);
   // A3-2: TimeBar 합의 완료 시 host에게만 "확정하기" 버튼 노출용
   const [scheduleConsensus, setScheduleConsensus] = useState<ScheduleConsensusReadyPayload | null>(null);
+  const [lastScheduleFinalized, setLastScheduleFinalized] = useState<ScheduleFinalizedPayload | null>(null);
   // G-1: 새 멤버 join 시 캘린더 X/N 자동 갱신 트리거
   const [lastMemberJoined, setLastMemberJoined] = useState<MemberJoinedPayload | null>(null);
   const [status, setStatus] = useState<WsStatus>("connecting");
@@ -585,6 +606,12 @@ export function useSocialWebSocket(roomId: string, sender: string) {
 
         if (isScheduleConsensusReadyPayload(data)) {
           setScheduleConsensus(data);
+          return;
+        }
+
+        if (isScheduleFinalizedPayload(data)) {
+          setScheduleConsensus(null);
+          setLastScheduleFinalized(data);
           return;
         }
 
@@ -862,6 +889,7 @@ export function useSocialWebSocket(roomId: string, sender: string) {
     lastConfirmedMeeting,
     clearFinalizationProposal,
     scheduleConsensus,
+    lastScheduleFinalized,
     clearScheduleConsensus: () => setScheduleConsensus(null),
     lastMemberJoined,
   };

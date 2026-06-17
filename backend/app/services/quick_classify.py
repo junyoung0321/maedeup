@@ -6,6 +6,7 @@ import re
 from typing import Literal
 
 from app.services.llm import call_llm_tier
+from app.services.pipeline.helpers.places import _WELL_KNOWN_PLACES
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,12 @@ _PLACE_RE = re.compile(
     r"|(갈\s*만|갈만|먹을|먹기|놀러|가볼|어딘가|어디서)",
     re.IGNORECASE,
 )
+_KNOWN_PLACE_PREFIX_RE = re.compile(
+    rf"(?:{'|'.join(re.escape(place) for place in _WELL_KNOWN_PLACES)})"
+    r"\s*[가-힣]{0,12}(?:동|구|역|로|길|리|면|읍|시|군)",
+    re.IGNORECASE,
+)
+_PLACE_REQUEST_VERB_RE = re.compile(r"(추천|찾|알려|보여|골라|어때|가자|갈까)")
 _VALID_KINDS: set[str] = {"schedule", "place", "schedule+place", "general"}
 
 
@@ -53,7 +60,11 @@ def _result(kind: QuickKind, confidence: float, method: Literal["regex", "gemini
 
 async def quick_classify(text: str) -> dict:
     schedule_match = bool(_SCHEDULE_RE.search(text or ""))
-    place_match = bool(_PLACE_RE.search(text or ""))
+    composite_place_match = bool(
+        _KNOWN_PLACE_PREFIX_RE.search(text or "")
+        and _PLACE_REQUEST_VERB_RE.search(text or "")
+    )
+    place_match = bool(_PLACE_RE.search(text or "")) or composite_place_match
 
     if schedule_match and place_match:
         return _result("schedule+place", 0.95, "regex")

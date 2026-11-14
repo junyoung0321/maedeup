@@ -67,3 +67,7 @@ venv/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# 로그 / QA 스크린샷
+*.log
+qa-final-*.png
